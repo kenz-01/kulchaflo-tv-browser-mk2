@@ -1,0 +1,33 @@
+# Android / Gradle generated output
+.gradle/
+.gradle-home/
+.kotlin/
+build/
+**/build/
+
+# Local machine and IDE state
+.idea/
+*.iml
+.DS_Store
+local.properties
+
+# Android signing and generated packages
+*.apk
+*.aab
+*.ap_
+*.jks
+*.keystore
+
+# Large reference/archive files kept outside source control
+Sony Engine/
+Sony Engine.zip
+PHOTO-*.jpg
+WhatsApp Image *.jpeg
+Screenshot *.png
+
+# Logs and temporary captures
+*.log
+*.tmp
+*.trace
+captures/
+screenshots/

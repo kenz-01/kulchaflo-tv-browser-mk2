@@ -1,0 +1,16 @@
+<resources>
+    <color name="kf_background">#0A0C0E</color>
+    <color name="kf_surface">#11161A</color>
+    <color name="kf_surface_elevated">#162026</color>
+    <color name="kf_surface_overlay">#D9151D23</color>
+    <color name="kf_surface_overlay_border">#3BD9B15F</color>
+    <color name="kf_text_primary">#F3F5F6</color>
+    <color name="kf_text_secondary">#B8C1C6</color>
+    <color name="kf_accent">#D9B15F</color>
+    <color name="kf_scrim">#B0000000</color>
+    <color name="kf_brand_field">#F2EEE7</color>
+    <color name="kf_brand_field_soft">#00F2EEE7</color>
+    <color name="kf_pointer_ring">#F1F3F4</color>
+    <color name="kf_pointer_fill">#11161A</color>
+    <color name="kf_pointer_accent">#D9B15F</color>
+</resources>

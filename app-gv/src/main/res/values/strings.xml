@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name_gv">Kulcha Flo TV MkII-GV</string>
+    <string name="tabs_overlay_label_gv">Open Tabs</string>
+    <string name="tabs_overlay_hint_gv">Menu tabs  •  OK open  •  Del close tab  •  Media Play/Pause new tab</string>
+    <string name="back_again_to_exit">Press back again to exit</string>
+    <string name="back_again_to_home">Press back again to return to Kulcha Flo</string>
+</resources>

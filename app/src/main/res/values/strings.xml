@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Kulcha Flo TV MkII</string>
+    <string name="tabs_overlay_label">Open Tabs</string>
+    <string name="tabs_overlay_hint">Menu tabs  •  OK open  •  Menu/Del close tab  •  Back dismiss</string>
+</resources>

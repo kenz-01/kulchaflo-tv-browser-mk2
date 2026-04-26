@@ -1,0 +1,13 @@
+<resources>
+    <style name="Theme.KulchaFloTvMkII" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/kf_background</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/kf_background</item>
+        <item name="colorPrimary">@color/kf_surface_elevated</item>
+        <item name="colorPrimaryDark">@color/kf_background</item>
+        <item name="colorAccent">@color/kf_accent</item>
+        <item name="android:colorBackground">@color/kf_background</item>
+        <item name="android:forceDarkAllowed">true</item>
+    </style>
+</resources>

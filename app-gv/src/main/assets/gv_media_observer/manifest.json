@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Kulcha Flo GV Media Observer",
+  "version": "1.0",
+  "description": "Collects generic page media evidence for MkII-GV",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "gv-media@kulchaflo.tv"
+    }
+  },
+  "permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
