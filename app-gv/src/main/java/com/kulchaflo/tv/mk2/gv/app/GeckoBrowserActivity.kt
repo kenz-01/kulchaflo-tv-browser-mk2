@@ -305,7 +305,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     maybeDispatchFacebookCompat(session, pageUrl, reason = "page-stop")
                 } else {
                     maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
-                    triggerDirectMediaProbe(session, pageUrl)
+                    if (shouldPromoteDirectMedia(pageUrl)) {
+                        triggerDirectMediaProbe(session, pageUrl)
+                    } else {
+                        GvLogger.i(
+                            "GvExt",
+                            "direct media probe skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$pageUrl reason=live-media-surface"
+                        )
+                    }
                     if (shouldApplyUnifiedCompat(pageUrl)) {
                         triggerUnifiedPageCompat(session, pageUrl)
                     } else {
@@ -733,6 +740,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
+                if (!shouldPromoteDirectMedia(observation.url)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "promote skipped sourceKind=EXTRACTED_STREAM url=${observation.url} reason=live-media-surface"
+                    )
+                    promotedMediaPlayer.stop(reason = "live-media-surface")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 if (isDirectMediaPromotionSuppressed(observation.url)) {
                     GvLogger.i(
                         "GvMedia",
@@ -3375,6 +3391,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             )
             return
         }
+        if (!shouldPromoteDirectMedia(pageUrl)) {
+            GvLogger.i(
+                "GvExt",
+                "media evidence ignored tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} pageUrl=$pageUrl reason=live-media-surface"
+            )
+            return
+        }
         for (index in 0 until candidates.length()) {
             val candidate = candidates.optJSONObject(index) ?: continue
             val sourceUrl = candidate.optString("src")
@@ -3567,6 +3590,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     private fun shouldApplyUnifiedCompat(url: String): Boolean {
+        return !isLiveMediaSurfaceUrl(url)
+    }
+
+    private fun shouldPromoteDirectMedia(url: String): Boolean {
         return !isLiveMediaSurfaceUrl(url)
     }
 

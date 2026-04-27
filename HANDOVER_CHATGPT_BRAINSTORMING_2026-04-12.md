@@ -198,6 +198,9 @@ File: `GeckoBrowserActivity.kt` (`NavigationDelegate.onLoadRequest`)
   - Added a live-media surface guard so the unified compat script is skipped on live player pages such as CBC, CaribVision, ABS/Tego, and `player.tegotv.com`.
   - Added a short direct-media promotion suppression window after back so promoted live streams do not immediately reopen.
   - Added a fullscreen guard so live-media pages keep the system bars visible instead of taking over the viewport.
+- Latest follow-up:
+  - CBCTV8 still triggered duplicate playback because the app was still promoting live media from the page itself.
+  - Added a live-media promotion guard so direct-media extraction and promotion are skipped on those surfaces entirely, leaving the page player in control.
 - Current operator guidance:
   - The unresolved area is Facebook, not YouTube.
   - Prior work on Facebook became a loop of mitigations rather than a clean root-cause fix.
