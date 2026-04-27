@@ -31,6 +31,9 @@
 - Exact Facebook URL used in the latest tests:
   `https://www.facebook.com/dubsteady/videos/studio-17-the-lost-reggae-tapes-part-1/427958844570838?utm_source=KulchaFlo`
 - Latest observed unresolved site-driven failure: Facebook starts video behind a high-opacity white cookie/consent overlay, then the cookie card can appear after roughly 15 seconds and scroll to its lower action area.
+- Latest capture, 2026-04-27 05:14 Bravia time: page loaded into a full-page white visual veil with no visible consent dialog. Screenshot: `/tmp/kf_fb_overlay_no_consent.png`. Logcat: `/tmp/kf_fb_overlay_no_consent.log`.
+- In that capture the Facebook compat script ran repeatedly, but reported `cookieClicked=false`, `resolved=false`, `blockingOverlayHidden=false`, `dimRestored=false`, `overlays=none`, and `candidates=` while the screenshot showed the page visibly washed out. This points at a visual/loading layer that the current DOM overlay detector is not classifying.
+- The same log had no `Script terminated by timeout` entries. It did include `GeckoViewPrompter.sys.mjs` `uncaught exception: undefined` after compat prompts, and Facebook-scoped content permissions were allowed at 05:13:28.
 - A broad white-veil cleanup attempt caused Gecko script timeouts; it has been removed from the live sweep. The current approach is to click Facebook's cookie CTA by visible point/text instead.
 - Direct Facebook launch did not reproduce the same cookie-card overlay in the last run; it landed on a dark Facebook text state. Continue validating through both direct launch and the real KulchaFlo Watch flow.
 
