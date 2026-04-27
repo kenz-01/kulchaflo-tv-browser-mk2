@@ -34,8 +34,10 @@
 - Latest capture, 2026-04-27 05:14 Bravia time: page loaded into a full-page white visual veil with no visible consent dialog. Screenshot: `/tmp/kf_fb_overlay_no_consent.png`. Logcat: `/tmp/kf_fb_overlay_no_consent.log`.
 - In that capture the Facebook compat script ran repeatedly, but reported `cookieClicked=false`, `resolved=false`, `blockingOverlayHidden=false`, `dimRestored=false`, `overlays=none`, and `candidates=` while the screenshot showed the page visibly washed out. This points at a visual/loading layer that the current DOM overlay detector is not classifying.
 - The same log had no `Script terminated by timeout` entries. It did include `GeckoViewPrompter.sys.mjs` `uncaught exception: undefined` after compat prompts, and Facebook-scoped content permissions were allowed at 05:13:28.
-- A broad white-veil cleanup attempt caused Gecko script timeouts; it has been removed from the live sweep. The current approach is to click Facebook's cookie CTA by visible point/text instead.
-- Direct Facebook launch did not reproduce the same cookie-card overlay in the last run; it landed on a dark Facebook text state. Continue validating through both direct launch and the real KulchaFlo Watch flow.
+- Working checkpoint, 2026-04-27 05:30 Bravia time: disabling Gecko's native cookie-banner auto handler removed the full-page white veil. The simple Facebook helper clicked cookie consent, dismissed the login prompt, hid the bottom login rail, and woke/clicked the real Facebook video player. Screenshot: `/tmp/kf_fb_video_wake.png`. Logcat: `/tmp/kf_fb_video_wake.log`.
+- The successful log includes `cookieClicked=true`, `loginDismissed=true`, `bottomLoginBarHidden=true`, `videoCount=1`, `playButtonClicked=true`, followed by `browser media session activated`, `browser media play`, and fullscreen source `blob:https://www.facebook.com/...` at 1920x1080.
+- A broad white-veil cleanup attempt caused Gecko script timeouts; it is no longer used. The current working approach is native-cookie-banner automation disabled plus a narrow Facebook helper for cookie CTA, login rail, and video wake.
+- Direct Facebook launch now produced the working result above. Continue validating through the real KulchaFlo Watch flow as the remaining confirmation.
 
 ## Git Usage
 - This repository was initialized so future sessions can recover context with `git log`, `git status`, and this file.

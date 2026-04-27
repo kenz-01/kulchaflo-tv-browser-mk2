@@ -2159,6 +2159,267 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         session.loadUri(script)
     }
 
+    private fun triggerSimpleFacebookCompat(session: GeckoSession, pageUrl: String) {
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isFacebookUrl(normalizedUrl)) {
+            return
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var path=((window.location&&window.location.pathname)||'').toLowerCase();
+                if(path==='/reg' || path==='/login'){return;}
+                var state=window.__kfFbSimpleCompatState||(window.__kfFbSimpleCompatState={cookieClickCount:0,loginDismissCount:0,loginHideCount:0});
+                var lower=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().toLowerCase();};
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                    var rect=node.getBoundingClientRect();
+                    return rect.width>8&&rect.height>8&&rect.bottom>0&&rect.right>0&&rect.top<window.innerHeight&&rect.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var textOf=function(node){
+                  try{
+                    return lower(
+                      (node.value||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('title'))||'')+' '+
+                      (node.innerText||node.textContent||'')
+                    );
+                  }catch(_){return '';}
+                };
+                var attrOf=function(node){
+                  try{
+                    return lower(
+                      ((node.getAttribute&&node.getAttribute('id'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('name'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('data-testid'))||'')+' '+
+                      ((typeof node.className==='string')?node.className:'')
+                    );
+                  }catch(_){return '';}
+                };
+                var clickNode=function(node){
+                  try{
+                    if(!node||!visible(node)){return false;}
+                    try{node.scrollIntoView({block:'center',inline:'center'});}catch(_){}
+                    try{
+                      node.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+                    }catch(_){}
+                    node.click();
+                    return true;
+                  }catch(_){return false;}
+                };
+                var controls=function(){
+                  return Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"],[aria-label]')).slice(0,160);
+                };
+                var samples=[];
+                var sample=function(node,blob){
+                  try{
+                    if(samples.length>=8){return;}
+                    samples.push({
+                      tag:lower(node&&node.tagName),
+                      text:((blob||'')+'').slice(0,120),
+                      aria:((node&&node.getAttribute&&node.getAttribute('aria-label'))||'').slice(0,80),
+                      testid:((node&&node.getAttribute&&node.getAttribute('data-testid'))||'').slice(0,80),
+                      visible:!!visible(node)
+                    });
+                  }catch(_){}
+                };
+                var isCookieAction=function(blob){
+                  return (
+                    blob.indexOf('allow all cookies')>=0 ||
+                    blob.indexOf('accept all cookies')>=0 ||
+                    blob.indexOf('accept all')>=0 ||
+                    blob.indexOf('allow all')>=0 ||
+                    blob.indexOf('allow essential cookies')>=0 ||
+                    blob.indexOf('only allow essential cookies')>=0 ||
+                    blob.indexOf('decline optional cookies')>=0
+                  );
+                };
+                var clickCookie=function(){
+                  var nodes=controls();
+                  for(var i=0;i<nodes.length;i++){
+                    var node=nodes[i];
+                    if(!visible(node)){continue;}
+                    var blob=textOf(node)+' '+attrOf(node);
+                    if(blob.indexOf('login')>=0||blob.indexOf('log in')>=0||blob.indexOf('sign up')>=0){continue;}
+                    sample(node,blob);
+                    if(isCookieAction(blob)&&clickNode(node)){
+                      state.cookieClickCount+=1;
+                      return true;
+                    }
+                  }
+                  return false;
+                };
+                var clickLoginDismiss=function(){
+                  var nodes=controls();
+                  for(var i=0;i<nodes.length;i++){
+                    var node=nodes[i];
+                    if(!visible(node)){continue;}
+                    var blob=textOf(node)+' '+attrOf(node);
+                    if(
+                      blob==='not now' ||
+                      blob.indexOf('not now')>=0 ||
+                      blob==='close' ||
+                      blob.indexOf('close')>=0 ||
+                      blob.indexOf('continue watching')>=0
+                    ){
+                      sample(node,blob);
+                      if(clickNode(node)){
+                        state.loginDismissCount+=1;
+                        return true;
+                      }
+                    }
+                  }
+                  return false;
+                };
+                var hideLoginDialog=function(){
+                  var nodes=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"]')).slice(0,40);
+                  for(var i=0;i<nodes.length;i++){
+                    var node=nodes[i];
+                    if(!visible(node)){continue;}
+                    var blob=textOf(node)+' '+attrOf(node);
+                    if(blob.indexOf('cookie')>=0||blob.indexOf('consent')>=0){continue;}
+                    var loginLike=(
+                      blob.indexOf('log in')>=0 ||
+                      blob.indexOf('login')>=0 ||
+                      blob.indexOf('sign up')>=0 ||
+                      blob.indexOf('create new account')>=0
+                    );
+                    if(!loginLike){continue;}
+                    try{
+                      node.style.setProperty('display','none','important');
+                      node.style.setProperty('visibility','hidden','important');
+                      node.style.setProperty('pointer-events','none','important');
+                      document.documentElement.style.setProperty('overflow','auto','important');
+                      document.body.style.setProperty('overflow','auto','important');
+                      state.loginHideCount+=1;
+                      return true;
+                    }catch(_){}
+                  }
+                  return false;
+                };
+                var hideBottomLoginRail=function(){
+                  try{
+                    var points=[
+                      [Math.round(window.innerWidth*0.50),Math.round(window.innerHeight*0.92)],
+                      [Math.round(window.innerWidth*0.35),Math.round(window.innerHeight*0.92)],
+                      [Math.round(window.innerWidth*0.65),Math.round(window.innerHeight*0.92)]
+                    ];
+                    for(var p=0;p<points.length;p++){
+                      var node=document.elementFromPoint(points[p][0],points[p][1]);
+                      var cur=node;
+                      for(var depth=0;depth<8&&cur&&cur!==document.documentElement;depth++){
+                        if(cur!==document.body&&visible(cur)){
+                          var rect=cur.getBoundingClientRect();
+                          var blob=textOf(cur)+' '+attrOf(cur);
+                          var bottomRail=rect.width>(window.innerWidth*0.55)&&rect.bottom>(window.innerHeight-8)&&rect.height>=80&&rect.height<260;
+                          var loginRail=(
+                            blob.indexOf('log in or sign up')>=0 ||
+                            (
+                              blob.indexOf('create new account')>=0 &&
+                              blob.indexOf('connect with friends')>=0
+                            )
+                          );
+                          if(bottomRail&&loginRail){
+                            cur.style.setProperty('display','none','important');
+                            cur.style.setProperty('visibility','hidden','important');
+                            cur.style.setProperty('pointer-events','none','important');
+                            state.loginHideCount+=1;
+                            return true;
+                          }
+                        }
+                        cur=cur.parentElement;
+                      }
+                    }
+                  }catch(_){}
+                  return false;
+                };
+                var wakeFacebookVideo=function(){
+                  var result={videoCount:0,playAttempted:false,playButtonClicked:false,states:[]};
+                  try{
+                    var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                    result.videoCount=videos.length;
+                    for(var i=0;i<videos.length;i++){
+                      var video=videos[i];
+                      var state={
+                        visible:visible(video),
+                        paused:!!video.paused,
+                        readyState:video.readyState||0,
+                        networkState:video.networkState||0,
+                        currentSrc:(video.currentSrc||video.src||'').slice(0,80),
+                        error:video.error?video.error.code:0
+                      };
+                      result.states.push(state);
+                      if(!state.visible){continue;}
+                      try{video.setAttribute('playsinline','');}catch(_){}
+                      try{video.setAttribute('webkit-playsinline','');}catch(_){}
+                      try{video.controls=true;}catch(_){}
+                      if(video.paused){
+                        try{
+                          var playResult=video.play&&video.play();
+                          result.playAttempted=true;
+                          if(playResult&&playResult.catch){playResult.catch(function(){});}
+                        }catch(_){}
+                      }
+                    }
+                    if(!result.playAttempted){
+                      var playWords=['play video','play','watch now'];
+                      var nodes=controls();
+                      for(var p=0;p<nodes.length;p++){
+                        var node=nodes[p];
+                        if(!visible(node)){continue;}
+                        var blob=textOf(node)+' '+attrOf(node);
+                        var isPlay=false;
+                        for(var w=0;w<playWords.length;w++){
+                          if(blob.indexOf(playWords[w])>=0){isPlay=true;break;}
+                        }
+                        if(isPlay&&clickNode(node)){
+                          result.playButtonClicked=true;
+                          break;
+                        }
+                      }
+                    }
+                  }catch(_){}
+                  return result;
+                };
+                var cookieClicked=clickCookie();
+                var loginDismissed=clickLoginDismiss();
+                var loginHidden=loginDismissed?false:hideLoginDialog();
+                var bottomLoginHidden=hideBottomLoginRail();
+                var videoWake=wakeFacebookVideo();
+                window.prompt("__GV_MEDIA__"+JSON.stringify({
+                  type:'facebook-compat',
+                  phase:'activity-facebook-simple',
+                  pageUrl:window.location.href,
+                  title:document.title||'',
+                  cookieClicked:!!cookieClicked,
+                  bottomLoginBarHidden:!!bottomLoginHidden,
+                  loginDialogHidden:!!loginHidden,
+                  loginDismissed:!!loginDismissed,
+                  cookieClickCount:state.cookieClickCount||0,
+                  loginDismissCount:state.loginDismissCount||0,
+                  loginHideCount:state.loginHideCount||0,
+                  videoCount:videoWake.videoCount||0,
+                  videoPlayAttempted:!!videoWake.playAttempted,
+                  playButtonClicked:!!videoWake.playButtonClicked,
+                  videoStates:videoWake.states||[],
+                  sampleCandidates:samples
+                }), '');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "facebook simple compat dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl"
+        )
+        session.loadUri(script)
+    }
+
     private fun scheduleFacebookCompatFollowUp(session: GeckoSession, delayMs: Long) {
         pointerHandler.postDelayed(
             {
@@ -2197,10 +2458,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             return
         }
         facebookCompatLastDispatchMsBySession[session] = now
-        triggerFacebookPageCompat(session, pageUrl)
+        triggerSimpleFacebookCompat(session, pageUrl)
         if (reason == "location-change") {
-            scheduleFacebookCompatFollowUp(session, 900L)
-            scheduleFacebookCompatFollowUp(session, 2200L)
+            scheduleFacebookCompatFollowUp(session, 1200L)
+            scheduleFacebookCompatFollowUp(session, 4500L)
+            scheduleFacebookCompatFollowUp(session, 10000L)
+            scheduleFacebookCompatFollowUp(session, 17000L)
         }
         GvLogger.i(
             "GvExt",
@@ -2609,7 +2872,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
         if (type == "facebook-compat") {
             val cookieClicked = payload.optBoolean("cookieClicked")
-            if (cookieClicked) {
+            if (payload.optBoolean("resolved")) {
                 facebookCompatResolvedBySession.add(session)
             }
             fun summarizeNode(node: JSONObject?): String {
@@ -2674,7 +2937,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
             GvLogger.i(
                 "GvLayout",
-                "facebook compat pageUrl=$pageUrl cookieClicked=$cookieClicked resolved=${facebookCompatResolvedBySession.contains(session)} reason=${payload.optString("reason")} bottomLoginBarHidden=${payload.optBoolean("bottomLoginBarHidden")} loginDialogHidden=${payload.optBoolean("loginDialogHidden")} topLoginHeaderHidden=${payload.optBoolean("topLoginHeaderHidden")} blockingOverlayHidden=${payload.optBoolean("blockingOverlayHidden")} dimRestored=${payload.optBoolean("dimRestored")} autoBlurCount=${payload.optInt("autoBlurCount")} cookieClickCount=${payload.optInt("cookieClickCount")} bottomBarHideCount=${payload.optInt("bottomBarHideCount")} topLoginHideCount=${payload.optInt("topLoginHideCount")} blockingOverlayHideCount=${payload.optInt("blockingOverlayHideCount")} dimRestoreCount=${payload.optInt("dimRestoreCount")} active=${summarizeNode(payload.optJSONObject("activeElement"))} activeChain=${summarizeNodeArray(payload.optJSONArray("activeElementChain"), 4)} center=${summarizeNodeArray(payload.optJSONArray("centerStack"), 4)} overlays=${summarizeNodeArray(payload.optJSONArray("overlayCandidates"), 6)} candidates=$candidateSummary"
+                "facebook compat pageUrl=$pageUrl phase=${payload.optString("phase")} cookieClicked=$cookieClicked resolved=${facebookCompatResolvedBySession.contains(session)} reason=${payload.optString("reason")} loginDismissed=${payload.optBoolean("loginDismissed")} bottomLoginBarHidden=${payload.optBoolean("bottomLoginBarHidden")} loginDialogHidden=${payload.optBoolean("loginDialogHidden")} topLoginHeaderHidden=${payload.optBoolean("topLoginHeaderHidden")} blockingOverlayHidden=${payload.optBoolean("blockingOverlayHidden")} dimRestored=${payload.optBoolean("dimRestored")} autoBlurCount=${payload.optInt("autoBlurCount")} cookieClickCount=${payload.optInt("cookieClickCount")} loginDismissCount=${payload.optInt("loginDismissCount")} loginHideCount=${payload.optInt("loginHideCount")} videoCount=${payload.optInt("videoCount")} videoPlayAttempted=${payload.optBoolean("videoPlayAttempted")} playButtonClicked=${payload.optBoolean("playButtonClicked")} bottomBarHideCount=${payload.optInt("bottomBarHideCount")} topLoginHideCount=${payload.optInt("topLoginHideCount")} blockingOverlayHideCount=${payload.optInt("blockingOverlayHideCount")} dimRestoreCount=${payload.optInt("dimRestoreCount")} active=${summarizeNode(payload.optJSONObject("activeElement"))} activeChain=${summarizeNodeArray(payload.optJSONArray("activeElementChain"), 4)} center=${summarizeNodeArray(payload.optJSONArray("centerStack"), 4)} overlays=${summarizeNodeArray(payload.optJSONArray("overlayCandidates"), 6)} candidates=$candidateSummary"
             )
             return
         }

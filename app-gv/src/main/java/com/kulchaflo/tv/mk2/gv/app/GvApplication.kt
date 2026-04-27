@@ -28,8 +28,8 @@ class GvApplication : Application() {
     private fun createRuntime(): GeckoRuntime {
         fun buildContentBlockingSettings(): ContentBlocking.Settings =
             ContentBlocking.Settings.Builder()
-                .cookieBannerHandlingMode(ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_REJECT_OR_ACCEPT)
-                .cookieBannerGlobalRulesEnabled(true)
+                .cookieBannerHandlingMode(ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_DISABLED)
+                .cookieBannerGlobalRulesEnabled(false)
                 .cookieBannerHandlingDetectOnlyMode(false)
                 .build()
 
