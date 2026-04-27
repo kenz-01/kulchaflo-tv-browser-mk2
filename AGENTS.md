@@ -10,8 +10,8 @@
 
 ## Important Handover
 - Full handover: `HANDOVER_CHATGPT_BRAINSTORMING_2026-04-12.md`
-- Current unresolved surface: Facebook video/consent/transport behavior.
-- YouTube was reported acceptable after later iteration. Do not reopen YouTube unless a new regression is reported.
+- Current validated surfaces: targeted Facebook video launch and YouTube watch launch on Bravia release.
+- Do not reopen either surface unless a new regression is reported; keep fixes narrow and site-scoped.
 - Current GeckoView build uses global visual scale constants in `app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt`.
 - Gecko runtime fallback lives in `app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GvApplication.kt`.
 
@@ -38,6 +38,13 @@
 - The successful log includes `cookieClicked=true`, `loginDismissed=true`, `bottomLoginBarHidden=true`, `videoCount=1`, `playButtonClicked=true`, followed by `browser media session activated`, `browser media play`, and fullscreen source `blob:https://www.facebook.com/...` at 1920x1080.
 - A broad white-veil cleanup attempt caused Gecko script timeouts; it is no longer used. The current working approach is native-cookie-banner automation disabled plus a narrow Facebook helper for cookie CTA, login rail, and video wake.
 - Direct Facebook launch now produced the working result above. Continue validating through the real KulchaFlo Watch flow as the remaining confirmation.
+
+## YouTube Repro Notes
+- Reported issue, 2026-04-27: YouTube watch URL could get stuck behind Google's "Before you continue to YouTube" consent dialog. Manual scroll moved the background page instead of reliably scrolling the dialog.
+- Current fix in `GeckoBrowserActivity.kt`: YouTube/Google surfaces are granted storage, persistent storage, and autoplay permissions through the Gecko content permission delegate.
+- A YouTube consent helper now runs on location change, page stop, and delayed follow-ups. It detects the Google/YouTube consent text, scrolls consent-like containers to the button row, and attempts the visible `Accept all`/`Reject all`/`I agree` action.
+- The consent helper reports visible action coordinates back to Kotlin. Kotlin can send a real GeckoView mouse tap at those coordinates as a native fallback when DOM click handling is unreliable on TV.
+- Verification, 2026-04-27 17:31 London time: installed Bravia release, launched `https://www.youtube.com/watch?v=FddO86Zk1lo?utm_source=KulchaFlo`, and captured `/tmp/kf_youtube_native_tap.png`. The watch page loaded with video visible and logcat showed `browser media play` plus metadata `Bob Marley: One Love`.
 
 ## Git Usage
 - This repository was initialized so future sessions can recover context with `git log`, `git status`, and this file.

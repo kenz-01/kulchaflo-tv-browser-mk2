@@ -59,6 +59,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val lastProbeUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val loadRetryAttemptsBySession = LinkedHashMap<GeckoSession, LinkedHashMap<String, Int>>()
     private val facebookCompatLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pointerDirectionKeys = LinkedHashSet<Int>()
@@ -299,6 +300,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 if (isFacebookUrl(pageUrl)) {
                     maybeDispatchFacebookCompat(session, pageUrl, reason = "page-stop")
                 } else {
+                    maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
                     triggerDirectMediaProbe(session, pageUrl)
                     triggerUnifiedPageCompat(session, pageUrl)
                 }
@@ -325,6 +327,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 applyUserAgentPolicyForUrl(session, url.orEmpty(), reason = "location-change")
             }
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
+            maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
         }
@@ -2471,6 +2474,225 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         )
     }
 
+    private fun triggerYouTubeConsentCompat(session: GeckoSession, pageUrl: String, reason: String) {
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isGoogleVideoSurfaceUrl(normalizedUrl)) {
+            return
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var lower=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().toLowerCase();};
+                var textOf=function(node){
+                  try{return lower((node&&((node.innerText||node.textContent||node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')))||'');}
+                  catch(_){return '';}
+                };
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                    var r=node.getBoundingClientRect();
+                    return r.width>8&&r.height>8&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var clickNode=function(node){
+                  try{
+                    if(!node){return false;}
+                    try{node.scrollIntoView({block:'center',inline:'center'});}catch(_){}
+                    if(!visible(node)){return false;}
+                    try{
+                      node.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+                    }catch(_){}
+                    node.click();
+                    return true;
+                  }catch(_){return false;}
+                };
+                var centerOf=function(node){
+                  try{
+                    if(!node){return null;}
+                    var r=node.getBoundingClientRect();
+                    return {x:Math.round((r.left+r.right)/2),y:Math.round((r.top+r.bottom)/2)};
+                  }catch(_){return null;}
+                };
+                var isConsentPage=function(){
+                  var blob=lower((document.body&&document.body.innerText)||'');
+                  return blob.indexOf('before you continue to youtube')>=0||
+                    (blob.indexOf('we use cookies')>=0&&blob.indexOf('youtube')>=0)||
+                    blob.indexOf('accept all')>=0||
+                    blob.indexOf('reject all')>=0;
+                };
+                var controls=function(){
+                  return Array.from(document.querySelectorAll('button,[role="button"],tp-yt-paper-button,ytd-button-renderer,a[role="button"],input[type="button"],input[type="submit"]')).slice(0,220);
+                };
+                var findAction=function(){
+                  var preferred=['accept all','reject all','i agree','agree'];
+                  var nodes=controls();
+                  for(var p=0;p<preferred.length;p++){
+                    for(var i=0;i<nodes.length;i++){
+                      var node=nodes[i];
+                      var blob=textOf(node);
+                      if(blob.indexOf(preferred[p])>=0){return node;}
+                    }
+                  }
+                  return null;
+                };
+                var scrollConsentContainers=function(){
+                  var changed=false;
+                  try{
+                    var roots=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],tp-yt-paper-dialog,yt-confirm-dialog-renderer,ytd-popup-container,form,main,body')).slice(0,80);
+                    roots.unshift(document.body,document.documentElement);
+                    roots.forEach(function(root){
+                      try{
+                        if(!root){return;}
+                        var blob=textOf(root);
+                        if(blob.indexOf('before you continue')<0&&blob.indexOf('we use cookies')<0&&blob.indexOf('accept all')<0&&blob.indexOf('reject all')<0){return;}
+                        var nodes=[root].concat(root.querySelectorAll?Array.from(root.querySelectorAll('*')).slice(0,260):[]);
+                        nodes.forEach(function(node){
+                          try{
+                            if(node.scrollHeight>node.clientHeight+2){
+                              var before=node.scrollTop;
+                              node.scrollTop=node.scrollHeight;
+                              if(node.scrollTop!==before){changed=true;}
+                            }
+                          }catch(_){}
+                        });
+                      }catch(_){}
+                    });
+                  }catch(_){}
+                  return changed;
+                };
+                if(!isConsentPage()){return;}
+                var clicked=false;
+                var action=findAction();
+                if(action){clicked=clickNode(action);}
+                if(!clicked){
+                  scrollConsentContainers();
+                  setTimeout(function(){
+                    try{
+                      var delayed=findAction();
+                      var delayedCenter=delayed?centerOf(delayed):null;
+                      var delayedClicked=delayed?clickNode(delayed):false;
+                      window.prompt("__GV_MEDIA__"+JSON.stringify({
+                        type:'youtube-consent',
+                        phase:'activity-youtube-consent',
+                        pageUrl:window.location.href,
+                        reason:${JSONObject.quote(reason)},
+                        clicked:!!delayedClicked,
+                        scrolled:true,
+                        matched:delayed?textOf(delayed).slice(0,80):'',
+                        actionX:delayedCenter?delayedCenter.x:-1,
+                        actionY:delayedCenter?delayedCenter.y:-1
+                      }), '');
+                    }catch(_){}
+                  },280);
+                }
+                var center=action?centerOf(action):null;
+                window.prompt("__GV_MEDIA__"+JSON.stringify({
+                  type:'youtube-consent',
+                  phase:'activity-youtube-consent',
+                  pageUrl:window.location.href,
+                  reason:${JSONObject.quote(reason)},
+                  clicked:!!clicked,
+                  scrolled:false,
+                  matched:action?textOf(action).slice(0,80):'',
+                  actionX:center?center.x:-1,
+                  actionY:center?center.y:-1
+                }), '');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+        GvLogger.i(
+            "GvExt",
+            "youtube consent compat dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$normalizedUrl"
+        )
+    }
+
+    private fun scheduleYouTubeConsentFollowUp(session: GeckoSession, delayMs: Long) {
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                val currentTabUrl = tab.url
+                if (!isGoogleVideoSurfaceUrl(currentTabUrl)) {
+                    return@postDelayed
+                }
+                triggerYouTubeConsentCompat(session, currentTabUrl, reason = "follow-up-$delayMs")
+            },
+            delayMs,
+        )
+    }
+
+    private fun maybeDispatchYouTubeConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isGoogleVideoSurfaceUrl(pageUrl)) {
+            return
+        }
+        triggerYouTubeConsentCompat(session, pageUrl, reason)
+        if (reason == "location-change") {
+            scheduleYouTubeConsentFollowUp(session, 900L)
+            scheduleYouTubeConsentFollowUp(session, 2500L)
+            scheduleYouTubeConsentFollowUp(session, 5000L)
+        }
+    }
+
+    private fun maybeDispatchYouTubeConsentNativeTap(
+        session: GeckoSession,
+        actionX: Float,
+        actionY: Float,
+        matched: String,
+        reason: String,
+    ) {
+        if (actionX < 0f || actionY < 0f) {
+            return
+        }
+        val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+        if (!isGoogleVideoSurfaceUrl(activeUrl)) {
+            return
+        }
+        val normalizedMatch = matched.lowercase()
+        val isConsentAction = normalizedMatch.contains("accept all") ||
+            normalizedMatch.contains("reject all") ||
+            normalizedMatch.contains("i agree") ||
+            normalizedMatch == "agree"
+        if (!isConsentAction) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastTap = youtubeConsentNativeTapLastMsBySession[session] ?: 0L
+        if (now - lastTap < 1400L) {
+            return
+        }
+        youtubeConsentNativeTapLastMsBySession[session] = now
+        val clampedX = actionX.coerceIn(1f, (geckoView.width - 1).coerceAtLeast(1).toFloat())
+        val clampedY = actionY.coerceIn(1f, (geckoView.height - 1).coerceAtLeast(1).toFloat())
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                if (!isGoogleVideoSurfaceUrl(tab.url)) {
+                    return@postDelayed
+                }
+                val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "youtube-consent-$reason")
+                GvLogger.i(
+                    "GvInput",
+                    "youtube consent native tap reason=$reason matched=$matched x=${clampedX.toInt()} y=${clampedY.toInt()} handled=$handled"
+                )
+            },
+            160L,
+        )
+    }
+
     private val permissionDelegate = object : GeckoSession.PermissionDelegate {
         override fun onContentPermissionRequest(
             session: GeckoSession,
@@ -2479,8 +2701,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             val uriHost = runCatching { android.net.Uri.parse(permission.uri).host }.getOrNull()
             val thirdPartyHost = runCatching { android.net.Uri.parse(permission.thirdPartyOrigin).host }.getOrNull()
             val facebookScoped = isFacebookHost(uriHost) || isFacebookHost(thirdPartyHost)
+            val googleVideoScoped = isGoogleVideoSurfaceHost(uriHost) || isGoogleVideoSurfaceHost(thirdPartyHost)
             val decision = when {
-                facebookScoped &&
+                (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
                             permission.permission == GeckoSession.PermissionDelegate.PERMISSION_PERSISTENT_STORAGE ||
@@ -2492,7 +2715,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             val tabId = tabController.findTabBySession(session)?.id ?: "unknown"
             GvLogger.i(
                 "GvNav",
-                "content permission tabId=$tabId uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision facebookScoped=$facebookScoped"
+                "content permission tabId=$tabId uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision facebookScoped=$facebookScoped googleVideoScoped=$googleVideoScoped"
             )
             return GeckoResult.fromValue(decision)
         }
@@ -2670,14 +2893,53 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     private fun dispatchPointerMotion(action: Int, downTime: Long): Boolean {
+        return dispatchPointerMotionAt(
+            action = action,
+            downTime = downTime,
+            x = pointerX,
+            y = pointerY,
+            forceMouse = false,
+            reason = "pointer",
+        )
+    }
+
+    private fun dispatchNativeMouseTapAt(x: Float, y: Float, reason: String): Boolean {
+        val downTime = SystemClock.uptimeMillis()
+        val handledDown = dispatchPointerMotionAt(
+            action = MotionEvent.ACTION_DOWN,
+            downTime = downTime,
+            x = x,
+            y = y,
+            forceMouse = true,
+            reason = reason,
+        )
+        val handledUp = dispatchPointerMotionAt(
+            action = MotionEvent.ACTION_UP,
+            downTime = downTime,
+            x = x,
+            y = y,
+            forceMouse = true,
+            reason = reason,
+        )
+        return handledDown || handledUp
+    }
+
+    private fun dispatchPointerMotionAt(
+        action: Int,
+        downTime: Long,
+        x: Float,
+        y: Float,
+        forceMouse: Boolean,
+        reason: String,
+    ): Boolean {
         val activeUrl = tabController.getActiveTab()?.url.orEmpty()
-        val useDesktopMouse = isFacebookUrl(activeUrl)
+        val useDesktopMouse = forceMouse || isFacebookUrl(activeUrl) || isGoogleVideoSurfaceUrl(activeUrl)
         val eventTime = SystemClock.uptimeMillis()
         val event = if (useDesktopMouse) {
             if (action == MotionEvent.ACTION_DOWN) {
                 GvLogger.i(
                     "GvInput",
-                    "facebook pointer click source=mouse x=${pointerX.toInt()} y=${pointerY.toInt()}"
+                    "native pointer click source=mouse reason=$reason x=${x.toInt()} y=${y.toInt()}"
                 )
             }
             val properties = arrayOf(
@@ -2688,8 +2950,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             )
             val coords = arrayOf(
                 MotionEvent.PointerCoords().apply {
-                    x = pointerX
-                    y = pointerY
+                    this.x = x
+                    this.y = y
                     pressure = 1f
                     size = 1f
                 },
@@ -2715,8 +2977,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 downTime,
                 eventTime,
                 action,
-                pointerX,
-                pointerY,
+                x,
+                y,
                 0,
             ).apply {
                 source = InputDevice.SOURCE_TOUCHSCREEN
@@ -2776,15 +3038,85 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                       var style=window.getComputedStyle(cur);
                       var oy=(style&&style.overflowY||'').toLowerCase();
                       var ox=(style&&style.overflowX||'').toLowerCase();
-                      var canY=(oy==='auto'||oy==='scroll'||oy==='overlay')&&cur.scrollHeight>cur.clientHeight+1;
-                      var canX=(ox==='auto'||ox==='scroll'||ox==='overlay')&&cur.scrollWidth>cur.clientWidth+1;
+                      var canY=(oy==='auto'||oy==='scroll'||oy==='overlay'||oy==='visible'||oy==='')&&cur.scrollHeight>cur.clientHeight+1;
+                      var canX=(ox==='auto'||ox==='scroll'||ox==='overlay'||ox==='visible'||ox==='')&&cur.scrollWidth>cur.clientWidth+1;
                       if((dy!==0&&canY)||(dx!==0&&canX)){return cur;}
                     }catch(_){}
                     cur=cur.parentElement;
                   }
                   return null;
                 };
-                var target=scrollable(pick())||document.scrollingElement||document.documentElement||document.body;
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                    var r=node.getBoundingClientRect();
+                    return r.width>8&&r.height>8&&r.bottom>0&&r.right>0&&r.top<h&&r.left<w;
+                  }catch(_){return false;}
+                };
+                var looksModal=function(node){
+                  try{
+                    if(!visible(node)){return false;}
+                    var r=node.getBoundingClientRect();
+                    var role=((node.getAttribute&&node.getAttribute('role'))||'').toLowerCase();
+                    var aria=((node.getAttribute&&node.getAttribute('aria-modal'))||'').toLowerCase();
+                    var cls=((typeof node.className==='string')?node.className:'').toLowerCase();
+                    var id=((node.getAttribute&&node.getAttribute('id'))||'').toLowerCase();
+                    var largeFixed=false;
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.position==='fixed'||style.position==='absolute')&&r.width>w*0.35&&r.height>h*0.35){largeFixed=true;}
+                    return role==='dialog'||aria==='true'||cls.indexOf('dialog')>=0||cls.indexOf('modal')>=0||id.indexOf('dialog')>=0||largeFixed;
+                  }catch(_){return false;}
+                };
+                var scrollableDescendant=function(root){
+                  try{
+                    if(!root||!root.querySelectorAll){return null;}
+                    var nodes=[root].concat(Array.from(root.querySelectorAll('*')).slice(0,220));
+                    var best=null,bestScore=-1;
+                    for(var i=0;i<nodes.length;i++){
+                      var node=nodes[i];
+                      if(!visible(node)){continue;}
+                      var style=window.getComputedStyle(node);
+                      var oy=(style&&style.overflowY||'').toLowerCase();
+                      var ox=(style&&style.overflowX||'').toLowerCase();
+                      var canY=(dy!==0)&&(oy==='auto'||oy==='scroll'||oy==='overlay'||oy==='visible'||oy==='')&&node.scrollHeight>node.clientHeight+1;
+                      var canX=(dx!==0)&&(ox==='auto'||ox==='scroll'||ox==='overlay'||ox==='visible'||ox==='')&&node.scrollWidth>node.clientWidth+1;
+                      if(!canY&&!canX){continue;}
+                      var r=node.getBoundingClientRect();
+                      var score=(r.width*r.height)+(canY?1000000:0)+(canX?100000:0);
+                      if(score>bestScore){best=node;bestScore=score;}
+                    }
+                    return best;
+                  }catch(_){return null;}
+                };
+                var modalTarget=function(){
+                  try{
+                    var picked=pick();
+                    var cur=picked;
+                    while(cur&&cur!==document.documentElement){
+                      if(looksModal(cur)){
+                        var descendant=scrollableDescendant(cur);
+                        if(descendant){return descendant;}
+                      }
+                      cur=cur.parentElement;
+                    }
+                    var nodes=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],tp-yt-paper-dialog,yt-confirm-dialog-renderer,ytd-popup-container,div[class*="dialog"],div[class*="modal"]')).slice(0,80);
+                    var best=null,bestScore=-1;
+                    for(var i=0;i<nodes.length;i++){
+                      var node=nodes[i];
+                      if(!looksModal(node)){continue;}
+                      var descendant=scrollableDescendant(node);
+                      if(!descendant){continue;}
+                      var r=node.getBoundingClientRect();
+                      var centerPenalty=Math.abs((r.left+r.right)/2-x)+Math.abs((r.top+r.bottom)/2-y);
+                      var score=(r.width*r.height)-centerPenalty;
+                      if(score>bestScore){best=descendant;bestScore=score;}
+                    }
+                    return best;
+                  }catch(_){return null;}
+                };
+                var target=modalTarget()||scrollable(pick())||document.scrollingElement||document.documentElement||document.body;
                 var byY=target.scrollTop||window.scrollY||0;
                 var byX=target.scrollLeft||window.scrollX||0;
                 if(target&&target.scrollBy){target.scrollBy(dx,dy);} else {window.scrollBy(dx,dy);}
@@ -2941,6 +3273,22 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             )
             return
         }
+        if (type == "youtube-consent") {
+            val actionX = payload.optDouble("actionX", -1.0).toFloat()
+            val actionY = payload.optDouble("actionY", -1.0).toFloat()
+            GvLogger.i(
+                "GvLayout",
+                "youtube consent pageUrl=$pageUrl reason=${payload.optString("reason")} clicked=${payload.optBoolean("clicked")} scrolled=${payload.optBoolean("scrolled")} matched=${payload.optString("matched")} action=${actionX.toInt()},${actionY.toInt()}"
+            )
+            maybeDispatchYouTubeConsentNativeTap(
+                session = session,
+                actionX = actionX,
+                actionY = actionY,
+                matched = payload.optString("matched"),
+                reason = payload.optString("reason"),
+            )
+            return
+        }
         if (type == "viewport-compat") {
             GvLogger.i(
                 "GvLayout",
@@ -3079,6 +3427,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         return isFacebookHost(uri.host)
     }
 
+    private fun isGoogleVideoSurfaceUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        return isGoogleVideoSurfaceHost(uri.host)
+    }
+
     private fun isWebHttpUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -3105,6 +3458,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private fun isFacebookHost(hostValue: String?): Boolean {
         val host = hostValue?.lowercase().orEmpty().removePrefix("www.")
         return host == "facebook.com" || host.endsWith(".facebook.com")
+    }
+
+    private fun isGoogleVideoSurfaceHost(hostValue: String?): Boolean {
+        val host = hostValue?.lowercase().orEmpty().removePrefix("www.")
+        return host == "youtube.com" ||
+            host.endsWith(".youtube.com") ||
+            host == "youtu.be" ||
+            host == "youtube-nocookie.com" ||
+            host.endsWith(".youtube-nocookie.com") ||
+            host == "googlevideo.com" ||
+            host.endsWith(".googlevideo.com") ||
+            host == "google.com" ||
+            host.endsWith(".google.com")
     }
 
     private fun isFacebookNativeScheme(uriValue: String): Boolean {
