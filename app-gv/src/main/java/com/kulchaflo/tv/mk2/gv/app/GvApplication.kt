@@ -2,6 +2,7 @@ package com.kulchaflo.tv.mk2.gv.app
 
 import android.app.Application
 import com.kulchaflo.tv.mk2.gv.BuildConfig
+import com.kulchaflo.tv.mk2.gv.extensions.GvBuiltInExtension
 import com.kulchaflo.tv.mk2.gv.util.GvLogger
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
@@ -46,7 +47,7 @@ class GvApplication : Application() {
                 .consoleOutput(BuildConfig.DEBUG)
                 .build()
 
-        return runCatching {
+        val runtime = runCatching {
             GeckoRuntime.create(this, buildSettings())
         }.getOrElse { throwable ->
             if (throwable is IllegalStateException &&
@@ -58,5 +59,19 @@ class GvApplication : Application() {
                 throw throwable
             }
         }
+        runtime.getWebExtensionController()
+            .ensureBuiltIn(GvBuiltInExtension.LOCATION, GvBuiltInExtension.ID)
+            .accept(
+                { extension ->
+                    GvLogger.i(
+                        "GvRuntime",
+                        "built-in extension ready id=${extension?.id ?: GvBuiltInExtension.ID} version=${GvBuiltInExtension.VERSION}"
+                    )
+                },
+                { throwable ->
+                    GvLogger.e("GvRuntime", "built-in extension install failed", throwable)
+                },
+            )
+        return runtime
     }
 }

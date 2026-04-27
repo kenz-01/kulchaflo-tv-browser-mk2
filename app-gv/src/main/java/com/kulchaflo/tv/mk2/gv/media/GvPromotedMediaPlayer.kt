@@ -6,8 +6,10 @@ import android.view.ViewGroup
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import com.kulchaflo.tv.mk2.gv.util.GvLogger
 
@@ -20,6 +22,8 @@ class GvPromotedMediaPlayer(
     private var activeSource: GvMediaPathController.Observation? = null
 
     fun isPromoted(): Boolean = activeSource != null
+
+    fun currentSourceUrl(): String? = activeSource?.url
 
     fun play(source: GvMediaPathController.Observation) {
         if (activeSource?.url == source.url) {
@@ -42,8 +46,15 @@ class GvPromotedMediaPlayer(
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("KulchaFlo-MkII-GV")
             .setAllowCrossProtocolRedirects(true)
+        val trackSelector = DefaultTrackSelector(context).apply {
+            setParameters(
+                buildUponParameters()
+                    .setForceHighestSupportedBitrate(true)
+            )
+        }
 
         val exoPlayer = ExoPlayer.Builder(context)
+            .setTrackSelector(trackSelector)
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context)
                     .setDataSourceFactory(dataSourceFactory)
@@ -73,6 +84,14 @@ class GvPromotedMediaPlayer(
                     }
                 }
 
+                override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    val width = videoSize.width
+                    val height = videoSize.height
+                    if (width > 0 && height > 0) {
+                        GvLogger.i(TAG, "player video size=${width}x$height url=${source.url}")
+                    }
+                }
+
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     GvLogger.e(
                         TAG,
@@ -95,7 +114,7 @@ class GvPromotedMediaPlayer(
 
         GvLogger.i(
             TAG,
-            "player backend=media3 url=${source.url} mimeType=${normalizeMimeType(source.mimeHint) ?: "unknown"} pageKind=${source.pageKind}"
+            "player backend=media3 qualityPolicy=highest-supported-bitrate url=${source.url} mimeType=${normalizeMimeType(source.mimeHint) ?: "unknown"} pageKind=${source.pageKind}"
         )
     }
 

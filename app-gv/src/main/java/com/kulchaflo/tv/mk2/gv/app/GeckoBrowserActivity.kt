@@ -59,6 +59,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val lastProbeUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val loadRetryAttemptsBySession = LinkedHashMap<GeckoSession, LinkedHashMap<String, Int>>()
     private val facebookCompatLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
@@ -138,6 +139,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         return
                     }
                     if (promotedMediaPlayer.isPromoted()) {
+                        promotedMediaPlayer.currentSourceUrl()?.let { sourceUrl ->
+                            suppressDirectMediaPromotion(sourceUrl, reason = "back-pressed")
+                        }
                         promotedMediaPlayer.stop(reason = "back-pressed")
                         geckoView.visibility = View.VISIBLE
                         return
@@ -302,7 +306,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 } else {
                     maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
                     triggerDirectMediaProbe(session, pageUrl)
-                    triggerUnifiedPageCompat(session, pageUrl)
+                    if (shouldApplyUnifiedCompat(pageUrl)) {
+                        triggerUnifiedPageCompat(session, pageUrl)
+                    } else {
+                        GvLogger.i(
+                            "GvExt",
+                            "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$pageUrl reason=media-surface"
+                        )
+                    }
                 }
             }
         }
@@ -472,13 +483,17 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
 
         override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+            val liveMediaSurface = isLiveMediaSurfaceUrl(tabController.findTabBySession(session)?.url.orEmpty())
             val controller = WindowInsetsControllerCompat(window, window.decorView)
-            if (fullScreen) {
+            if (fullScreen && !liveMediaSurface) {
                 controller.hide(WindowInsetsCompat.Type.systemBars())
             } else {
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }
-            GvLogger.i("GvContent", "fullscreen tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} enabled=$fullScreen")
+            GvLogger.i(
+                "GvContent",
+                "fullscreen tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} enabled=$fullScreen liveMediaSurface=$liveMediaSurface"
+            )
         }
     }
 
@@ -718,6 +733,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
+                if (isDirectMediaPromotionSuppressed(observation.url)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "promote deferred sourceKind=EXTRACTED_STREAM url=${observation.url} reason=suppressed-after-back"
+                    )
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 GvLogger.i(
                     "GvMedia",
                     "promote accepted sourceKind=EXTRACTED_STREAM pageKind=${observation.pageKind} url=${observation.url} reason=${observation.reason}"
@@ -818,6 +841,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             GvLogger.i(
                 "GvExt",
                 "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl reason=facebook-host"
+            )
+            return
+        }
+        if (!shouldApplyUnifiedCompat(normalizedUrl)) {
+            GvLogger.i(
+                "GvExt",
+                "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl reason=media-surface"
             )
             return
         }
@@ -3202,6 +3232,41 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             )
             return
         }
+        if (type == "tego-quality") {
+            val results = payload.optJSONArray("results") ?: JSONArray()
+            val resultSummary = buildString {
+                val limit = minOf(results.length(), 5)
+                for (index in 0 until limit) {
+                    val result = results.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append(result.optString("source"))
+                    append(":applied=").append(result.optBoolean("applied"))
+                    append(":selected=").append(result.optInt("selectedHeight"))
+                    val bitrate = result.optInt("selectedBitrate")
+                    if (bitrate > 0) append(":bitrate=").append(bitrate)
+                    val reasonValue = result.optString("reason")
+                    if (reasonValue.isNotBlank()) append(":reason=").append(reasonValue)
+                }
+            }
+            val videos = payload.optJSONArray("videos") ?: JSONArray()
+            val videoSummary = buildString {
+                val limit = minOf(videos.length(), 4)
+                for (index in 0 until limit) {
+                    val video = videos.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append("#").append(index + 1)
+                    append(":").append(video.optInt("videoWidth"))
+                    append("x").append(video.optInt("videoHeight"))
+                    append(":ready=").append(video.optInt("readyState"))
+                    append(":paused=").append(video.optBoolean("paused"))
+                }
+            }
+            GvLogger.i(
+                "GvMedia",
+                "tego quality pageUrl=$pageUrl applied=${payload.optBoolean("applied")} playerCount=${payload.optInt("playerCount")} results=${resultSummary.ifBlank { "none" }} videos=${videoSummary.ifBlank { "none" }}"
+            )
+            return
+        }
         if (type == "facebook-compat") {
             val cookieClicked = payload.optBoolean("cookieClicked")
             if (payload.optBoolean("resolved")) {
@@ -3355,6 +3420,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         private const val EDGE_SCROLL_MULTIPLIER = 2.0f
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
         private const val POINTER_IDLE_HIDE_MS = 3500L
+        private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
         private const val GLOBAL_SITE_SCALE = 0.76
         private const val GLOBAL_WIDTH_COMPENSATION = 1.14
         private const val EXTRA_URL = "url"
@@ -3498,6 +3564,50 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
         val entryPoint = uri.getQueryParameter("entry_point")?.lowercase().orEmpty()
         return entryPoint.contains("logged_out")
+    }
+
+    private fun shouldApplyUnifiedCompat(url: String): Boolean {
+        return !isLiveMediaSurfaceUrl(url)
+    }
+
+    private fun isLiveMediaSurfaceUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return when {
+            host == "cbc.bb" && path.startsWith("/live") -> true
+            host == "caribvision.tv" -> true
+            host == "abstvradio.com" && path.contains("live-streaming") -> true
+            host == "player.tegotv.com" -> true
+            path.contains("/player.php") -> true
+            path.contains("/live-stream") -> true
+            else -> false
+        }
+    }
+
+    private fun suppressDirectMediaPromotion(
+        url: String,
+        reason: String,
+        durationMs: Long = DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS,
+    ) {
+        val normalizedUrl = url.ifBlank { return }
+        val untilMs = SystemClock.uptimeMillis() + durationMs
+        directMediaPromotionSuppressedUntilByUrl[normalizedUrl] = untilMs
+        GvLogger.i(
+            "GvMedia",
+            "direct media promotion suppressed url=$normalizedUrl until=$untilMs reason=$reason"
+        )
+    }
+
+    private fun isDirectMediaPromotionSuppressed(url: String): Boolean {
+        val normalizedUrl = url.ifBlank { return false }
+        val now = SystemClock.uptimeMillis()
+        val untilMs = directMediaPromotionSuppressedUntilByUrl[normalizedUrl] ?: return false
+        if (untilMs <= now) {
+            directMediaPromotionSuppressedUntilByUrl.remove(normalizedUrl)
+            return false
+        }
+        return true
     }
 
     private fun extractFacebookDialogNextUrl(url: String): String? {
