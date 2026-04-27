@@ -1,5 +1,6 @@
 package com.kulchaflo.tv.mk2.gv.app
 
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -193,6 +194,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 }
             },
         )
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val launchUrl = resolveLaunchUrl(intent) ?: return
+        loadLaunchUrl(launchUrl, reason = "new-intent")
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -656,7 +664,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private fun restoreTabs(savedInstanceState: Bundle?) {
         val restoredUrls = savedInstanceState?.getStringArrayList(STATE_TAB_URLS).orEmpty()
         if (restoredUrls.isEmpty()) {
-            currentUrl = BuildConfig.DEFAULT_START_URL
+            currentUrl = resolveLaunchUrl(intent) ?: BuildConfig.DEFAULT_START_URL
             tabController.createTab(currentUrl, activate = true)
             GvLogger.i("GvTabs", "restore default url=$currentUrl")
             return
@@ -669,6 +677,34 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val targetId = restoredTabs.getOrNull(restoredActiveIndex.coerceIn(0, restoredTabs.lastIndex))?.id ?: restoredTabs.first().id
         tabController.activateTab(targetId)
         GvLogger.i("GvTabs", "restore tabs count=${restoredTabs.size} activeIndex=$restoredActiveIndex activeId=$targetId")
+    }
+
+    private fun resolveLaunchUrl(intent: Intent?): String? {
+        val rawUrl =
+            intent?.getStringExtra(EXTRA_URL)
+                ?: intent?.dataString
+                ?: return null
+        val url = rawUrl.trim()
+        if (!isWebHttpUrl(url)) {
+            GvLogger.w("GvNav", "ignored launch url=$rawUrl reason=non-http")
+            return null
+        }
+        return url
+    }
+
+    private fun loadLaunchUrl(url: String, reason: String) {
+        val activeTab = tabController.getActiveTab()
+        if (activeTab == null) {
+            currentUrl = url
+            tabController.createTab(url, activate = true)
+            GvLogger.i("GvNav", "launch url created tab reason=$reason url=$url")
+            return
+        }
+        currentUrl = url
+        applyUserAgentPolicyForUrl(activeTab.session, url, reason = "launch-$reason")
+        applyMediaSessionDelegateForUrl(activeTab.session, url, reason = "launch-$reason")
+        activeTab.session.loadUri(url)
+        GvLogger.i("GvNav", "launch url loaded tabId=${activeTab.id} reason=$reason url=$url")
     }
 
     private fun handleMediaObservation(observation: GvMediaPathController.Observation?) {
@@ -1186,6 +1222,29 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             javascript:(function(){
               try{
                 var lower=function(v){return ((v||'')+'').trim().toLowerCase();};
+                var compact=function(value,maxLen){
+                  try{
+                    return lower(((value||'')+'').replace(/\s+/g,' ').trim().slice(0,maxLen||220));
+                  }catch(_){return '';}
+                };
+                var isEditableNode=function(node){
+                  var cur=node;
+                  for(var depth=0; depth<4 && cur; depth++){
+                    try{
+                      var tag=(cur.tagName||'').toLowerCase();
+                      var role=lower(cur.getAttribute&&cur.getAttribute('role'));
+                      if(tag==='textarea'||cur.isContentEditable||role==='textbox'){return true;}
+                      if(tag==='input'){
+                        var type=((cur.getAttribute('type')||'text')+'').toLowerCase();
+                        if(type!=='button'&&type!=='submit'&&type!=='checkbox'&&type!=='radio'&&type!=='range'&&type!=='file'&&type!=='hidden'){
+                          return true;
+                        }
+                      }
+                    }catch(_){}
+                    cur=cur.parentElement;
+                  }
+                  return false;
+                };
                 var path=lower((window.location&&window.location.pathname)||'');
                 if(path==='/reg' || path==='/login'){
                   return;
@@ -1554,7 +1613,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                   return;
                 }
                 if(!window.__kfFbCompatState){
-                  window.__kfFbCompatState={lastUserGestureAt:0,lastEditableGestureAt:0,autoBlurCount:0,cookieClickCount:0,bottomBarHideCount:0,topLoginHideCount:0,blockingOverlayHideCount:0,dimRestoreCount:0};
+                  window.__kfFbCompatState={lastUserGestureAt:0,lastEditableGestureAt:0,autoBlurCount:0,cookieClickCount:0,bottomBarHideCount:0,topLoginHideCount:0,blockingOverlayHideCount:0,whiteVeilHideCount:0,dimRestoreCount:0,persistentSweepInstalled:false};
                   var isEditableNode=function(node){
                     var cur=node;
                     for(var depth=0; depth<4 && cur; depth++){
@@ -1628,6 +1687,20 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     return compact(text,220);
                   }catch(_){return '';}
                 };
+                var shallowTextOf=function(node){
+                  try{
+                    if(!node){return '';}
+                    var text='';
+                    if(node.value){text+=node.value+' ';}
+                    if(node.getAttribute){text+=(node.getAttribute('aria-label')||'')+' ';}
+                    var children=node.childNodes||[];
+                    for(var i=0;i<children.length&&i<12;i++){
+                      var child=children[i];
+                      if(child&&child.nodeType===3){text+=(child.nodeValue||'')+' ';}
+                    }
+                    return compact(text,180);
+                  }catch(_){return '';}
+                };
                 var attrBlob=function(node){
                   try{
                     if(!node||!node.getAttribute){return '';}
@@ -1658,6 +1731,24 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     node.setAttribute('aria-hidden','true');
                     return true;
                   }catch(_){return false;}
+                };
+                var rgbaParts=function(value){
+                  try{
+                    var match=((value||'')+'').match(/rgba?\(([^)]+)\)/i);
+                    if(!match){return null;}
+                    var parts=match[1].split(',').map(function(part){return parseFloat(part.trim());});
+                    if(parts.length<3){return null;}
+                    return {
+                      r:parts[0]||0,
+                      g:parts[1]||0,
+                      b:parts[2]||0,
+                      a:parts.length>=4 && !isNaN(parts[3]) ? parts[3] : 1
+                    };
+                  }catch(_){return null;}
+                };
+                var isWhitePaint=function(value){
+                  var parts=rgbaParts(value);
+                  return !!(parts && parts.r>=235 && parts.g>=235 && parts.b>=235 && parts.a>=0.55);
                 };
                 var climbClickable=function(node){
                   var cur=node;
@@ -1737,6 +1828,56 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                       return true;
                     }catch(_){return false;}
                   };
+                  var pointTargets=[
+                    [0.68,0.80],
+                    [0.66,0.74],
+                    [0.74,0.80],
+                    [0.50,0.80],
+                    [0.50,0.70]
+                  ];
+                  for(var pt=0;pt<pointTargets.length;pt++){
+                    try{
+                      var node=document.elementFromPoint(
+                        Math.round(window.innerWidth*pointTargets[pt][0]),
+                        Math.round(window.innerHeight*pointTargets[pt][1])
+                      );
+                      var cur=node;
+                      for(var depth=0;depth<8&&cur&&cur!==document.body&&cur!==document.documentElement;depth++){
+                        var pointBlob=compact(shallowTextOf(cur)+' '+textOf(cur)+' '+attrBlob(cur),260);
+                        if(
+                          pointBlob.indexOf('allow all cookies')>=0 ||
+                          pointBlob.indexOf('accept all cookies')>=0 ||
+                          (
+                            pointBlob.indexOf('allow')>=0 &&
+                            pointBlob.indexOf('cookie')>=0 &&
+                            pointBlob.indexOf('learn more')<0
+                          )
+                        ){
+                          if(clickNode(cur)){return true;}
+                        }
+                        cur=cur.parentElement;
+                      }
+                    }catch(_){}
+                  }
+                  try{
+                    var xpath="//*[contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'allow all cookies') or contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all cookies')]";
+                    var result=document.evaluate(xpath,document,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
+                    var best=null;
+                    var bestArea=Number.MAX_VALUE;
+                    var count=Math.min(result.snapshotLength||0,60);
+                    for(var xp=0;xp<count;xp++){
+                      var candidate=result.snapshotItem(xp);
+                      if(!visible(candidate)){continue;}
+                      var rect=candidate.getBoundingClientRect();
+                      var area=rect.width*rect.height;
+                      if(area<20||area>bestArea){continue;}
+                      var candidateBlob=compact(shallowTextOf(candidate)+' '+attrBlob(candidate),240);
+                      if(candidateBlob.indexOf('learn more')>=0){continue;}
+                      best=candidate;
+                      bestArea=area;
+                    }
+                    if(best&&clickNode(best)){return true;}
+                  }catch(_){}
                   var nodes=Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"]')).slice(0,80);
                   for(var i=0;i<nodes.length;i++){
                     var node=nodes[i];
@@ -1823,9 +1964,22 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 var restoreDimmedVideoSurfaces=function(){
                   var changed=0;
                   var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                  var candidates=[document.documentElement,document.body];
                   for(var i=0;i<videos.length;i++){
                     var cur=videos[i];
-                    for(var depth=0; depth<4 && cur; depth++){
+                    for(var depth=0; depth<12 && cur; depth++){
+                      candidates.push(cur);
+                      cur=cur.parentElement;
+                    }
+                  }
+                  try{
+                    Array.from(document.querySelectorAll('main,[role="main"],div[role="main"],div[class*="video"],div[class*="watch"],div[class*="player"]')).slice(0,80).forEach(function(node){
+                      candidates.push(node);
+                    });
+                  }catch(_){}
+                  for(var c=0;c<candidates.length;c++){
+                    var cur=candidates[c];
+                    if(!cur||!cur.style){continue;}
                       try{
                         var style=window.getComputedStyle(cur);
                         if(style){
@@ -1838,11 +1992,69 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                           }
                         }
                       }catch(_){}
-                      cur=cur.parentElement;
-                    }
                   }
                   if(changed>0){
                     window.__kfFbCompatState.dimRestoreCount=(window.__kfFbCompatState.dimRestoreCount||0)+changed;
+                    return true;
+                  }
+                  return false;
+                };
+                var hideWhiteVeils=function(){
+                  var changed=0;
+                  var nodes=[];
+                  var centerX=window.innerWidth/2;
+                  var centerY=window.innerHeight/2;
+                  var seen=[];
+                  var addNode=function(node){
+                    try{
+                      if(!node||seen.indexOf(node)>=0){return;}
+                      seen.push(node);
+                      nodes.push(node);
+                    }catch(_){}
+                  };
+                  try{
+                    Array.from(document.elementsFromPoint(centerX,centerY)||[]).forEach(addNode);
+                    Array.from(document.elementsFromPoint(centerX,Math.round(window.innerHeight*0.82))||[]).forEach(addNode);
+                  }catch(_){}
+                  try{
+                    Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],[data-testid*="dialog"],[data-testid*="overlay"],div[class*="overlay"],div[class*="backdrop"],div[class*="dialog"],div[style*="position: fixed"],div[style*="position:fixed"]')).slice(0,80).forEach(addNode);
+                  }catch(_){}
+                  for(var i=0;i<nodes.length;i++){
+                    var node=nodes[i];
+                    try{
+                      if(!visible(node)){continue;}
+                      if(node.querySelector&&node.querySelector('video')){continue;}
+                      var rect=node.getBoundingClientRect();
+                      if(rect.width<(window.innerWidth*0.55) || rect.height<(window.innerHeight*0.45)){continue;}
+                      var coversCenter=rect.left<=centerX&&rect.right>=centerX&&rect.top<=centerY&&rect.bottom>=centerY;
+                      var coversViewport=rect.width>(window.innerWidth*0.82)&&rect.height>(window.innerHeight*0.62);
+                      if(!coversCenter && !coversViewport){continue;}
+                      var style=window.getComputedStyle(node);
+                      if(!style || style.pointerEvents==='none'){continue;}
+                      var fixedLike=style.position==='fixed'||style.position==='sticky'||style.position==='absolute';
+                      var opacity=parseFloat(style.opacity||'1');
+                      var filtered=style.filter&&style.filter!=='none';
+                      var whitePaint=isWhitePaint(style.backgroundColor);
+                      var blob=compact(shallowTextOf(node)+' '+attrBlob(node),220);
+                      var authOrConsent=(
+                        blob.indexOf('cookie')>=0 ||
+                        blob.indexOf('consent')>=0 ||
+                        blob.indexOf('log in')>=0 ||
+                        blob.indexOf('login')>=0 ||
+                        blob.indexOf('sign up')>=0 ||
+                        blob.indexOf('create new account')>=0 ||
+                        blob.indexOf('not now')>=0 ||
+                        blob.indexOf('continue')>=0
+                      );
+                      var sparseVeil=blob.length<90;
+                      if(!(fixedLike||coversViewport)){continue;}
+                      if(!(whitePaint||opacity<0.94||filtered)){continue;}
+                      if(!(sparseVeil||authOrConsent)){continue;}
+                      if(hideNode(node)){changed+=1;}
+                    }catch(_){}
+                  }
+                  if(changed>0){
+                    window.__kfFbCompatState.whiteVeilHideCount=(window.__kfFbCompatState.whiteVeilHideCount||0)+changed;
                     return true;
                   }
                   return false;
@@ -1891,10 +2103,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 var clickedCookie=clickCookieConsent();
                 var hidTopLogin=hideTopLoginHeader();
                 var hidOverlay=hideBlockingOverlay();
+                var hidWhiteVeil=false;
                 var restoredDim=restoreDimmedVideoSurfaces();
                 var hidBar=hideBottomLoginRail();
                 var hidDialog=hideLoginDialogs();
-                var lightSweep=function(){
+                var lightSweep=function(reason){
                   try{clickCookieConsent();}catch(_){}
                   try{hideTopLoginHeader();}catch(_){}
                   try{hideBlockingOverlay();}catch(_){}
@@ -1902,8 +2115,20 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                   try{hideBottomLoginRail();}catch(_){}
                   try{hideLoginDialogs();}catch(_){}
                 };
-                try{setTimeout(lightSweep,650);}catch(_){}
-                try{setTimeout(lightSweep,1600);}catch(_){}
+                window.__kfFbCompatLightSweep=lightSweep;
+                  try{setTimeout(function(){lightSweep('timeout-650');},650);}catch(_){}
+                  try{setTimeout(function(){lightSweep('timeout-1600');},1600);}catch(_){}
+                  try{setTimeout(function(){lightSweep('timeout-4200');},4200);}catch(_){}
+                  try{
+                  if(!window.__kfFbCompatState.persistentSweepInstalled){
+                    window.__kfFbCompatState.persistentSweepInstalled=true;
+                    window.__kfFbCompatObserver=new MutationObserver(function(){lightSweep('mutation');});
+                    window.__kfFbCompatObserver.observe(document.documentElement,{childList:true,subtree:true});
+                    window.__kfFbCompatTimer=setInterval(function(){lightSweep('interval');},1800);
+                    window.addEventListener('pointerdown',function(){setTimeout(function(){lightSweep('pointerdown');},260);},true);
+                    window.addEventListener('keydown',function(){setTimeout(function(){lightSweep('keydown');},260);},true);
+                  }
+                }catch(_){}
                 window.prompt("__GV_MEDIA__"+JSON.stringify({
                   type:'facebook-compat',
                   phase:'activity-facebook-compat',
@@ -1914,17 +2139,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                   loginDialogHidden:!!hidDialog,
                   topLoginHeaderHidden:!!hidTopLogin,
                   blockingOverlayHidden:!!hidOverlay,
+                  whiteVeilHidden:!!hidWhiteVeil,
                   dimRestored:!!restoredDim,
                   autoBlurCount:window.__kfFbCompatState.autoBlurCount||0,
                   cookieClickCount:window.__kfFbCompatState.cookieClickCount||0,
                   bottomBarHideCount:window.__kfFbCompatState.bottomBarHideCount||0,
                   topLoginHideCount:window.__kfFbCompatState.topLoginHideCount||0,
                   blockingOverlayHideCount:window.__kfFbCompatState.blockingOverlayHideCount||0,
-                  dimRestoreCount:window.__kfFbCompatState.dimRestoreCount||0,
-                  activeElement:nodeSummary(document.activeElement),
-                  activeElementChain:ancestrySummary(document.activeElement,6),
-                  centerStack:centerStackSummary(),
-                  overlayCandidates:overlayCandidatesSummary()
+                  whiteVeilHideCount:window.__kfFbCompatState.whiteVeilHideCount||0,
+                  dimRestoreCount:window.__kfFbCompatState.dimRestoreCount||0
                 }), '');
               }catch(_){}
             })();
@@ -2523,6 +2746,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         private const val POINTER_IDLE_HIDE_MS = 3500L
         private const val GLOBAL_SITE_SCALE = 0.76
         private const val GLOBAL_WIDTH_COMPENSATION = 1.14
+        private const val EXTRA_URL = "url"
         private const val CONSENT_DEFAULT_DECISION = "allow"
         private val CONSENT_CONTEXT_KEYWORDS = listOf(
             "cookie",
