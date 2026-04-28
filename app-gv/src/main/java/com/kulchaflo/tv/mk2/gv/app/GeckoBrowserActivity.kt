@@ -2396,6 +2396,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 };
                 var wakeFacebookVideo=function(){
                   var result={videoCount:0,playAttempted:false,playButtonClicked:false,states:[]};
+                  var tapSurface=function(node){
+                    try{
+                      if(!node||!visible(node)){return false;}
+                      try{node.scrollIntoView({block:'center',inline:'center'});}catch(_){}
+                      try{
+                        node.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true,view:window}));
+                        node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+                        node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+                      }catch(_){}
+                      try{node.click();}catch(_){}
+                      return true;
+                    }catch(_){return false;}
+                  };
                   try{
                     var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
                     result.videoCount=videos.length;
@@ -2421,8 +2434,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                           if(playResult&&playResult.catch){playResult.catch(function(){});}
                         }catch(_){}
                       }
+                      if(!result.playButtonClicked){
+                        try{
+                          if(tapSurface(video)){
+                            result.playButtonClicked=true;
+                          }
+                        }catch(_){}
+                      }
                     }
-                    if(!result.playAttempted){
+                    if(!result.playAttempted && !result.playButtonClicked){
                       var playWords=['play video','play','watch now'];
                       var nodes=controls();
                       for(var p=0;p<nodes.length;p++){
