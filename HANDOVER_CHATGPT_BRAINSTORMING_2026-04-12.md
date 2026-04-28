@@ -220,6 +220,11 @@ File: `GeckoBrowserActivity.kt` (`NavigationDelegate.onLoadRequest`)
   - Consent and login cleanup were working, but the video still did not attach.
   - The simple Facebook helper now gives the visible video surface a center-point tap fallback after it sees the player, so it can attach without broadening the rest of the media pipeline.
   - Added one delayed retry on the same visible video surface so intermittent late attachment can still recover without changing the broader flow.
+  - Added a second delayed retry at 4.2s on that same Facebook video wake path to catch the later attach case without widening the helper.
+- Latest Amazon consent note:
+  - Screenshot confirmed the Amazon Prime Video page showed a bottom cookie preferences banner with a clear `Accept` button.
+  - Added a small Amazon-only consent helper that targets the visible `Accept` control on amazon.co.uk / amazon.com / Prime Video surfaces.
+  - Added delayed Amazon follow-ups so the banner can still be accepted when it appears after the first page-stop pass.
 - Current operator guidance:
   - The unresolved area is Facebook, not YouTube.
   - Prior work on Facebook became a loop of mitigations rather than a clean root-cause fix.

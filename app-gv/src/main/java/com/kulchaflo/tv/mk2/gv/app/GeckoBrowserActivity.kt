@@ -59,6 +59,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val lastProbeUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val loadRetryAttemptsBySession = LinkedHashMap<GeckoSession, LinkedHashMap<String, Int>>()
     private val facebookCompatLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val amazonConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookCompatResolvedBySession =
@@ -304,6 +305,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 if (isFacebookUrl(pageUrl)) {
                     maybeDispatchFacebookCompat(session, pageUrl, reason = "page-stop")
                 } else {
+                    maybeDispatchAmazonConsentCompat(session, pageUrl, reason = "page-stop")
                     maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
                     if (shouldPromoteDirectMedia(pageUrl)) {
                         triggerDirectMediaProbe(session, pageUrl)
@@ -344,6 +346,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             if (isWebHttpUrl(url.orEmpty())) {
                 applyUserAgentPolicyForUrl(session, url.orEmpty(), reason = "location-change")
             }
+            maybeDispatchAmazonConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
@@ -2470,7 +2473,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     }
                     if(!retryScheduled && result.videoCount>0){
                       retryScheduled=true;
-                      setTimeout(function(){
+                      var retryWake=function(){
                         try{
                           var retryVideos=Array.from(document.querySelectorAll('video')).slice(0,6);
                           for(var r=0;r<retryVideos.length;r++){
@@ -2489,7 +2492,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                             }catch(_){}
                           }
                         }catch(_){}
-                      },1200);
+                      };
+                      setTimeout(retryWake,1200);
+                      setTimeout(retryWake,4200);
                     }
                     if(!result.playAttempted && !result.playButtonClicked){
                       var playWords=['play video','play','watch now'];
@@ -2593,6 +2598,130 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             "GvExt",
             "facebook compat dispatch tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$pageUrl"
         )
+    }
+
+    private fun maybeDispatchAmazonConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isAmazonSurfaceUrl(pageUrl)) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastDispatch = amazonConsentLastDispatchMsBySession[session] ?: 0L
+        if (now - lastDispatch < 2000L) {
+            return
+        }
+        amazonConsentLastDispatchMsBySession[session] = now
+        triggerAmazonConsentCompat(session, pageUrl, reason)
+        if (reason == "location-change") {
+            scheduleAmazonConsentFollowUp(session, 1400L)
+            scheduleAmazonConsentFollowUp(session, 5200L)
+            scheduleAmazonConsentFollowUp(session, 14000L)
+        }
+    }
+
+    private fun scheduleAmazonConsentFollowUp(session: GeckoSession, delayMs: Long) {
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                val currentTabUrl = tab.url
+                if (!isAmazonSurfaceUrl(currentTabUrl)) {
+                    return@postDelayed
+                }
+                triggerAmazonConsentCompat(session, currentTabUrl, reason = "follow-up-$delayMs")
+            },
+            delayMs,
+        )
+    }
+
+    private fun triggerAmazonConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isAmazonSurfaceUrl(normalizedUrl)) {
+            return
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var lower=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().toLowerCase();};
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                    var rect=node.getBoundingClientRect();
+                    return rect.width>8&&rect.height>8&&rect.bottom>0&&rect.right>0&&rect.top<window.innerHeight&&rect.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var textOf=function(node){
+                  try{
+                    return lower(
+                      (node.value||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('title'))||'')+' '+
+                      (node.innerText||node.textContent||'')
+                    );
+                  }catch(_){return ''; }
+                };
+                var clickNode=function(node){
+                  try{
+                    if(!node||!visible(node)){return false;}
+                    try{node.scrollIntoView({block:'center',inline:'center'});}catch(_){}
+                    try{
+                      node.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+                      node.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
+                    }catch(_){}
+                    try{node.click();}catch(_){}
+                    return true;
+                  }catch(_){return false;}
+                };
+                var labels=['accept all','accept','agree','allow all'];
+                var nodes=Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],input[type="checkbox"],a[role="button"],a,div[role="button"]')).slice(0,220);
+                for(var i=0;i<nodes.length;i++){
+                  var node=nodes[i];
+                  if(!visible(node)){continue;}
+                  var blob=textOf(node);
+                  if(blob.indexOf('decline')>=0 || blob.indexOf('customise')>=0 || blob.indexOf('customize')>=0){continue;}
+                  for(var j=0;j<labels.length;j++){
+                    if(blob.indexOf(labels[j])>=0){
+                      if(clickNode(node)){return;}
+                    }
+                  }
+                }
+                setTimeout(function(){
+                  try{
+                    var delayedNodes=Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],input[type="checkbox"],a[role="button"],a,div[role="button"]')).slice(0,220);
+                    for(var k=0;k<delayedNodes.length;k++){
+                      var delayed=delayedNodes[k];
+                      if(!visible(delayed)){continue;}
+                      var delayedBlob=textOf(delayed);
+                      if(delayedBlob.indexOf('decline')>=0 || delayedBlob.indexOf('customise')>=0 || delayedBlob.indexOf('customize')>=0){continue;}
+                      for(var m=0;m<labels.length;m++){
+                        if(delayedBlob.indexOf(labels[m])>=0){
+                          if(clickNode(delayed)){return;}
+                        }
+                      }
+                    }
+                  }catch(_){}
+                },350);
+              }catch(_){}
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "amazon consent compat dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$normalizedUrl"
+        )
+        session.loadUri(script)
     }
 
     private fun triggerYouTubeConsentCompat(session: GeckoSession, pageUrl: String, reason: String) {
@@ -3635,6 +3764,17 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             host.endsWith(".googlevideo.com") ||
             host == "google.com" ||
             host.endsWith(".google.com")
+    }
+
+    private fun isAmazonSurfaceUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "amazon.co.uk" ||
+            host.endsWith(".amazon.co.uk") ||
+            host == "amazon.com" ||
+            host.endsWith(".amazon.com") ||
+            host == "primevideo.com" ||
+            host.endsWith(".primevideo.com")
     }
 
     private fun isFacebookNativeScheme(uriValue: String): Boolean {
