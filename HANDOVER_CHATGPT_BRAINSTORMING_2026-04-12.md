@@ -201,6 +201,10 @@ File: `GeckoBrowserActivity.kt` (`NavigationDelegate.onLoadRequest`)
 - Latest follow-up:
   - CBCTV8 still triggered duplicate playback because the app was still promoting live media from the page itself.
   - Added a live-media promotion guard so direct-media extraction and promotion are skipped on those surfaces entirely, leaving the page player in control.
+- Latest startup recovery note:
+  - User later reported a black screen on app launch.
+  - The likely cause was the loading overlay being hidden too early during tab activation before Gecko had painted.
+  - Kept the loading overlay visible through tab restore and launch so first paint can arrive before the app reveals the web view.
 - Current operator guidance:
   - The unresolved area is Facebook, not YouTube.
   - Prior work on Facebook became a loop of mitigations rather than a clean root-cause fix.

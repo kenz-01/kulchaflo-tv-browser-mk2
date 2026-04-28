@@ -514,7 +514,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         currentUrl = tab.url
         canGoBack = tab.canGoBack
         titleView.text = tab.title.ifBlank { getString(R.string.app_name_gv) }
-        loadingOverlay.visibility = if (tab.isLoading) View.VISIBLE else View.GONE
+        if (tab.isLoading) {
+            loadingOverlay.visibility = View.VISIBLE
+        }
         syncPointerToActivePage("tab-activated")
         val observation = mediaPathController.onPageObserved(tab.url, tab.title)
         handleMediaObservation(observation)
@@ -690,10 +692,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val restoredUrls = savedInstanceState?.getStringArrayList(STATE_TAB_URLS).orEmpty()
         if (restoredUrls.isEmpty()) {
             currentUrl = resolveLaunchUrl(intent) ?: BuildConfig.DEFAULT_START_URL
+            loadingOverlay.visibility = View.VISIBLE
             tabController.createTab(currentUrl, activate = true)
             GvLogger.i("GvTabs", "restore default url=$currentUrl")
             return
         }
+        loadingOverlay.visibility = View.VISIBLE
         val restoredActiveIndex = savedInstanceState?.getInt(STATE_ACTIVE_TAB_INDEX, 0) ?: 0
         val restoredTabs = restoredUrls.mapIndexed { index, url ->
             val activate = index == 0
@@ -721,11 +725,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val activeTab = tabController.getActiveTab()
         if (activeTab == null) {
             currentUrl = url
+            loadingOverlay.visibility = View.VISIBLE
             tabController.createTab(url, activate = true)
             GvLogger.i("GvNav", "launch url created tab reason=$reason url=$url")
             return
         }
         currentUrl = url
+        loadingOverlay.visibility = View.VISIBLE
         applyUserAgentPolicyForUrl(activeTab.session, url, reason = "launch-$reason")
         applyMediaSessionDelegateForUrl(activeTab.session, url, reason = "launch-$reason")
         activeTab.session.loadUri(url)
