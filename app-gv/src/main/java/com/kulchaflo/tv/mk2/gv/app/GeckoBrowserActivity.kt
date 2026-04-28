@@ -3609,7 +3609,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val path = uri.encodedPath.orEmpty().lowercase()
         return when {
             host == "cbc.bb" && path.startsWith("/live") -> true
-            host == "caribvision.tv" -> true
+            host == "kulchaflo.com" && path.startsWith("/channels/") -> true
+            host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> true
             host == "abstvradio.com" && path.contains("live-streaming") -> true
             host == "player.tegotv.com" -> true
             path.contains("/player.php") -> true

@@ -205,6 +205,14 @@ File: `GeckoBrowserActivity.kt` (`NavigationDelegate.onLoadRequest`)
   - User later reported a black screen on app launch.
   - The likely cause was the loading overlay being hidden too early during tab activation before Gecko had painted.
   - Kept the loading overlay visible through tab restore and launch so first paint can arrive before the app reveals the web view.
+- Latest CaribVision note:
+  - Logcat showed CaribVision on `app.caribvision.tv` still getting unified compat injection on `pointermove` and `native-poke`.
+  - The live-surface matcher only blocked the bare apex host, so the subdomain was slipping through.
+  - Expanded the live-surface host check to include CaribVision subdomains so the cursor and page layout stay under the site's own control.
+- Latest CBCTV8 navigation note:
+  - Logcat showed the CBCTV8 page on `kulchaflo.com/channels/...` still getting unified compat injection on `pointermove` and `native-poke`.
+  - That meant the channel landing page itself was not being treated as a live-media surface.
+  - Added the KulchaFlo `/channels/` path to the live-surface guard so those channel pages keep their own navigation behavior.
 - Current operator guidance:
   - The unresolved area is Facebook, not YouTube.
   - Prior work on Facebook became a loop of mitigations rather than a clean root-cause fix.
