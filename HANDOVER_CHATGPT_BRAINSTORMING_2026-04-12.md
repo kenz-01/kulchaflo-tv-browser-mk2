@@ -218,7 +218,8 @@ File: `GeckoBrowserActivity.kt` (`NavigationDelegate.onLoadRequest`)
   - Unified compat now runs only on the KulchaFlo homepage consent surface and stays off for normal pages, channel pages, and pointer wake unless another site is intentionally added later.
 - Latest Facebook attachment note:
   - Consent and login cleanup were working, but the video still did not attach.
-  - The simple Facebook helper now gives the visible video surface one direct tap fallback after it sees the player, so it can attach without broadening the rest of the media pipeline.
+  - The simple Facebook helper now gives the visible video surface a center-point tap fallback after it sees the player, so it can attach without broadening the rest of the media pipeline.
+  - Added one delayed retry on the same visible video surface so intermittent late attachment can still recover without changing the broader flow.
 - Current operator guidance:
   - The unresolved area is Facebook, not YouTube.
   - Prior work on Facebook became a loop of mitigations rather than a clean root-cause fix.

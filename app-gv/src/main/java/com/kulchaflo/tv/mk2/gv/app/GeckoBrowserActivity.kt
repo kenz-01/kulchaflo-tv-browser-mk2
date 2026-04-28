@@ -2396,16 +2396,30 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 };
                 var wakeFacebookVideo=function(){
                   var result={videoCount:0,playAttempted:false,playButtonClicked:false,states:[]};
-                  var tapSurface=function(node){
+                  var retryScheduled=false;
+                  var tapPoint=function(x,y){
                     try{
-                      if(!node||!visible(node)){return false;}
-                      try{node.scrollIntoView({block:'center',inline:'center'});}catch(_){}
+                      var target=document.elementFromPoint(x,y);
+                      if(!target){return false;}
+                      if(!visible(target)){return false;}
+                      try{target.scrollIntoView({block:'center',inline:'center'});}catch(_){}
                       try{
-                        node.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true,view:window}));
-                        node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
-                        node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
+                        target.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));
+                        target.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));
+                        target.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));
+                        target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));
+                        target.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));
                       }catch(_){}
-                      try{node.click();}catch(_){}
+                      try{
+                        var clickable=target;
+                        for(var depth=0; depth<6 && clickable; depth++){
+                          var tag=(clickable.tagName||'').toLowerCase();
+                          var role=((clickable.getAttribute&&clickable.getAttribute('role'))||'').toLowerCase();
+                          if(tag==='button' || tag==='a' || tag==='input' || role==='button' || clickable.onclick){break;}
+                          clickable=clickable.parentElement;
+                        }
+                        if(clickable&&clickable.click){clickable.click();}
+                      }catch(_){}
                       return true;
                     }catch(_){return false;}
                   };
@@ -2436,11 +2450,46 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                       }
                       if(!result.playButtonClicked){
                         try{
-                          if(tapSurface(video)){
-                            result.playButtonClicked=true;
+                          var rect=video.getBoundingClientRect();
+                          var centers=[
+                            [Math.round((rect.left+rect.right)/2),Math.round((rect.top+rect.bottom)/2)],
+                            [Math.round((rect.left+rect.right)/2),Math.round((rect.top+rect.bottom)/2)-18],
+                            [Math.round((rect.left+rect.right)/2),Math.round((rect.top+rect.bottom)/2)+18]
+                          ];
+                          for(var c=0;c<centers.length;c++){
+                            if(tapPoint(centers[c][0],centers[c][1])){
+                              result.playButtonClicked=true;
+                              break;
+                            }
                           }
                         }catch(_){}
+                        if(!result.playButtonClicked && tapPoint(Math.round((video.getBoundingClientRect().left+video.getBoundingClientRect().right)/2),Math.round((video.getBoundingClientRect().top+video.getBoundingClientRect().bottom)/2))){
+                            result.playButtonClicked=true;
+                          }
                       }
+                    }
+                    if(!retryScheduled && result.videoCount>0){
+                      retryScheduled=true;
+                      setTimeout(function(){
+                        try{
+                          var retryVideos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                          for(var r=0;r<retryVideos.length;r++){
+                            var retryVideo=retryVideos[r];
+                            if(!visible(retryVideo)){continue;}
+                            try{
+                              var retryRect=retryVideo.getBoundingClientRect();
+                              var retryX=Math.round((retryRect.left+retryRect.right)/2);
+                              var retryY=Math.round((retryRect.top+retryRect.bottom)/2);
+                              tapPoint(retryX,retryY);
+                              if(retryVideo.paused && retryVideo.play){
+                                var retryPlay=retryVideo.play();
+                                if(retryPlay&&retryPlay.catch){retryPlay.catch(function(){});}
+                              }
+                              break;
+                            }catch(_){}
+                          }
+                        }catch(_){}
+                      },1200);
                     }
                     if(!result.playAttempted && !result.playButtonClicked){
                       var playWords=['play video','play','watch now'];
