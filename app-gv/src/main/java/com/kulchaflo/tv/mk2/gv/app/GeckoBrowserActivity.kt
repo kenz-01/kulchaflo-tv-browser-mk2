@@ -2886,7 +2886,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
         lastInteractionWakePulseMs = now
         val activeTab = tabController.getActiveTab() ?: return
-        if (isFacebookUrl(activeTab.url)) {
+        if (!shouldApplyUnifiedCompat(activeTab.url)) {
             return
         }
         val session = activeTab.session
@@ -3596,7 +3596,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     private fun shouldApplyUnifiedCompat(url: String): Boolean {
-        return !isLiveMediaSurfaceUrl(url)
+        if (url.isBlank() || url == "about:blank") {
+            return false
+        }
+        if (isFacebookUrl(url) || isLiveMediaSurfaceUrl(url)) {
+            return false
+        }
+        return isUnifiedCompatAllowlistedUrl(url)
     }
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
@@ -3617,6 +3623,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             path.contains("/live-stream") -> true
             else -> false
         }
+    }
+
+    private fun isUnifiedCompatAllowlistedUrl(url: String): Boolean {
+        return isKulchaFloHomepage(url)
     }
 
     private fun suppressDirectMediaPromotion(

@@ -213,6 +213,9 @@ File: `GeckoBrowserActivity.kt` (`NavigationDelegate.onLoadRequest`)
   - Logcat showed the CBCTV8 page on `kulchaflo.com/channels/...` still getting unified compat injection on `pointermove` and `native-poke`.
   - That meant the channel landing page itself was not being treated as a live-media surface.
   - Added the KulchaFlo `/channels/` path to the live-surface guard so those channel pages keep their own navigation behavior.
+- Latest compat policy note:
+  - User preference is now native-first, with compat reserved only for proven problem sites.
+  - Unified compat now runs only on the KulchaFlo homepage consent surface and stays off for normal pages, channel pages, and pointer wake unless another site is intentionally added later.
 - Current operator guidance:
   - The unresolved area is Facebook, not YouTube.
   - Prior work on Facebook became a loop of mitigations rather than a clean root-cause fix.
