@@ -2246,6 +2246,375 @@ return changed>0;
                     var passiveAttempt=$passiveAttempt;
                     var passiveMaxAttempts=$FACEBOOK_PASSIVE_MAX_ATTEMPTS;
                     var activeHelpersEnabled=$FACEBOOK_ACTIVE_HELPERS_ENABLED==1;
+                    var cookieAllowAllAutoclickEnabled=$FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED==1;
+                    var overlayDiagState=window.__kfFbOverlayDiagState||(window.__kfFbOverlayDiagState={early:false,attached:false,attachedDelay:false,visible:false});
+                    var cookieAllowAllState=window.__kfFbCookieAllowAllAutoclickState||(window.__kfFbCookieAllowAllAutoclickState={generation:-1,clicked:false});
+                    if(cookieAllowAllState.generation!==passiveGeneration){
+                      cookieAllowAllState.generation=passiveGeneration;
+                      cookieAllowAllState.clicked=false;
+                    }
+                    var clipText=function(v,n){
+                      try{return ((v||'')+'').replace(/\s+/g,' ').trim().slice(0,n||96);}catch(_){return '';}
+                    };
+                    var lowerText=function(v,n){
+                      return clipText(v,n).toLowerCase();
+                    };
+                    var rectOf=function(node){
+                      try{
+                        if(!node){return null;}
+                        var r=node.getBoundingClientRect();
+                        return {left:Math.round(r.left),top:Math.round(r.top),right:Math.round(r.right),bottom:Math.round(r.bottom),width:Math.round(r.width),height:Math.round(r.height)};
+                      }catch(_){return null;}
+                    };
+                    var rectIntersects=function(a,b){
+                      try{
+                        return !!(a&&b&&a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top);
+                      }catch(_){return false;}
+                    };
+                    var rectString=function(rect){
+                      try{
+                        if(!rect){return 'none';}
+                        return rect.left+','+rect.top+' '+rect.width+'x'+rect.height;
+                      }catch(_){return 'none';}
+                    };
+                    var visibleNode=function(node){
+                      try{
+                        if(!node){return false;}
+                        var style=window.getComputedStyle(node);
+                        if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                        var r=node.getBoundingClientRect();
+                        return r.width>4&&r.height>4&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                      }catch(_){return false;}
+                    };
+                    var compactNodeForOverlay=function(node){
+                      try{
+                        if(!node){return null;}
+                        var style=null;
+                        try{style=window.getComputedStyle(node);}catch(_){}
+                        var rect=rectOf(node);
+                        var cls=(typeof node.className==='string')?node.className:'';
+                        var text=clipText((node.innerText||node.textContent||''),80);
+                        var bg=style?(style.backgroundColor||''):'';
+                        var opacity=style?(style.opacity||''):'';
+                        return {
+                          tag:lowerText(node.tagName,16),
+                          role:clipText((node.getAttribute&&node.getAttribute('role'))||'',24),
+                          ariaModal:clipText((node.getAttribute&&node.getAttribute('aria-modal'))||'',12),
+                          ariaLabel:clipText((node.getAttribute&&node.getAttribute('aria-label'))||'',48),
+                          id:clipText(node.id||'',36),
+                          cls:clipText(cls.replace(/\s+/g,'.'),64),
+                          text:text,
+                          rect:rect,
+                          z:style?(style.zIndex||''):'',
+                          position:style?(style.position||''):'',
+                          opacity:opacity,
+                          pointer:style?(style.pointerEvents||''):'',
+                          visibility:style?(style.visibility||''):'',
+                          display:style?(style.display||''):'',
+                          bg:clipText(bg,48),
+                          bgAlpha:(function(value){
+                            try{
+                              var m=((value||'')+'').match(/rgba?\(([^)]+)\)/i);
+                              if(!m){return value?1:0;}
+                              var parts=m[1].split(',').map(function(p){return parseFloat(p.trim());});
+                              return parts.length>=4&&!isNaN(parts[3])?parts[3]:1;
+                            }catch(_){return 0;}
+                          })(bg)
+                        };
+                      }catch(_){return null;}
+                    };
+                    var nodeChainSummary=function(node){
+                      var out=[];
+                      try{
+                        var cur=node;
+                        for(var depth=0;depth<5&&cur;depth++){
+                          var tag=lowerText(cur.tagName,12);
+                          var role=clipText((cur.getAttribute&&cur.getAttribute('role'))||'',16);
+                          var id=clipText(cur.id||'',20);
+                          var cls=clipText(((typeof cur.className==='string')?cur.className:'').replace(/\s+/g,'.'),36);
+                          out.push(tag+(id?('#'+id):'')+(role?('@'+role):'')+(cls?('.'+cls):''));
+                          cur=cur.parentElement;
+                        }
+                      }catch(_){}
+                      return out;
+                    };
+                    var pushUnique=function(list,node,kind,limit){
+                      try{
+                        if(!node||!visibleNode(node)){return;}
+                        for(var i=0;i<list.length;i++){if(list[i].node===node){return;}}
+                        if(list.length>=limit){return;}
+                        var summary=compactNodeForOverlay(node);
+                        if(!summary){return;}
+                        summary.kind=kind;
+                        summary.overlapsVideo=false;
+                        summary.parentChain=nodeChainSummary(node);
+                        summary.siblingChain=[
+                          compactNodeForOverlay(node.previousElementSibling),
+                          compactNodeForOverlay(node.nextElementSibling)
+                        ].filter(function(item){return !!item;});
+                        list.push({node:node,summary:summary});
+                      }catch(_){}
+                    };
+                    var emitOverlayDiagnostics=function(trigger){
+                      try{
+                        var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                        var primaryVideo=null;
+                        for(var v=0;v<videos.length;v++){
+                          if(visibleNode(videos[v])){primaryVideo=videos[v];break;}
+                        }
+                        var videoRect=rectOf(primaryVideo);
+                        var centerX=Math.round((window.innerWidth||0)/2);
+                        var centerY=Math.round((window.innerHeight||0)/2);
+                        var videoCenterX=videoRect?Math.round((videoRect.left+videoRect.right)/2):centerX;
+                        var videoCenterY=videoRect?Math.round((videoRect.top+videoRect.bottom)/2):centerY;
+                        var centerStack=[];
+                        var videoCenterStack=[];
+                        try{
+                          Array.from(document.elementsFromPoint(centerX,centerY)||[]).slice(0,8).forEach(function(node){
+                            var summary=compactNodeForOverlay(node);
+                            if(summary){centerStack.push(summary);}
+                          });
+                        }catch(_){}
+                        try{
+                          Array.from(document.elementsFromPoint(videoCenterX,videoCenterY)||[]).slice(0,8).forEach(function(node){
+                            var summary=compactNodeForOverlay(node);
+                            if(summary){videoCenterStack.push(summary);}
+                          });
+                        }catch(_){}
+                        var dialogCandidates=[];
+                        var backdropCandidates=[];
+                        var bottomBarCandidates=[];
+                        var cookieButtonCandidates=[];
+                        var loginButtonCandidates=[];
+                        var allOverlayNodes=[];
+                        try{
+                          Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"],[data-testid*="dialog"],[data-testid*="modal"],div[class*="dialog"],div[class*="modal"],div[class*="overlay"],div[class*="backdrop"],div[style*="position: fixed"],div[style*="position:fixed"]')).slice(0,120).forEach(function(node){
+                            if(!visibleNode(node)){return;}
+                            var style=window.getComputedStyle(node);
+                            var r=rectOf(node);
+                            if(!r){return;}
+                            var blob=lowerText((node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('data-testid'))||'')+' '+((typeof node.className==='string')?node.className:''),220);
+                            var role=lowerText((node.getAttribute&&node.getAttribute('role'))||'',24);
+                            var ariaModal=lowerText((node.getAttribute&&node.getAttribute('aria-modal'))||'',12);
+                            var large=r.width>(window.innerWidth*0.55)&&r.height>(window.innerHeight*0.30);
+                            var sparse=blob.length<100;
+                            var fixedLike=style&&(style.position==='fixed'||style.position==='sticky'||style.position==='absolute');
+                            var isDialog=role==='dialog'||role==='alertdialog'||ariaModal==='true'||blob.indexOf('log in')>=0||blob.indexOf('sign up')>=0||blob.indexOf('cookie')>=0||blob.indexOf('consent')>=0;
+                            var isBackdrop=large&&fixedLike&&(sparse||blob.indexOf('backdrop')>=0||blob.indexOf('overlay')>=0||style.pointerEvents!=='none');
+                            if(isDialog){pushUnique(dialogCandidates,node,'dialog',8);}
+                            if(isBackdrop){pushUnique(backdropCandidates,node,'backdrop',8);}
+                            pushUnique(allOverlayNodes,node,'overlay',16);
+                          });
+                        }catch(_){}
+                        try{
+                          Array.from(document.querySelectorAll('footer,[role="dialog"],[role="complementary"],[aria-modal="true"],div[style*="position: fixed"],div[style*="position:fixed"]')).slice(0,80).forEach(function(node){
+                            if(!visibleNode(node)){return;}
+                            var r=rectOf(node);
+                            if(!r){return;}
+                            var blob=lowerText((node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((typeof node.className==='string')?node.className:''),180);
+                            var bottomBand=r.width>(window.innerWidth*0.45)&&r.bottom>(window.innerHeight-160)&&r.top>(window.innerHeight*0.35);
+                            var loginLike=blob.indexOf('log in')>=0||blob.indexOf('sign up')>=0||blob.indexOf('create new account')>=0||blob.indexOf('connect with friends')>=0;
+                            if(bottomBand&&loginLike){pushUnique(bottomBarCandidates,node,'bottom-bar',6);}
+                          });
+                        }catch(_){}
+                        try{
+                          Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"],[aria-label]')).slice(0,180).forEach(function(node){
+                            if(!visibleNode(node)){return;}
+                            var blob=lowerText((node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('data-testid'))||''),180);
+                            var cookieLike=blob.indexOf('allow all cookies')>=0||blob.indexOf('accept all cookies')>=0||blob.indexOf('accept all')>=0||blob.indexOf('allow essential')>=0||blob.indexOf('cookie')>=0||blob.indexOf('consent')>=0;
+                            var loginLike=blob.indexOf('not now')>=0||blob.indexOf('close')>=0||blob.indexOf('log in')>=0||blob.indexOf('sign up')>=0||blob.indexOf('continue watching')>=0;
+                            if(cookieLike){pushUnique(cookieButtonCandidates,node,'cookie-button',8);}
+                            if(loginLike){pushUnique(loginButtonCandidates,node,'login-button',8);}
+                          });
+                        }catch(_){}
+                        var markOverlap=function(list){
+                          for(var i=0;i<list.length;i++){
+                            try{list[i].summary.overlapsVideo=rectIntersects(list[i].summary.rect,videoRect);}catch(_){}
+                          }
+                        };
+                        markOverlap(dialogCandidates);
+                        markOverlap(backdropCandidates);
+                        markOverlap(bottomBarCandidates);
+                        markOverlap(cookieButtonCandidates);
+                        markOverlap(loginButtonCandidates);
+                        var pairCandidates=[];
+                        for(var d=0;d<dialogCandidates.length&&pairCandidates.length<8;d++){
+                          for(var b=0;b<backdropCandidates.length&&pairCandidates.length<8;b++){
+                            var dialog=dialogCandidates[d].node;
+                            var backdrop=backdropCandidates[b].node;
+                            if(dialog===backdrop){continue;}
+                            var sharesParent=!!(dialog.parentElement&&dialog.parentElement===backdrop.parentElement);
+                            var adjacentSibling=!!(dialog.previousElementSibling===backdrop||dialog.nextElementSibling===backdrop);
+                            var contains=!!(backdrop.contains&&backdrop.contains(dialog));
+                            var containedBy=!!(dialog.contains&&dialog.contains(backdrop));
+                            var overlaps=rectIntersects(dialogCandidates[d].summary.rect,backdropCandidates[b].summary.rect);
+                            var likelyPair=sharesParent||adjacentSibling||contains||containedBy||overlaps;
+                            if(!likelyPair){continue;}
+                            pairCandidates.push({
+                              dialogIndex:d+1,
+                              backdropIndex:b+1,
+                              sharesParent:sharesParent,
+                              adjacentSibling:adjacentSibling,
+                              backdropContainsDialog:contains,
+                              dialogContainsBackdrop:containedBy,
+                              rectsOverlap:overlaps,
+                              dialogOverlapsVideo:!!dialogCandidates[d].summary.overlapsVideo,
+                              backdropOverlapsVideo:!!backdropCandidates[b].summary.overlapsVideo
+                            });
+                          }
+                        }
+                        var htmlStyle=window.getComputedStyle(document.documentElement);
+                        var bodyStyle=window.getComputedStyle(document.body);
+                        window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                          type:'facebook-overlay-diagnostics',
+                          phase:'facebook-overlay-'+trigger,
+                          passiveGeneration:passiveGeneration,
+                          passiveAttempt:passiveAttempt,
+                          pageHost:window.location.host||'',
+                          pagePath:window.location.pathname||'',
+                          documentReadyState:document.readyState||'',
+                          documentVisibilityState:document.visibilityState||'',
+                          documentHasFocus:!!document.hasFocus(),
+                          viewport:{width:window.innerWidth||0,height:window.innerHeight||0,scrollX:window.scrollX||0,scrollY:window.scrollY||0},
+                          htmlState:{overflow:htmlStyle.overflow||'',overflowX:htmlStyle.overflowX||'',overflowY:htmlStyle.overflowY||'',cls:clipText(document.documentElement.className||'',80),style:clipText(document.documentElement.getAttribute('style')||'',96)},
+                          bodyState:{overflow:bodyStyle.overflow||'',overflowX:bodyStyle.overflowX||'',overflowY:bodyStyle.overflowY||'',cls:clipText(document.body.className||'',80),style:clipText(document.body.getAttribute('style')||'',96)},
+                          primaryVideoRect:videoRect,
+                          centerStack:centerStack,
+                          videoCenterStack:videoCenterStack,
+                          dialogCandidates:dialogCandidates.map(function(item){return item.summary;}),
+                          backdropCandidates:backdropCandidates.map(function(item){return item.summary;}),
+                          bottomBarCandidates:bottomBarCandidates.map(function(item){return item.summary;}),
+                          cookieButtonCandidates:cookieButtonCandidates.map(function(item){return item.summary;}),
+                          loginButtonCandidates:loginButtonCandidates.map(function(item){return item.summary;}),
+                          pairCandidates:pairCandidates
+                        }), '');
+                      }catch(_){}
+                    };
+                    var emitCookieAllowAllAutoclick=function(phase, clicked, reason, buttonText, dialogRect, buttonRect){
+                      try{
+                        window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                          type:'facebook-cookie-allow-all-autoclick',
+                          phase:phase,
+                          passiveGeneration:passiveGeneration,
+                          passiveAttempt:passiveAttempt,
+                          passiveMaxAttempts:passiveMaxAttempts,
+                          pageUrl:window.location.href,
+                          clicked:!!clicked,
+                          reason:reason||'',
+                          buttonText:clipText(buttonText||'',64),
+                          dialogRect:rectString(dialogRect),
+                          buttonRect:rectString(buttonRect)
+                        }), '');
+                      }catch(_){}
+                    };
+                    var maybeRunCookieAllowAllAutoclick=function(phase){
+                      try{
+                        if(!cookieAllowAllAutoclickEnabled){return;}
+                        if(cookieAllowAllState.clicked){return;}
+                        emitCookieAllowAllAutoclick(phase,false,'scan','','',null);
+                        var videoAncestorTags=['VIDEO','SOURCE','CANVAS','IFRAME'];
+                        var isNearPlayer=function(node){
+                          try{
+                            var cur=node;
+                            var depth=0;
+                            while(cur&&depth<8){
+                              if(videoAncestorTags.indexOf(cur.tagName)>=0){return true;}
+                              var role=lowerText((cur.getAttribute&&cur.getAttribute('role'))||'',32);
+                              var aria=lowerText((cur.getAttribute&&cur.getAttribute('aria-label'))||'',64);
+                              var cls=lowerText((typeof cur.className==='string')?cur.className:'',96);
+                              var testid=lowerText((cur.getAttribute&&cur.getAttribute('data-testid'))||'',64);
+                              var id=lowerText(cur.id||'',64);
+                              var blob=role+' '+aria+' '+cls+' '+testid+' '+id;
+                              if(blob.indexOf('video')>=0||blob.indexOf('player')>=0||blob.indexOf('watch')>=0||blob.indexOf('reel')>=0){return true;}
+                              cur=cur.parentElement;
+                              depth+=1;
+                            }
+                          }catch(_){}
+                          return false;
+                        };
+                        var visibleSized=function(node){
+                          try{
+                            if(!visibleNode(node)){return false;}
+                            var r=node.getBoundingClientRect();
+                            return r.width>=36&&r.height>=24&&r.width<=window.innerWidth&&r.height<=window.innerHeight;
+                          }catch(_){return false;}
+                        };
+                        var cookieDialogText=function(node){
+                          try{
+                            return lowerText((node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||''),1200);
+                          }catch(_){return '';}
+                        };
+                        var isCookieDialog=function(node){
+                          try{
+                            if(!visibleNode(node)){return false;}
+                            var role=lowerText((node.getAttribute&&node.getAttribute('role'))||'',32);
+                            var ariaModal=lowerText((node.getAttribute&&node.getAttribute('aria-modal'))||'',16);
+                            if(role!=='dialog'&&role!=='alertdialog'&&ariaModal!=='true'){return false;}
+                            var text=cookieDialogText(node);
+                            return text.indexOf('cookie')>=0||
+                              text.indexOf('cookies')>=0||
+                              text.indexOf('optional cookies')>=0||
+                              text.indexOf('essential cookies')>=0||
+                              text.indexOf('allow the use of cookies')>=0||
+                              text.indexOf('facebook cookies')>=0;
+                          }catch(_){return false;}
+                        };
+                        var buttonText=function(node){
+                          try{
+                            return clipText(((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+(node.value||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||''),96);
+                          }catch(_){return '';}
+                        };
+                        var priorityFor=function(text){
+                          var normalized=lowerText(text,96).replace(/\s+/g,' ').trim();
+                          var forbidden=['decline','essential cookies','only allow','login','log in','sign up','signup','create account','watch','play','video','comment','share','continue'];
+                          for(var f=0;f<forbidden.length;f++){
+                            if(normalized.indexOf(forbidden[f])>=0){return -1;}
+                          }
+                          if(normalized==='allow all cookies'){return 0;}
+                          if(normalized==='accept all cookies'){return 1;}
+                          if(normalized==='allow all'){return 2;}
+                          if(normalized==='accept all'){return 3;}
+                          if(normalized.indexOf('allow all cookies')>=0){return 4;}
+                          if(normalized.indexOf('accept all cookies')>=0){return 5;}
+                          return -1;
+                        };
+                        var dialogs=Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')).slice(0,20).filter(isCookieDialog);
+                        if(dialogs.length===0){
+                          emitCookieAllowAllAutoclick(phase,false,'no-cookie-dialog','','',null);
+                          return;
+                        }
+                        var best=null;
+                        for(var d=0;d<dialogs.length;d++){
+                          var dialog=dialogs[d];
+                          var candidates=Array.from(dialog.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"]')).slice(0,80);
+                          for(var c=0;c<candidates.length;c++){
+                            var candidate=candidates[c];
+                            if(!visibleSized(candidate)){continue;}
+                            if(isNearPlayer(candidate)){continue;}
+                            var text=buttonText(candidate);
+                            var priority=priorityFor(text);
+                            if(priority<0){continue;}
+                            var item={dialog:dialog,button:candidate,text:text,priority:priority};
+                            if(!best||item.priority<best.priority){best=item;}
+                          }
+                        }
+                        if(!best){
+                          emitCookieAllowAllAutoclick(phase,false,'no-allow-all-button','',rectOf(dialogs[0]),null);
+                          return;
+                        }
+                        var dialogRect=rectOf(best.dialog);
+                        var buttonRect=rectOf(best.button);
+                        try{
+                          best.button.click();
+                          cookieAllowAllState.clicked=true;
+                          emitCookieAllowAllAutoclick(phase,true,'clicked',best.text,dialogRect,buttonRect);
+                        }catch(clickError){
+                          emitCookieAllowAllAutoclick(phase,false,'click-error',best.text,dialogRect,buttonRect);
+                        }
+                      }catch(error){
+                        emitCookieAllowAllAutoclick(phase,false,'scan-error','','',null);
+                      }
+                    };
                     var emit=function(phase){
                       try{
                         var clip=function(v,n){
@@ -2409,6 +2778,31 @@ return changed>0;
                           playbackWaiting:false,
                           passiveMode:true
                         }), '');
+                        var firstState=videoStates.length>0?(function(){
+                          for(var fs=0;fs<videoStates.length;fs++){if(videoStates[fs].visible){return videoStates[fs];}}
+                          return null;
+                        })():null;
+                        var readyEnough=!!(firstState&&firstState.currentSrc&&firstState.readyState>=1&&firstState.videoWidth>0&&firstState.videoHeight>0);
+                        var currentTimeAdvanced=!!(firstState&&firstState.currentTime>0.25);
+                        if(phase==='facebook-passive-sample-0'&&!overlayDiagState.early){
+                          overlayDiagState.early=true;
+                          emitOverlayDiagnostics('entry');
+                        }
+                        if((cookieOverlayVisible||loginOverlayVisible)&&!overlayDiagState.visible){
+                          overlayDiagState.visible=true;
+                          emitOverlayDiagnostics('visible-overlay');
+                        }
+                        if((readyEnough||currentTimeAdvanced)&&!overlayDiagState.attached){
+                          overlayDiagState.attached=true;
+                          emitOverlayDiagnostics('after-attach');
+                          setTimeout(function(){
+                            if(!overlayDiagState.attachedDelay){
+                              overlayDiagState.attachedDelay=true;
+                              emitOverlayDiagnostics('after-attach-2500');
+                            }
+                          },2500);
+                        }
+                        maybeRunCookieAllowAllAutoclick(phase);
                       }catch(_){ }
                     };
                     emit('facebook-passive-sample-0');
@@ -3255,7 +3649,7 @@ return changed>0;
         payload: JSONObject,
     ): Boolean {
         val phase = payload.optString("phase")
-        if (!phase.startsWith("facebook-passive-")) {
+        if (!phase.startsWith("facebook-passive-") && !phase.startsWith("facebook-overlay-")) {
             return true
         }
         if (!payload.has("passiveGeneration")) {
@@ -3531,6 +3925,124 @@ return changed>0;
             appendIfPresent(this, "visibleVideoParents", stringArraySummary(payload.optJSONArray("visibleVideoParents")), maxLength = 220)
         }
         GvLogger.i("GvLayout", phaseSnapshotMessage)
+    }
+
+    private fun logFacebookOverlayDiagnostics(payload: JSONObject) {
+        fun compact(value: String, maxLength: Int): String {
+            val normalized = value.replace(Regex("\\s+"), " ").trim()
+            return if (normalized.length <= maxLength) normalized else normalized.take(maxLength) + "..."
+        }
+        fun rectSummary(rect: JSONObject?): String {
+            if (rect == null) return "none"
+            return "${rect.optInt("left")},${rect.optInt("top")} ${rect.optInt("width")}x${rect.optInt("height")}"
+        }
+        fun stateSummary(state: JSONObject?): String {
+            if (state == null) return "none"
+            return "overflow=${compact(state.optString("overflow"), 24)} overflowY=${compact(state.optString("overflowY"), 24)} cls=${compact(state.optString("cls"), 80)} style=${compact(state.optString("style"), 96)}"
+        }
+        fun candidateSummary(candidate: JSONObject): String {
+            val chain = candidate.optJSONArray("parentChain")?.let { array ->
+                buildString {
+                    val end = minOf(array.length(), 4)
+                    for (index in 0 until end) {
+                        val item = array.optString(index)
+                        if (item.isBlank()) continue
+                        if (isNotEmpty()) append(">")
+                        append(compact(item, 52))
+                    }
+                }
+            }.orEmpty()
+            val siblings = candidate.optJSONArray("siblingChain")?.let { array ->
+                buildString {
+                    val end = minOf(array.length(), 2)
+                    for (index in 0 until end) {
+                        val item = array.optJSONObject(index) ?: continue
+                        val tag = item.optString("tag")
+                        if (tag.isBlank()) continue
+                        if (isNotEmpty()) append("<>")
+                        append(tag)
+                        item.optString("role").takeIf { it.isNotBlank() }?.let { append("@").append(compact(it, 16)) }
+                        item.optString("id").takeIf { it.isNotBlank() }?.let { append("#").append(compact(it, 20)) }
+                        item.optString("cls").takeIf { it.isNotBlank() }?.let { append(".").append(compact(it, 36)) }
+                    }
+                }
+            }.orEmpty()
+            return buildString {
+                append("kind=").append(candidate.optString("kind"))
+                append(" tag=").append(candidate.optString("tag"))
+                candidate.optString("role").takeIf { it.isNotBlank() }?.let { append(" role=").append(compact(it, 24)) }
+                candidate.optString("ariaModal").takeIf { it.isNotBlank() }?.let { append(" ariaModal=").append(compact(it, 12)) }
+                candidate.optString("ariaLabel").takeIf { it.isNotBlank() }?.let { append(" ariaLabel=").append(compact(it, 48)) }
+                candidate.optString("id").takeIf { it.isNotBlank() }?.let { append(" id=").append(compact(it, 36)) }
+                candidate.optString("cls").takeIf { it.isNotBlank() }?.let { append(" cls=").append(compact(it, 64)) }
+                candidate.optString("text").takeIf { it.isNotBlank() }?.let { append(" text=").append(compact(it, 80)) }
+                append(" rect=").append(rectSummary(candidate.optJSONObject("rect")))
+                append(" z=").append(compact(candidate.optString("z"), 24))
+                append(" pos=").append(compact(candidate.optString("position"), 16))
+                append(" opacity=").append(compact(candidate.optString("opacity"), 16))
+                append(" pointer=").append(compact(candidate.optString("pointer"), 24))
+                append(" visibility=").append(compact(candidate.optString("visibility"), 16))
+                append(" display=").append(compact(candidate.optString("display"), 16))
+                append(" bg=").append(compact(candidate.optString("bg"), 48))
+                append(" bgAlpha=").append(String.format(java.util.Locale.US, "%.2f", candidate.optDouble("bgAlpha", 0.0)))
+                append(" overlapsVideo=").append(candidate.optBoolean("overlapsVideo"))
+                if (chain.isNotBlank()) append(" chain=").append(compact(chain, 220))
+                if (siblings.isNotBlank()) append(" siblings=").append(compact(siblings, 140))
+            }
+        }
+        fun logCandidateArray(marker: String, array: JSONArray?) {
+            if (array == null || array.length() == 0) {
+                GvLogger.i("GvLayout", "$marker count=0")
+                return
+            }
+            val end = minOf(array.length(), 8)
+            for (index in 0 until end) {
+                val candidate = array.optJSONObject(index) ?: continue
+                GvLogger.i("GvLayout", "$marker index=${index + 1}/$end ${candidateSummary(candidate)}")
+            }
+        }
+        fun logStack(marker: String, array: JSONArray?) {
+            if (array == null || array.length() == 0) {
+                GvLogger.i("GvLayout", "$marker count=0")
+                return
+            }
+            val summary = buildString {
+                val end = minOf(array.length(), 8)
+                for (index in 0 until end) {
+                    val item = array.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append("#").append(index + 1).append(":")
+                    append(candidateSummary(item))
+                }
+            }
+            GvLogger.i("GvLayout", "$marker count=${array.length()} $summary")
+        }
+
+        val viewport = payload.optJSONObject("viewport")
+        GvLogger.i(
+            "GvLayout",
+            "facebook overlay diagnostics phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} page=${payload.optString("pageHost")}${payload.optString("pagePath")} ready=${payload.optString("documentReadyState")} visibility=${payload.optString("documentVisibilityState")} focus=${payload.optBoolean("documentHasFocus")} viewport=${viewport?.optInt("width") ?: 0}x${viewport?.optInt("height") ?: 0} scroll=${viewport?.optInt("scrollX") ?: 0},${viewport?.optInt("scrollY") ?: 0} primaryVideoRect=${rectSummary(payload.optJSONObject("primaryVideoRect"))} html=${stateSummary(payload.optJSONObject("htmlState"))} body=${stateSummary(payload.optJSONObject("bodyState"))}"
+        )
+        logCandidateArray("facebook overlay dialog candidate", payload.optJSONArray("dialogCandidates"))
+        logCandidateArray("facebook overlay backdrop candidate", payload.optJSONArray("backdropCandidates"))
+        logCandidateArray("facebook overlay bottom-bar candidate", payload.optJSONArray("bottomBarCandidates"))
+        logCandidateArray("facebook overlay cookie-button candidate", payload.optJSONArray("cookieButtonCandidates"))
+        logCandidateArray("facebook overlay login-button candidate", payload.optJSONArray("loginButtonCandidates"))
+        logStack("facebook overlay center-stack", payload.optJSONArray("centerStack"))
+        logStack("facebook overlay video-center-stack", payload.optJSONArray("videoCenterStack"))
+        val pairs = payload.optJSONArray("pairCandidates")
+        if (pairs == null || pairs.length() == 0) {
+            GvLogger.i("GvLayout", "facebook overlay pair candidate count=0")
+        } else {
+            val end = minOf(pairs.length(), 8)
+            for (index in 0 until end) {
+                val pair = pairs.optJSONObject(index) ?: continue
+                GvLogger.i(
+                    "GvLayout",
+                    "facebook overlay pair candidate index=${index + 1}/$end dialogIndex=${pair.optInt("dialogIndex")} backdropIndex=${pair.optInt("backdropIndex")} sharesParent=${pair.optBoolean("sharesParent")} adjacentSibling=${pair.optBoolean("adjacentSibling")} backdropContainsDialog=${pair.optBoolean("backdropContainsDialog")} dialogContainsBackdrop=${pair.optBoolean("dialogContainsBackdrop")} rectsOverlap=${pair.optBoolean("rectsOverlap")} dialogOverlapsVideo=${pair.optBoolean("dialogOverlapsVideo")} backdropOverlapsVideo=${pair.optBoolean("backdropOverlapsVideo")}"
+                )
+            }
+        }
     }
 
     private fun maybeDispatchAmazonConsentCompat(
@@ -4355,7 +4867,7 @@ return changed>0;
         val title = payload.optString("title")
         val phase = payload.optString("phase")
         val type = payload.optString("type")
-        if (type == "facebook-compat" && !isCurrentFacebookPassiveGeneration(session, payload)) {
+        if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick") && !isCurrentFacebookPassiveGeneration(session, payload)) {
             return
         }
         val candidates = payload.optJSONArray("directCandidates") ?: JSONArray()
@@ -4420,6 +4932,23 @@ return changed>0;
             GvLogger.i(
                 "GvMedia",
                 "tego quality pageUrl=$pageUrl applied=${payload.optBoolean("applied")} playerCount=${payload.optInt("playerCount")} results=${resultSummary.ifBlank { "none" }} videos=${videoSummary.ifBlank { "none" }}"
+            )
+            return
+        }
+        if (type == "facebook-overlay-diagnostics") {
+            logFacebookOverlayDiagnostics(payload)
+            return
+        }
+        if (type == "facebook-cookie-allow-all-autoclick") {
+            if (payload.optString("reason") == "scan") {
+                GvLogger.i(
+                    "GvLayout",
+                    "facebook cookie allow-all autoclick scan phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} pageUrl=$pageUrl"
+                )
+            }
+            GvLogger.i(
+                "GvLayout",
+                "facebook cookie allow-all autoclick result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} buttonText=${payload.optString("buttonText")} dialogRect=${payload.optString("dialogRect")} buttonRect=${payload.optString("buttonRect")} pageUrl=$pageUrl"
             )
             return
         }
@@ -4601,6 +5130,7 @@ return changed>0;
         private const val FACEBOOK_PASSIVE_DIAGNOSTIC_MODE = true
         // Facebook active DOM helpers are intentionally disabled. Firefox desktop UA plus passive source-attach monitoring is the current strategy.
         private const val FACEBOOK_ACTIVE_HELPERS_ENABLED = 0
+        private const val FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED = 1
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
