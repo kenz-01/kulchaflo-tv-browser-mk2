@@ -59,6 +59,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val lastProbeUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val loadRetryAttemptsBySession = LinkedHashMap<GeckoSession, LinkedHashMap<String, Int>>()
     private val facebookCompatLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val facebookPlaybackDiagLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val facebookPlaybackDiagBaselineCurrentTimeBySession = LinkedHashMap<GeckoSession, LinkedHashMap<String, Double>>()
+    private val facebookPlaybackDiagBaselineMediaStateBySession = LinkedHashMap<GeckoSession, String>()
+    private val facebookPlaybackDiagRetryCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookPlaybackWaitRetryCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookPassiveReentryObservedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val facebookPassiveAttemptCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookPassiveAttachedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val facebookPassiveGenerationBySession = LinkedHashMap<GeckoSession, Int>()
     private val amazonConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -74,6 +83,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var lastBackToExitAtMs = 0L
     private var lastBackToHomeAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
+
     private val pointerIdleRunnable = Runnable {
         if (!pointerDirectionKeys.isEmpty()) {
             schedulePointerIdleTimeout()
@@ -346,6 +356,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             if (isWebHttpUrl(url.orEmpty())) {
                 applyUserAgentPolicyForUrl(session, url.orEmpty(), reason = "location-change")
             }
+            updateFacebookPassiveReentryUrlState(session, url.orEmpty())
             maybeDispatchAmazonConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
@@ -2156,8 +2167,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                       if(hideNode(node)){changed+=1;}
                     }catch(_){}
                   }
-                  return changed>0;
+return changed>0;
                 };
+                if (activeHelpersEnabled) {
                 var clickedCookie=clickCookieConsent();
                 var hidTopLogin=hideTopLoginHeader();
                 var hidOverlay=hideBlockingOverlay();
@@ -2187,6 +2199,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     window.addEventListener('keydown',function(){setTimeout(function(){lightSweep('keydown');},260);},true);
                   }
                 }catch(_){}
+                }
                 window.prompt("__GV_MEDIA__"+JSON.stringify({
                   type:'facebook-compat',
                   phase:'activity-facebook-compat',
@@ -2220,6 +2233,197 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private fun triggerSimpleFacebookCompat(session: GeckoSession, pageUrl: String) {
         val normalizedUrl = pageUrl.ifBlank { return }
         if (!isFacebookUrl(normalizedUrl)) {
+            return
+        }
+        if (FACEBOOK_PASSIVE_DIAGNOSTIC_MODE) {
+            updateFacebookPassiveReentryUrlState(session, normalizedUrl)
+            val passiveGeneration = facebookPassiveGenerationBySession[session] ?: 0
+            val passiveAttempt = facebookPassiveAttemptCountBySession[session] ?: 1
+            val passiveScript = """
+                javascript:(function(){
+                  try{
+                    var passiveGeneration=$passiveGeneration;
+                    var passiveAttempt=$passiveAttempt;
+                    var passiveMaxAttempts=$FACEBOOK_PASSIVE_MAX_ATTEMPTS;
+                    var activeHelpersEnabled=$FACEBOOK_ACTIVE_HELPERS_ENABLED==1;
+                    var emit=function(phase){
+                      try{
+                        var clip=function(v,n){
+                          try{return ((v||'')+'').slice(0,n);}catch(_){return '';}
+                        };
+                        var compactNode=function(node){
+                          try{
+                            if(!node){return 'none';}
+                            var tag=((node.tagName||'')+'').toLowerCase();
+                            var id=clip(node.id||'',24);
+                            var testid=clip((node.getAttribute&&node.getAttribute('data-testid'))||'',24);
+                            var role=clip((node.getAttribute&&node.getAttribute('role'))||'',18);
+                            var aria=clip((node.getAttribute&&node.getAttribute('aria-label'))||'',28);
+                            var cls=clip(((typeof node.className==='string')?node.className:''),28).replace(/\s+/g,'.');
+                            return [tag,id?('#'+id):'',role?('@'+role):'',testid?('[t='+testid+']'):''.replace(/\s+/g,''),aria?('[a='+aria+']'):''.replace(/\s+/g,''),cls?('.'+cls):''].join('');
+                          }catch(_){return 'node-error';}
+                        };
+                        var compactParents=function(node){
+                          var out=[];
+                          try{
+                            var cur=node;
+                            var depth=0;
+                            while(cur&&depth<5){
+                              out.push(compactNode(cur));
+                              cur=cur.parentElement;
+                              depth+=1;
+                            }
+                          }catch(_){ }
+                          return out;
+                        };
+                        var rectOf=function(node){
+                          try{
+                            if(!node){return null;}
+                            var r=node.getBoundingClientRect();
+                            return {x:Math.round(r.x),y:Math.round(r.y),left:Math.round(r.left),top:Math.round(r.top),right:Math.round(r.right),bottom:Math.round(r.bottom),width:Math.round(r.width),height:Math.round(r.height)};
+                          }catch(_){return null;}
+                        };
+                        var patternSummary=function(urls){
+                          var patterns=['fbcdn','video','blob:','.mp4','.m3u8','dash','bytestart'];
+                          var result={};
+                          for(var p=0;p<patterns.length;p++){
+                            result[patterns[p]]={count:0,snippets:[]};
+                          }
+                          for(var i=0;i<urls.length;i++){
+                            var url=((urls[i]||'')+'');
+                            var lower=url.toLowerCase();
+                            for(var j=0;j<patterns.length;j++){
+                              var key=patterns[j];
+                              if(lower.indexOf(key)>=0){
+                                result[key].count+=1;
+                                if(result[key].snippets.length<3){
+                                  result[key].snippets.push(clip(url,96));
+                                }
+                              }
+                            }
+                          }
+                          return result;
+                        };
+                        var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                        var visibleVideoCount=0;
+                        var readyVideoCount=0;
+                        var videoStates=[];
+                        var urls=[];
+                        Array.from(document.querySelectorAll('video,source,script,link,a')).slice(0,300).forEach(function(node){
+                          try{
+                            var src=(node.currentSrc||node.src||node.href||'');
+                            if(src){urls.push(src);}
+                          }catch(_){ }
+                        });
+                        var activeElement=document.activeElement;
+                        var userActivation={isActive:false,hasBeenActive:false};
+                        try{
+                          if(navigator.userActivation){
+                            userActivation.isActive=!!navigator.userActivation.isActive;
+                            userActivation.hasBeenActive=!!navigator.userActivation.hasBeenActive;
+                          }
+                        }catch(_){ }
+                        var firstVisibleVideo=null;
+                        var firstVisibleVideoInViewport=false;
+                        for(var i=0;i<videos.length;i++){
+                          var video=videos[i];
+                          var visibleNow=false;
+                          try{
+                            var style=window.getComputedStyle(video);
+                            var rect=video.getBoundingClientRect();
+                            visibleNow=!!video&&(!style||!(style.display==='none'||style.visibility==='hidden'||style.opacity==='0'))&&rect.width>8&&rect.height>8&&rect.bottom>0&&rect.right>0&&rect.top<window.innerHeight&&rect.left<window.innerWidth;
+                          }catch(_){ }
+                          var currentSrc=(video.currentSrc||video.src||'');
+                          var state={
+                            visible:visibleNow,
+                            paused:!!video.paused,
+                            readyState:video.readyState||0,
+                            networkState:video.networkState||0,
+                            currentTime:(typeof video.currentTime==='number'?video.currentTime:0),
+                            duration:(typeof video.duration==='number'?video.duration:0),
+                            videoWidth:video.videoWidth||0,
+                            videoHeight:video.videoHeight||0,
+                            currentSrc:currentSrc,
+                            currentSrcHost:(function(src){try{return (new URL(src, window.location.href)).host || '';}catch(_){return '';}})(currentSrc)
+                          };
+                          videoStates.push(state);
+                          if(visibleNow){
+                            visibleVideoCount+=1;
+                            if(!firstVisibleVideo){firstVisibleVideo=video; firstVisibleVideoInViewport=!!visibleNow;}
+                            if(state.readyState>=1 || state.currentSrc || state.videoWidth>0 || state.videoHeight>0){
+                              readyVideoCount+=1;
+                            }
+                          }
+                        }
+                        var cookieOverlayVisible=false;
+                        var loginOverlayVisible=false;
+                        var nodes=Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"],[aria-label]')).slice(0,160);
+                        for(var n=0;n<nodes.length;n++){
+                          var node=nodes[n];
+                          try{
+                            var style=window.getComputedStyle(node);
+                            if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){continue;}
+                            var blob=((node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('id'))||'')+' '+((node.getAttribute&&node.getAttribute('name'))||'')+' '+((node.getAttribute&&node.getAttribute('data-testid'))||'')+' '+((typeof node.className==='string')?node.className:'')).toLowerCase();
+                            if(blob.indexOf('cookie')>=0 || blob.indexOf('consent')>=0 || blob.indexOf('privacy')>=0 || blob.indexOf('gdpr')>=0 || blob.indexOf('tracking')>=0){cookieOverlayVisible=true;}
+                            if(blob.indexOf('login')>=0 || blob.indexOf('log in')>=0 || blob.indexOf('sign up')>=0 || blob.indexOf('password')>=0 || blob.indexOf('create new account')>=0){loginOverlayVisible=true;}
+                          }catch(_){ }
+                        }
+                        window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                          type:'facebook-compat',
+                          phase:phase,
+                          passiveGeneration:passiveGeneration,
+                          passiveAttempt:passiveAttempt,
+                          passiveMaxAttempts:passiveMaxAttempts,
+                          pageUrl:window.location.href,
+                          documentReadyState:document.readyState||'',
+                          documentUrl:document.URL||'',
+                          documentVisibilityState:document.visibilityState||'',
+                          documentHasFocus:!!document.hasFocus(),
+                          documentHidden:!!document.hidden,
+                          locationHref:window.location.href,
+                          title:document.title||'',
+                          historyLength:(window.history&&window.history.length)||0,
+                          windowInnerWidth:window.innerWidth||0,
+                          windowInnerHeight:window.innerHeight||0,
+                          windowScrollX:window.scrollX||0,
+                          windowScrollY:window.scrollY||0,
+                          scrollingElementScrollTop:(document.scrollingElement&&document.scrollingElement.scrollTop)||0,
+                          scrollingElementScrollHeight:(document.scrollingElement&&document.scrollingElement.scrollHeight)||0,
+                          scrollingElementClientHeight:(document.scrollingElement&&document.scrollingElement.clientHeight)||0,
+                          videoCount:videoStates.length,
+                          visibleVideoCount:visibleVideoCount,
+                          readyVideoCount:readyVideoCount,
+                          videoStates:videoStates,
+                          visibleVideoRect:rectOf(firstVisibleVideo),
+                          visibleVideoInViewport:!!firstVisibleVideoInViewport,
+                          activeElementSummary:compactNode(activeElement),
+                          activeElementParents:compactParents(activeElement),
+                          visibleVideoParents:compactParents(firstVisibleVideo),
+                          resourceHintCounts:patternSummary(urls),
+                          watchParam:clip((function(){
+                            try{var u=new URL(window.location.href); return u.searchParams.get('v')||u.searchParams.get('video_id')||'';}catch(_){ return ''; }
+                          })(),64),
+                          cookieOverlayVisible:cookieOverlayVisible,
+                          loginOverlayVisible:loginOverlayVisible,
+                          userActivation:userActivation,
+                          playbackWaiting:false,
+                          passiveMode:true
+                        }), '');
+                      }catch(_){ }
+                    };
+                    emit('facebook-passive-sample-0');
+                    setTimeout(function(){ emit('facebook-passive-sample-1200'); }, 1200);
+                    setTimeout(function(){ emit('facebook-passive-sample-3000'); }, 3000);
+                    setTimeout(function(){ emit('facebook-passive-sample-6000'); }, 6000);
+                    setTimeout(function(){ emit('facebook-passive-evaluate-10000'); }, 10000);
+                  }catch(_){ }
+                })();
+            """.trimIndent()
+            GvLogger.i(
+                "GvExt",
+                "facebook passive compat dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl generation=$passiveGeneration attempt=$passiveAttempt/$FACEBOOK_PASSIVE_MAX_ATTEMPTS"
+            )
+            session.loadUri(passiveScript)
             return
         }
         val script = """
@@ -2397,8 +2601,89 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                   }catch(_){}
                   return false;
                 };
+                var collectFacebookPlaybackSnapshot=function(){
+                  var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                  var visibleVideoCount=0;
+                  var readyVideoCount=0;
+                  var states=[];
+                  for(var i=0;i<videos.length;i++){
+                    var video=videos[i];
+                    var currentSrc=(video.currentSrc||video.src||'').slice(0,80);
+                    var visibleNow=visible(video);
+                    var state={
+                      visible:visibleNow,
+                      paused:!!video.paused,
+                      ended:!!video.ended,
+                      readyState:video.readyState||0,
+                      networkState:video.networkState||0,
+                      currentTime:(typeof video.currentTime==='number'?video.currentTime:0),
+                      duration:(typeof video.duration==='number'?video.duration:0),
+                      muted:!!video.muted,
+                      volume:(typeof video.volume==='number'?video.volume:0),
+                      videoWidth:video.videoWidth||0,
+                      videoHeight:video.videoHeight||0,
+                      currentSrc:currentSrc,
+                      currentSrcHost:(function(src){try{return (new URL(src, window.location.href)).host || '';}catch(_){return '';}})(currentSrc),
+                      error:video.error?video.error.code:0
+                    };
+                    states.push(state);
+                    if(visibleNow){
+                      visibleVideoCount+=1;
+                      if(state.readyState>=1 || state.currentSrc || state.videoWidth>0 || state.videoHeight>0){
+                        readyVideoCount+=1;
+                      }
+                    }
+                  }
+                  var cookieOverlayVisible=false;
+                  var loginOverlayVisible=false;
+                  var nodes=controls();
+                  for(var n=0;n<nodes.length;n++){
+                    var node=nodes[n];
+                    if(!visible(node)){continue;}
+                    var blob=textOf(node)+' '+attrOf(node);
+                    if(blob.indexOf('cookie')>=0 || blob.indexOf('consent')>=0 || blob.indexOf('privacy')>=0 || blob.indexOf('gdpr')>=0 || blob.indexOf('tracking')>=0){
+                      cookieOverlayVisible=true;
+                    }
+                    if(blob.indexOf('login')>=0 || blob.indexOf('log in')>=0 || blob.indexOf('sign up')>=0 || blob.indexOf('password')>=0 || blob.indexOf('create new account')>=0){
+                      loginOverlayVisible=true;
+                    }
+                  }
+                  return {
+                    videoCount:videos.length,
+                    visibleVideoCount:visibleVideoCount,
+                    readyVideoCount:readyVideoCount,
+                    videoStates:states,
+                    cookieOverlayVisible:cookieOverlayVisible,
+                    loginOverlayVisible:loginOverlayVisible,
+                  };
+                };
+                var emitFacebookPlaybackPhase=function(phase, extra){
+                  try{
+                    var snapshot=collectFacebookPlaybackSnapshot();
+                    var payload={
+                      type:'facebook-compat',
+                      phase:phase,
+                      pageUrl:window.location.href,
+                      title:document.title||'',
+                      videoCount:snapshot.videoCount,
+                      visibleVideoCount:snapshot.visibleVideoCount,
+                      readyVideoCount:snapshot.readyVideoCount,
+                      videoStates:snapshot.videoStates,
+                      cookieOverlayVisible:!!snapshot.cookieOverlayVisible,
+                      loginOverlayVisible:!!snapshot.loginOverlayVisible,
+                    };
+                    if(extra){
+                      for(var key in extra){
+                        if(Object.prototype.hasOwnProperty.call(extra,key)){
+                          payload[key]=extra[key];
+                        }
+                      }
+                    }
+                    window.prompt("__GV_MEDIA__"+JSON.stringify(payload), '');
+                  }catch(_){ }
+                };
                 var wakeFacebookVideo=function(){
-                  var result={videoCount:0,playAttempted:false,playButtonClicked:false,states:[]};
+                  var result={videoCount:0,playAttempted:false,playButtonClicked:false,playButtonFound:false,playbackDeferred:false,playbackDeferredReason:'',readyVideoCount:0,wakeAllowed:false,states:[]};
                   var retryScheduled=false;
                   var tapPoint=function(x,y){
                     try{
@@ -2426,25 +2711,50 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                       return true;
                     }catch(_){return false;}
                   };
+                  var findPlayButtonNode=function(){
+                    var playWords=['play video','play','watch now'];
+                    var nodes=controls();
+                    for(var i=0;i<nodes.length;i++){
+                      var node=nodes[i];
+                      if(!visible(node)){continue;}
+                      var blob=textOf(node)+' '+attrOf(node);
+                      for(var w=0;w<playWords.length;w++){
+                        if(blob.indexOf(playWords[w])>=0){return node;}
+                      }
+                    }
+                    return null;
+                  };
                   try{
                     var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
                     result.videoCount=videos.length;
                     for(var i=0;i<videos.length;i++){
                       var video=videos[i];
+                      var currentSrc=(video.currentSrc||video.src||'').slice(0,80);
                       var state={
                         visible:visible(video),
                         paused:!!video.paused,
+                        ended:!!video.ended,
                         readyState:video.readyState||0,
                         networkState:video.networkState||0,
-                        currentSrc:(video.currentSrc||video.src||'').slice(0,80),
+                        currentTime:(typeof video.currentTime==='number'?video.currentTime:0),
+                        duration:(typeof video.duration==='number'?video.duration:0),
+                        muted:!!video.muted,
+                        volume:(typeof video.volume==='number'?video.volume:0),
+                        videoWidth:video.videoWidth||0,
+                        videoHeight:video.videoHeight||0,
+                        currentSrc:currentSrc,
+                        currentSrcHost:(function(src){try{return (new URL(src, window.location.href)).host || '';}catch(_){return '';}})(currentSrc),
                         error:video.error?video.error.code:0
                       };
                       result.states.push(state);
                       if(!state.visible){continue;}
+                      if(state.readyState>=1 || state.currentSrc || state.videoWidth>0 || state.videoHeight>0){
+                        result.readyVideoCount+=1;
+                      }
                       try{video.setAttribute('playsinline','');}catch(_){}
                       try{video.setAttribute('webkit-playsinline','');}catch(_){}
                       try{video.controls=true;}catch(_){}
-                      if(video.paused){
+                      if(video.paused && (state.readyState>=1 || state.currentSrc || state.videoWidth>0 || state.videoHeight>0)){
                         try{
                           var playResult=video.play&&video.play();
                           result.playAttempted=true;
@@ -2468,8 +2778,23 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         }catch(_){}
                         if(!result.playButtonClicked && tapPoint(Math.round((video.getBoundingClientRect().left+video.getBoundingClientRect().right)/2),Math.round((video.getBoundingClientRect().top+video.getBoundingClientRect().bottom)/2))){
                             result.playButtonClicked=true;
-                          }
+                        }
                       }
+                    }
+                    var playButtonNode=findPlayButtonNode();
+                    result.playButtonFound=!!playButtonNode;
+                    result.wakeAllowed=result.readyVideoCount>0 || result.playButtonFound;
+                    if(!result.wakeAllowed){
+                      result.playbackDeferred=true;
+                      result.playbackDeferredReason='video-not-ready';
+                      return result;
+                    }
+                    if(playButtonNode){
+                      try{
+                        if(clickNode(playButtonNode)){
+                          result.playButtonClicked=true;
+                        }
+                      }catch(_){ }
                     }
                     if(!retryScheduled && result.videoCount>0){
                       retryScheduled=true;
@@ -2516,11 +2841,82 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                   }catch(_){}
                   return result;
                 };
+                var preflightSnapshot=collectFacebookPlaybackSnapshot();
+                emitFacebookPlaybackPhase('facebook-before-cookie-cleanup', {
+                  cleanupHiddenAny:false,
+                  wakeAttempted:false,
+                  playbackWaiting:false
+                });
                 var cookieClicked=clickCookie();
+                emitFacebookPlaybackPhase('facebook-after-cookie-cleanup', {
+                  cookieClicked:!!cookieClicked,
+                  cleanupHiddenAny:!!cookieClicked,
+                  wakeAttempted:false,
+                  playbackWaiting:false
+                });
+                if (activeHelpersEnabled) {
+                var postCookieSnapshot=collectFacebookPlaybackSnapshot();
+                if((postCookieSnapshot.readyVideoCount||0)<=0){
+                  emitFacebookPlaybackPhase('facebook-after-cookie-cleanup', {
+                    cookieClicked:!!cookieClicked,
+                    cleanupHiddenAny:!!cookieClicked,
+                    wakeAttempted:false,
+                    playbackWaiting:true,
+                    playbackWaitingReason:'source-not-attached-after-cookie'
+                  });
+                  return;
+                }
                 var loginDismissed=clickLoginDismiss();
                 var loginHidden=loginDismissed?false:hideLoginDialog();
                 var bottomLoginHidden=hideBottomLoginRail();
+                emitFacebookPlaybackPhase('facebook-after-login-cleanup', {
+                  cookieClicked:!!cookieClicked,
+                  loginDismissed:!!loginDismissed,
+                  loginDialogHidden:!!loginHidden,
+                  bottomLoginBarHidden:!!bottomLoginHidden,
+                  cleanupHiddenAny:!!(cookieClicked||loginDismissed||loginHidden||bottomLoginHidden),
+                  wakeAttempted:false
+                });
+                emitFacebookPlaybackPhase('facebook-before-wake', {
+                  cookieClicked:!!cookieClicked,
+                  loginDismissed:!!loginDismissed,
+                  loginDialogHidden:!!loginHidden,
+                  bottomLoginBarHidden:!!bottomLoginHidden,
+                  cleanupHiddenAny:!!(cookieClicked||loginDismissed||loginHidden||bottomLoginHidden),
+                  wakeAttempted:false
+                });
                 var videoWake=wakeFacebookVideo();
+                emitFacebookPlaybackPhase('facebook-after-wake', {
+                  cookieClicked:!!cookieClicked,
+                  loginDismissed:!!loginDismissed,
+                  loginDialogHidden:!!loginHidden,
+                  bottomLoginBarHidden:!!bottomLoginHidden,
+                  cleanupHiddenAny:!!(cookieClicked||loginDismissed||loginHidden||bottomLoginHidden),
+                  wakeAttempted:true,
+                  playButtonFound:!!videoWake.playButtonFound,
+                  playButtonClicked:!!videoWake.playButtonClicked,
+                  videoPlayAttempted:!!videoWake.playAttempted,
+                  wakeAllowed:!!videoWake.wakeAllowed,
+                  playbackDeferred:!!videoWake.playbackDeferred,
+                  playbackDeferredReason:videoWake.playbackDeferredReason||''
+                });
+                setTimeout(function(){
+                  emitFacebookPlaybackPhase('facebook-delayed-sample-1200', {
+                    cookieClicked:!!cookieClicked,
+                    loginDismissed:!!loginDismissed,
+                    loginDialogHidden:!!loginHidden,
+                    bottomLoginBarHidden:!!bottomLoginHidden,
+                    cleanupHiddenAny:!!(cookieClicked||loginDismissed||loginHidden||bottomLoginHidden),
+                    wakeAttempted:false,
+                    playButtonFound:!!videoWake.playButtonFound,
+                    playButtonClicked:!!videoWake.playButtonClicked,
+                    videoPlayAttempted:!!videoWake.playAttempted,
+                    wakeAllowed:!!videoWake.wakeAllowed,
+                    playbackDeferred:!!videoWake.playbackDeferred,
+                    playbackDeferredReason:videoWake.playbackDeferredReason||''
+                  });
+},1200);
+                }
                 window.prompt("__GV_MEDIA__"+JSON.stringify({
                   type:'facebook-compat',
                   phase:'activity-facebook-simple',
@@ -2598,6 +2994,543 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             "GvExt",
             "facebook compat dispatch tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$pageUrl"
         )
+    }
+
+    private fun maybeDispatchFacebookPlaybackDiagnostics(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+        videoCount: Int,
+        playButtonClicked: Boolean,
+        videoPlayAttempted: Boolean,
+    ) {
+        if (!isFacebookUrl(pageUrl)) {
+            return
+        }
+        if (videoCount <= 0 && !playButtonClicked && !videoPlayAttempted) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastDispatch = facebookPlaybackDiagLastDispatchMsBySession[session] ?: 0L
+        if (now - lastDispatch < 2500L) {
+            return
+        }
+        facebookPlaybackDiagLastDispatchMsBySession[session] = now
+        facebookPlaybackDiagBaselineCurrentTimeBySession.remove(session)
+        facebookPlaybackDiagBaselineMediaStateBySession.remove(session)
+        val script = """
+            javascript:(function(){
+              try{
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                    var rect=node.getBoundingClientRect();
+                    return rect.width>8&&rect.height>8&&rect.bottom>0&&rect.right>0&&rect.top<window.innerHeight&&rect.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var srcHost=function(src){
+                  try{return (new URL(src, window.location.href)).host || '';}
+                  catch(_){return '';}
+                };
+                var collect=function(){
+                  var videos=Array.from(document.querySelectorAll('video')).slice(0,8);
+                  var visibleVideos=[];
+                  for(var i=0;i<videos.length;i++){
+                    var video=videos[i];
+                    if(!visible(video)){continue;}
+                    var currentSrc=video.currentSrc||video.src||'';
+                    visibleVideos.push({
+                      index:i,
+                      paused:!!video.paused,
+                      ended:!!video.ended,
+                      currentTime:(typeof video.currentTime==='number'?video.currentTime:0),
+                      duration:(typeof video.duration==='number'?video.duration:0),
+                      readyState:video.readyState||0,
+                      networkState:video.networkState||0,
+                      muted:!!video.muted,
+                      volume:(typeof video.volume==='number'?video.volume:0),
+                      videoWidth:video.videoWidth||0,
+                      videoHeight:video.videoHeight||0,
+                      currentSrc:currentSrc,
+                      currentSrcHost:srcHost(currentSrc)
+                    });
+                  }
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                    type:'facebook-playback-diagnostics',
+                    phase:'activity-facebook-playback-sample',
+                    pageUrl:window.location.href,
+                    reason:${JSONObject.quote(reason)},
+                    sampleIndex:sampleIndex,
+                    videos:visibleVideos
+                  }), '');
+                };
+                var sampleIndex=0;
+                collect();
+                setTimeout(function(){sampleIndex=1;collect();},1200);
+              }catch(_){ }
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "facebook playback diagnostics dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$pageUrl videoCount=$videoCount playButtonClicked=$playButtonClicked videoPlayAttempted=$videoPlayAttempted"
+        )
+        session.loadUri(script)
+    }
+
+    private fun handleFacebookPlaybackDiagnostics(session: GeckoSession, payload: JSONObject) {
+        val pageUrl = payload.optString("pageUrl")
+        val reason = payload.optString("reason")
+        val sampleIndex = payload.optInt("sampleIndex", 0)
+        val videos = payload.optJSONArray("videos") ?: JSONArray()
+        val mediaState = browserMediaController.describeSessionState(session)
+        GvLogger.i(
+            "GvLayout",
+            "facebook playback sample pageUrl=$pageUrl sample=$sampleIndex reason=$reason videoCount=${videos.length()} mediaSession=$mediaState"
+        )
+        val baselineTimes = facebookPlaybackDiagBaselineCurrentTimeBySession.getOrPut(session) { LinkedHashMap() }
+        val baselineMediaState = facebookPlaybackDiagBaselineMediaStateBySession[session]
+        for (index in 0 until videos.length()) {
+            val video = videos.optJSONObject(index) ?: continue
+            val currentSrc = video.optString("currentSrc")
+            val srcHost = video.optString("currentSrcHost")
+            val key = if (currentSrc.isNotBlank()) currentSrc else "video#$index"
+            val currentTime = video.optDouble("currentTime", 0.0)
+            val duration = video.optDouble("duration", 0.0)
+            val baselineTime = baselineTimes[key]
+            val advancedLabel = if (sampleIndex == 1 && baselineTime != null) {
+                val delta = currentTime - baselineTime
+                " advancedFromT0=${delta > 0.05} deltaCurrentTime=${String.format(java.util.Locale.US, "%.3f", delta)}"
+            } else {
+                ""
+            }
+            GvLogger.i(
+                "GvLayout",
+                "facebook playback video sample=$sampleIndex index=${index + 1} paused=${video.optBoolean("paused")} ended=${video.optBoolean("ended")} currentTime=${String.format(java.util.Locale.US, "%.3f", currentTime)} duration=${String.format(java.util.Locale.US, "%.3f", duration)} readyState=${video.optInt("readyState")} networkState=${video.optInt("networkState")} muted=${video.optBoolean("muted")} volume=${String.format(java.util.Locale.US, "%.3f", video.optDouble("volume", 0.0))} videoWidth=${video.optInt("videoWidth")} videoHeight=${video.optInt("videoHeight")} currentSrcHost=${srcHost.ifBlank { "blank" }} currentSrc=${currentSrc.ifBlank { "blank" }}$advancedLabel"
+            )
+            if (sampleIndex == 0) {
+                baselineTimes[key] = currentTime
+            }
+        }
+        if (sampleIndex == 0) {
+            facebookPlaybackDiagBaselineMediaStateBySession[session] = mediaState
+        } else if (sampleIndex == 1) {
+            val changed = baselineMediaState != null && baselineMediaState != mediaState
+            GvLogger.i(
+                "GvMedia",
+                "facebook playback media session sample pageUrl=$pageUrl reason=$reason changed=$changed before=${baselineMediaState ?: "none"} after=$mediaState"
+            )
+            facebookPlaybackDiagBaselineCurrentTimeBySession.remove(session)
+            facebookPlaybackDiagBaselineMediaStateBySession.remove(session)
+        }
+    }
+
+    private fun handleFacebookPlaybackDeferred(
+        session: GeckoSession,
+        pageUrl: String,
+        payload: JSONObject,
+    ) {
+        val retryCount = facebookPlaybackDiagRetryCountBySession[session] ?: 0
+        val delayMs = when (retryCount) {
+            0 -> 1200L
+            1 -> 4200L
+            else -> null
+        }
+        if (delayMs == null) {
+            GvLogger.i(
+                "GvLayout",
+                "facebook playback deferred reason=video-not-ready retryLimitReached=true pageUrl=$pageUrl"
+            )
+            return
+        }
+        facebookPlaybackDiagRetryCountBySession[session] = retryCount + 1
+        GvLogger.i(
+            "GvLayout",
+            "facebook playback deferred reason=video-not-ready pageUrl=$pageUrl retryAttempt=${retryCount + 1}/2 delayMs=$delayMs videoStates=${payload.optJSONArray("videoStates")?.length() ?: 0}"
+        )
+        scheduleFacebookCompatFollowUp(session, delayMs)
+    }
+
+    private fun handleFacebookPlaybackWaiting(
+        session: GeckoSession,
+        pageUrl: String,
+        payload: JSONObject,
+    ) {
+        val retryCount = facebookPlaybackWaitRetryCountBySession[session] ?: 0
+        val delayMs = when (retryCount) {
+            0 -> 1200L
+            1 -> 4200L
+            else -> null
+        }
+        val states = payload.optJSONArray("videoStates") ?: JSONArray()
+        var visibleVideoCount = 0
+        var readyVideoCount = 0
+        var firstVisible: JSONObject? = null
+        for (index in 0 until states.length()) {
+            val state = states.optJSONObject(index) ?: continue
+            if (!state.optBoolean("visible")) continue
+            visibleVideoCount += 1
+            if (
+                state.optInt("readyState") >= 1 ||
+                state.optString("currentSrc").isNotBlank() ||
+                state.optInt("videoWidth") > 0 ||
+                state.optInt("videoHeight") > 0
+            ) {
+                readyVideoCount += 1
+            }
+            if (firstVisible == null) {
+                firstVisible = state
+            }
+        }
+        val message = buildString {
+            append("facebook playback waiting reason=")
+            append(payload.optString("playbackWaitingReason", "source-not-attached"))
+            append(" pageUrl=").append(pageUrl)
+            append(" retryAttempt=").append(retryCount + 1).append("/2")
+            append(" videoCount=").append(payload.optInt("videoCount"))
+            append(" visibleVideoCount=").append(visibleVideoCount)
+            append(" readyVideoCount=").append(readyVideoCount)
+            append(" currentSrc=").append(firstVisible?.optString("currentSrc").orEmpty().ifBlank { "blank" })
+            append(" readyState=").append(firstVisible?.optInt("readyState") ?: 0)
+            append(" networkState=").append(firstVisible?.optInt("networkState") ?: 0)
+            append(" currentTime=").append(String.format(java.util.Locale.US, "%.3f", firstVisible?.optDouble("currentTime") ?: 0.0))
+            append(" videoWidth=").append(firstVisible?.optInt("videoWidth") ?: 0)
+            append(" videoHeight=").append(firstVisible?.optInt("videoHeight") ?: 0)
+            append(" mediaSession=").append(browserMediaController.describeSessionState(session))
+            append(" playbackWaiting=").append(true)
+        }
+        GvLogger.i("GvLayout", message)
+        if (delayMs == null) {
+            GvLogger.i(
+                "GvLayout",
+                "facebook playback waiting retryLimitReached=true pageUrl=$pageUrl"
+            )
+            return
+        }
+        facebookPlaybackWaitRetryCountBySession[session] = retryCount + 1
+        scheduleFacebookCompatFollowUp(session, delayMs)
+    }
+
+    private fun updateFacebookPassiveReentryUrlState(session: GeckoSession, pageUrl: String) {
+        val normalizedUrl = normalizeFacebookPassiveReentryUrl(pageUrl)
+        if (normalizedUrl.isBlank()) {
+            val previousUrl = facebookPassiveReentryObservedUrlBySession.remove(session)
+            val hadAttempt = facebookPassiveAttemptCountBySession.remove(session) != null
+            val hadAttach = facebookPassiveAttachedUrlBySession.remove(session) != null
+            if (previousUrl != null || hadAttempt || hadAttach) {
+                val generation = incrementFacebookPassiveGeneration(session)
+                GvLogger.i(
+                    "GvLayout",
+                    "facebook passive reentry state reset url=blank reason=facebook-exit generation=$generation"
+                )
+            }
+            return
+        }
+        val previousUrl = facebookPassiveReentryObservedUrlBySession[session]
+        if (previousUrl != normalizedUrl) {
+            val generation = incrementFacebookPassiveGeneration(session)
+            facebookPassiveReentryObservedUrlBySession[session] = normalizedUrl
+            facebookPassiveAttemptCountBySession[session] = 1
+            facebookPassiveAttachedUrlBySession.remove(session)
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive reentry state reset url=$normalizedUrl reason=${if (previousUrl == null) "facebook-enter" else "facebook-url-change"} generation=$generation"
+            )
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive attempt start attempt=1/$FACEBOOK_PASSIVE_MAX_ATTEMPTS generation=$generation url=$normalizedUrl"
+            )
+        }
+    }
+
+    private fun incrementFacebookPassiveGeneration(session: GeckoSession): Int {
+        val nextGeneration = (facebookPassiveGenerationBySession[session] ?: 0) + 1
+        facebookPassiveGenerationBySession[session] = nextGeneration
+        return nextGeneration
+    }
+
+    private fun isCurrentFacebookPassiveGeneration(
+        session: GeckoSession,
+        payload: JSONObject,
+    ): Boolean {
+        val phase = payload.optString("phase")
+        if (!phase.startsWith("facebook-passive-")) {
+            return true
+        }
+        if (!payload.has("passiveGeneration")) {
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive sample ignored reason=missing-generation phase=$phase"
+            )
+            return false
+        }
+        val payloadGeneration = payload.optInt("passiveGeneration", -1)
+        val currentGeneration = facebookPassiveGenerationBySession[session] ?: -1
+        if (payloadGeneration != currentGeneration) {
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive sample ignored reason=stale-generation phase=$phase payloadGeneration=$payloadGeneration currentGeneration=$currentGeneration"
+            )
+            return false
+        }
+        return true
+    }
+
+    private fun normalizeFacebookPassiveReentryUrl(pageUrl: String): String {
+        if (!isFacebookUrl(pageUrl)) {
+            return ""
+        }
+        return runCatching {
+            android.net.Uri.parse(pageUrl).buildUpon().fragment(null).build().toString()
+        }.getOrDefault(pageUrl)
+    }
+
+    private fun firstVisibleFacebookVideoState(payload: JSONObject): JSONObject? {
+        val states = payload.optJSONArray("videoStates") ?: return null
+        for (index in 0 until states.length()) {
+            val state = states.optJSONObject(index) ?: continue
+            if (state.optBoolean("visible")) {
+                return state
+            }
+        }
+        return null
+    }
+
+    private fun facebookPassiveAttachSignal(state: JSONObject?): Boolean {
+        if (state == null) return false
+        return state.optString("currentSrc").isNotBlank() ||
+            state.optInt("readyState") >= 1 ||
+            state.optInt("videoWidth") > 0 ||
+            state.optInt("videoHeight") > 0
+    }
+
+    private fun facebookPassiveReadyEnough(state: JSONObject?): Boolean {
+        if (state == null) return false
+        return state.optString("currentSrc").isNotBlank() &&
+            state.optInt("readyState") >= 1 &&
+            state.optInt("videoWidth") > 0 &&
+            state.optInt("videoHeight") > 0
+    }
+
+    private fun facebookPassiveFailureReason(payload: JSONObject): String {
+        val firstVisible = firstVisibleFacebookVideoState(payload)
+        if (!facebookPassiveAttachSignal(firstVisible)) {
+            return "source-not-attached"
+        }
+        val currentTime = firstVisible?.optDouble("currentTime", 0.0) ?: 0.0
+        if (currentTime <= FACEBOOK_PASSIVE_REENTRY_MIN_ADVANCED_TIME_SECONDS) {
+            return "playback-stalled"
+        }
+        return ""
+    }
+
+    private fun maybeHandleFacebookPassiveAttempt(
+        session: GeckoSession,
+        payload: JSONObject,
+    ): Boolean {
+        if (!FACEBOOK_PASSIVE_DIAGNOSTIC_MODE) {
+            return false
+        }
+        val phase = payload.optString("phase")
+        if (!phase.startsWith("facebook-passive-")) {
+            return false
+        }
+        val passiveUrl = normalizeFacebookPassiveReentryUrl(payload.optString("locationHref").ifBlank { payload.optString("pageUrl") })
+        if (passiveUrl.isBlank()) {
+            return false
+        }
+        if (facebookPassiveAttachedUrlBySession[session] == passiveUrl) {
+            return false
+        }
+        val firstVisible = firstVisibleFacebookVideoState(payload)
+        val attachSignal = facebookPassiveAttachSignal(firstVisible)
+        val currentTime = firstVisible?.optDouble("currentTime", 0.0) ?: 0.0
+        val readyEnough = facebookPassiveReadyEnough(firstVisible)
+        if (currentTime > FACEBOOK_PASSIVE_REENTRY_MIN_ADVANCED_TIME_SECONDS || readyEnough) {
+            val attempt = facebookPassiveAttemptCountBySession[session] ?: payload.optInt("passiveAttempt", 1).coerceAtLeast(1)
+            facebookPassiveAttachedUrlBySession[session] = passiveUrl
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive attach success attempt=$attempt/$FACEBOOK_PASSIVE_MAX_ATTEMPTS generation=${facebookPassiveGenerationBySession[session] ?: -1} phase=$phase url=$passiveUrl currentTime=${String.format(java.util.Locale.US, "%.3f", currentTime)}"
+            )
+            return true
+        }
+        if (attachSignal) {
+            val attempt = facebookPassiveAttemptCountBySession[session] ?: payload.optInt("passiveAttempt", 1).coerceAtLeast(1)
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive attach warming attempt=$attempt/$FACEBOOK_PASSIVE_MAX_ATTEMPTS generation=${facebookPassiveGenerationBySession[session] ?: -1} phase=$phase url=$passiveUrl currentTime=${String.format(java.util.Locale.US, "%.3f", currentTime)} readyState=${firstVisible?.optInt("readyState") ?: 0} currentSrcPresent=${firstVisible?.optString("currentSrc").orEmpty().isNotBlank()}"
+            )
+        }
+        if (phase != "facebook-passive-evaluate-10000") {
+            return false
+        }
+        val reentryReason = facebookPassiveFailureReason(payload)
+        if (reentryReason.isBlank()) {
+            val attempt = facebookPassiveAttemptCountBySession[session] ?: payload.optInt("passiveAttempt", 1).coerceAtLeast(1)
+            facebookPassiveAttachedUrlBySession[session] = passiveUrl
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive attach success attempt=$attempt/$FACEBOOK_PASSIVE_MAX_ATTEMPTS generation=${facebookPassiveGenerationBySession[session] ?: -1} phase=$phase url=$passiveUrl currentTime=${String.format(java.util.Locale.US, "%.3f", currentTime)}"
+            )
+            return true
+        }
+        val currentAttempt = facebookPassiveAttemptCountBySession[session] ?: payload.optInt("passiveAttempt", 1).coerceAtLeast(1)
+        if (currentAttempt >= FACEBOOK_PASSIVE_MAX_ATTEMPTS) {
+            GvLogger.i(
+                "GvLayout",
+                "facebook passive reentry exhausted attempts=$FACEBOOK_PASSIVE_MAX_ATTEMPTS reason=$reentryReason url=$passiveUrl phase=$phase generation=${facebookPassiveGenerationBySession[session] ?: -1}"
+            )
+            return true
+        }
+        val nextAttempt = currentAttempt + 1
+        facebookPassiveAttemptCountBySession[session] = nextAttempt
+        val nextGeneration = incrementFacebookPassiveGeneration(session)
+        GvLogger.i(
+            "GvLayout",
+            "facebook passive reentry reason=$reentryReason attempt=$nextAttempt/$FACEBOOK_PASSIVE_MAX_ATTEMPTS url=$passiveUrl phase=$phase generation=$nextGeneration"
+        )
+        GvLogger.i(
+            "GvLayout",
+            "facebook passive attempt start attempt=$nextAttempt/$FACEBOOK_PASSIVE_MAX_ATTEMPTS generation=$nextGeneration url=$passiveUrl"
+        )
+        pointerHandler.post {
+            if (isFinishing || isDestroyed) {
+                return@post
+            }
+            val tab = tabController.findTabBySession(session) ?: return@post
+            val activeUrl = normalizeFacebookPassiveReentryUrl(tab.url)
+            if (activeUrl != passiveUrl) {
+                GvLogger.i(
+                    "GvLayout",
+                    "facebook passive reentry skipped reason=url-changed expected=$passiveUrl actual=${tab.url}"
+                )
+                return@post
+            }
+            session.loadUri(passiveUrl)
+        }
+        return true
+    }
+
+    private fun logFacebookCompatPhaseSnapshot(session: GeckoSession, payload: JSONObject) {
+        val phase = payload.optString("phase")
+        val pageUrl = payload.optString("pageUrl")
+        val states = payload.optJSONArray("videoStates") ?: JSONArray()
+        fun compact(value: String, maxLength: Int): String {
+            val normalized = value.replace(Regex("\\s+"), " ").trim()
+            return if (normalized.length <= maxLength) {
+                normalized
+            } else {
+                normalized.take(maxLength) + "..."
+            }
+        }
+        fun appendIfPresent(builder: StringBuilder, label: String, value: String, maxLength: Int = 120) {
+            if (value.isBlank()) return
+            builder.append(" ").append(label).append("=").append(compact(value, maxLength))
+        }
+        fun rectSummary(rect: JSONObject?): String {
+            if (rect == null) return ""
+            return buildString {
+                append(rect.optInt("left"))
+                append(",")
+                append(rect.optInt("top"))
+                append(" ")
+                append(rect.optInt("width"))
+                append("x")
+                append(rect.optInt("height"))
+            }
+        }
+        fun userActivationSummary(userActivation: JSONObject?): String {
+            if (userActivation == null) return ""
+            return "active=${userActivation.optBoolean("isActive")},been=${userActivation.optBoolean("hasBeenActive")}"
+        }
+        fun resourceHintSummary(resourceHintCounts: JSONObject?): String {
+            if (resourceHintCounts == null) return ""
+            val keys = listOf("fbcdn", "video", "blob:", ".mp4", ".m3u8", "dash", "bytestart")
+            return keys.joinToString(",") { key ->
+                val count = resourceHintCounts.optJSONObject(key)?.optInt("count") ?: 0
+                "$key=$count"
+            }
+        }
+        fun stringArraySummary(array: JSONArray?): String {
+            if (array == null || array.length() == 0) return ""
+            return buildString {
+                val end = minOf(array.length(), 5)
+                for (index in 0 until end) {
+                    val value = array.optString(index)
+                    if (value.isBlank()) continue
+                    if (isNotEmpty()) append(">")
+                    append(value)
+                }
+            }
+        }
+        var visibleVideoCount = 0
+        var readyVideoCount = 0
+        var firstVisible: JSONObject? = null
+        for (index in 0 until states.length()) {
+            val state = states.optJSONObject(index) ?: continue
+            if (!state.optBoolean("visible")) continue
+            visibleVideoCount += 1
+            if (
+                state.optInt("readyState") >= 1 ||
+                state.optString("currentSrc").isNotBlank() ||
+                state.optInt("videoWidth") > 0 ||
+                state.optInt("videoHeight") > 0
+            ) {
+                readyVideoCount += 1
+            }
+            if (firstVisible == null) {
+                firstVisible = state
+            }
+        }
+        val currentSrc = firstVisible?.optString("currentSrc").orEmpty()
+        val currentSrcLabel = if (currentSrc.isBlank()) "blank" else currentSrc
+        val currentSrcHost = firstVisible?.optString("currentSrcHost").orEmpty().ifBlank { "blank" }
+        val phaseSnapshotMessage = buildString {
+            append("facebook phase snapshot phase=$phase pageUrl=$pageUrl")
+            append(" videoCount=").append(payload.optInt("videoCount"))
+            append(" visibleVideoCount=").append(visibleVideoCount)
+            append(" readyVideoCount=").append(readyVideoCount)
+            append(" currentSrc=").append(currentSrcLabel)
+            append(" currentSrcHost=").append(currentSrcHost)
+            append(" readyState=").append(firstVisible?.optInt("readyState") ?: 0)
+            append(" networkState=").append(firstVisible?.optInt("networkState") ?: 0)
+            append(" paused=").append(firstVisible?.optBoolean("paused") ?: false)
+            append(" currentTime=").append(String.format(java.util.Locale.US, "%.3f", firstVisible?.optDouble("currentTime") ?: 0.0))
+            append(" videoWidth=").append(firstVisible?.optInt("videoWidth") ?: 0)
+            append(" videoHeight=").append(firstVisible?.optInt("videoHeight") ?: 0)
+            append(" mediaSession=").append(browserMediaController.describeSessionState(session))
+            append(" cookieOverlayVisible=").append(payload.optBoolean("cookieOverlayVisible"))
+            append(" loginOverlayVisible=").append(payload.optBoolean("loginOverlayVisible"))
+            append(" cleanupHiddenAny=").append(payload.optBoolean("cleanupHiddenAny"))
+            append(" wakeAttempted=").append(payload.optBoolean("wakeAttempted"))
+            append(" playButtonFound=").append(payload.optBoolean("playButtonFound"))
+            append(" playButtonClicked=").append(payload.optBoolean("playButtonClicked"))
+            append(" videoPlayAttempted=").append(payload.optBoolean("videoPlayAttempted"))
+            append(" playbackDeferred=").append(payload.optBoolean("playbackDeferred"))
+            append(" playbackDeferredReason=").append(payload.optString("playbackDeferredReason"))
+            appendIfPresent(this, "locationHref", payload.optString("locationHref"), maxLength = 140)
+            appendIfPresent(this, "documentUrl", payload.optString("documentUrl"), maxLength = 140)
+            appendIfPresent(this, "documentReadyState", payload.optString("documentReadyState"), maxLength = 32)
+            appendIfPresent(this, "documentVisibilityState", payload.optString("documentVisibilityState"), maxLength = 32)
+            append(" documentHasFocus=").append(payload.optBoolean("documentHasFocus"))
+            append(" documentHidden=").append(payload.optBoolean("documentHidden"))
+            append(" historyLength=").append(payload.optInt("historyLength"))
+            append(" window=").append(payload.optInt("windowInnerWidth")).append("x").append(payload.optInt("windowInnerHeight"))
+            append(" scroll=").append(payload.optInt("windowScrollX")).append(",").append(payload.optInt("windowScrollY"))
+            append(" scrollingElement=").append(payload.optInt("scrollingElementScrollTop"))
+                .append("/").append(payload.optInt("scrollingElementScrollHeight"))
+                .append("/").append(payload.optInt("scrollingElementClientHeight"))
+            appendIfPresent(this, "visibleVideoRect", rectSummary(payload.optJSONObject("visibleVideoRect")), maxLength = 64)
+            append(" visibleVideoInViewport=").append(payload.optBoolean("visibleVideoInViewport"))
+            appendIfPresent(this, "activeElement", payload.optString("activeElementSummary"), maxLength = 120)
+            appendIfPresent(this, "userActivation", userActivationSummary(payload.optJSONObject("userActivation")), maxLength = 64)
+            appendIfPresent(this, "resourceHints", resourceHintSummary(payload.optJSONObject("resourceHintCounts")), maxLength = 120)
+            appendIfPresent(this, "watchParam", payload.optString("watchParam"), maxLength = 80)
+            appendIfPresent(this, "visibleVideoParents", stringArraySummary(payload.optJSONArray("visibleVideoParents")), maxLength = 220)
+        }
+        GvLogger.i("GvLayout", phaseSnapshotMessage)
     }
 
     private fun maybeDispatchAmazonConsentCompat(
@@ -3422,6 +4355,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val title = payload.optString("title")
         val phase = payload.optString("phase")
         val type = payload.optString("type")
+        if (type == "facebook-compat" && !isCurrentFacebookPassiveGeneration(session, payload)) {
+            return
+        }
         val candidates = payload.optJSONArray("directCandidates") ?: JSONArray()
         GvLogger.i(
             "GvExt",
@@ -3556,6 +4492,36 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 "GvLayout",
                 "facebook compat pageUrl=$pageUrl phase=${payload.optString("phase")} cookieClicked=$cookieClicked resolved=${facebookCompatResolvedBySession.contains(session)} reason=${payload.optString("reason")} loginDismissed=${payload.optBoolean("loginDismissed")} bottomLoginBarHidden=${payload.optBoolean("bottomLoginBarHidden")} loginDialogHidden=${payload.optBoolean("loginDialogHidden")} topLoginHeaderHidden=${payload.optBoolean("topLoginHeaderHidden")} blockingOverlayHidden=${payload.optBoolean("blockingOverlayHidden")} dimRestored=${payload.optBoolean("dimRestored")} autoBlurCount=${payload.optInt("autoBlurCount")} cookieClickCount=${payload.optInt("cookieClickCount")} loginDismissCount=${payload.optInt("loginDismissCount")} loginHideCount=${payload.optInt("loginHideCount")} videoCount=${payload.optInt("videoCount")} videoPlayAttempted=${payload.optBoolean("videoPlayAttempted")} playButtonClicked=${payload.optBoolean("playButtonClicked")} bottomBarHideCount=${payload.optInt("bottomBarHideCount")} topLoginHideCount=${payload.optInt("topLoginHideCount")} blockingOverlayHideCount=${payload.optInt("blockingOverlayHideCount")} dimRestoreCount=${payload.optInt("dimRestoreCount")} active=${summarizeNode(payload.optJSONObject("activeElement"))} activeChain=${summarizeNodeArray(payload.optJSONArray("activeElementChain"), 4)} center=${summarizeNodeArray(payload.optJSONArray("centerStack"), 4)} overlays=${summarizeNodeArray(payload.optJSONArray("overlayCandidates"), 6)} candidates=$candidateSummary"
             )
+            if (phase.startsWith("facebook-")) {
+                logFacebookCompatPhaseSnapshot(session, payload)
+            }
+            if (maybeHandleFacebookPassiveAttempt(session, payload)) {
+                return
+            }
+            if (payload.optBoolean("playbackWaiting")) {
+                handleFacebookPlaybackWaiting(session, pageUrl, payload)
+                return
+            }
+            if (payload.optString("phase") == "activity-facebook-simple") {
+                maybeDispatchFacebookPlaybackDiagnostics(
+                    session = session,
+                    pageUrl = pageUrl,
+                    reason = payload.optString("reason"),
+                    videoCount = payload.optInt("videoCount"),
+                    playButtonClicked = payload.optBoolean("playButtonClicked"),
+                    videoPlayAttempted = payload.optBoolean("videoPlayAttempted"),
+                )
+                if (payload.optBoolean("playbackDeferred")) {
+                    handleFacebookPlaybackDeferred(session, pageUrl, payload)
+                } else {
+                    facebookPlaybackDiagRetryCountBySession.remove(session)
+                    facebookPlaybackWaitRetryCountBySession.remove(session)
+                }
+            }
+            return
+        }
+        if (type == "facebook-playback-diagnostics") {
+            handleFacebookPlaybackDiagnostics(session, payload)
             return
         }
         if (type == "youtube-consent") {
@@ -3625,9 +4591,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             "Mozilla/5.0 (X11; Linux x86_64; BRAVIA 4K VH2 Build/STT2.230505.001.S100) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 " +
             "Safari/537.36 SonyCEBrowser/1.0 KulchaFloTVMkII/2.0"
-        private const val FACEBOOK_DESKTOP_USER_AGENT =
+// Chrome UA - previous baseline for A/B comparison
+        private const val FACEBOOK_DESKTOP_USER_AGENT_CHROME =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        // Firefox UA - current primary
+        private const val FACEBOOK_DESKTOP_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
+        private const val FACEBOOK_PASSIVE_DIAGNOSTIC_MODE = true
+        // Facebook active DOM helpers are intentionally disabled. Firefox desktop UA plus passive source-attach monitoring is the current strategy.
+        private const val FACEBOOK_ACTIVE_HELPERS_ENABLED = 0
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -3640,6 +4613,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         private const val BACK_EXIT_CONFIRM_WINDOW_MS = 2200L
         private const val BACK_RETURN_HOME_CONFIRM_WINDOW_MS = 2200L
         private const val FACEBOOK_COMPAT_DISPATCH_MIN_INTERVAL_MS = 350L
+        private const val FACEBOOK_PASSIVE_MAX_ATTEMPTS = 6
+        private const val FACEBOOK_PASSIVE_REENTRY_MIN_ADVANCED_TIME_SECONDS = 0.25
         private const val POINTER_INITIAL_REPEAT_DELAY_MS = 110L
         private const val POINTER_REPEAT_FRAME_MS = 16L
         private const val POINTER_MOVE_STEP_PX = 18f
@@ -3736,15 +4711,17 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         url: String,
         reason: String,
     ) {
-        val targetUa = if (isFacebookUrl(url)) FACEBOOK_DESKTOP_USER_AGENT else SONY_BRAVIA_USER_AGENT
+        val isFacebook = isFacebookUrl(url)
+        val targetUa = if (isFacebook) FACEBOOK_DESKTOP_USER_AGENT else SONY_BRAVIA_USER_AGENT
+        val policyMode = if (isFacebook) "desktop-firefox" else "sony-bravia"
         if (session.settings.userAgentOverride == targetUa) {
             return
         }
         session.settings.userAgentOverride = targetUa
-        val policy = if (targetUa == FACEBOOK_DESKTOP_USER_AGENT) "DESKTOP_FB" else "SONY_MODERN"
         GvLogger.i(
             "GvNav",
-            "ua policy applied tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} policy=$policy reason=$reason url=$url"
+            "ua policy applied tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                "url=$url uaMode=$policyMode ua=$targetUa reason=$reason"
         )
     }
 
