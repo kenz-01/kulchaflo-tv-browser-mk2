@@ -2247,11 +2247,18 @@ return changed>0;
                     var passiveMaxAttempts=$FACEBOOK_PASSIVE_MAX_ATTEMPTS;
                     var activeHelpersEnabled=$FACEBOOK_ACTIVE_HELPERS_ENABLED==1;
                     var cookieAllowAllAutoclickEnabled=$FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED==1;
+                    var loginModalCloseEnabled=$FACEBOOK_LOGIN_MODAL_CLOSE_AFTER_ATTACH_ENABLED==1;
                     var overlayDiagState=window.__kfFbOverlayDiagState||(window.__kfFbOverlayDiagState={early:false,attached:false,attachedDelay:false,visible:false});
                     var cookieAllowAllState=window.__kfFbCookieAllowAllAutoclickState||(window.__kfFbCookieAllowAllAutoclickState={generation:-1,clicked:false});
+                    var loginModalCloseState=window.__kfFbLoginModalCloseState||(window.__kfFbLoginModalCloseState={generation:-1,scheduled:false,clicked:false});
                     if(cookieAllowAllState.generation!==passiveGeneration){
                       cookieAllowAllState.generation=passiveGeneration;
                       cookieAllowAllState.clicked=false;
+                    }
+                    if(loginModalCloseState.generation!==passiveGeneration){
+                      loginModalCloseState.generation=passiveGeneration;
+                      loginModalCloseState.scheduled=false;
+                      loginModalCloseState.clicked=false;
                     }
                     var clipText=function(v,n){
                       try{return ((v||'')+'').replace(/\s+/g,' ').trim().slice(0,n||96);}catch(_){return '';}
@@ -2488,6 +2495,146 @@ return changed>0;
                           loginButtonCandidates:loginButtonCandidates.map(function(item){return item.summary;}),
                           pairCandidates:pairCandidates
                         }), '');
+                      }catch(_){}
+                    };
+                    var emitLoginModalClose=function(phase, clicked, reason, modal, closeButton, buttonSummary, primaryAttached, modalVariant){
+                      try{
+                        window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                          type:'facebook-login-modal-close',
+                          phase:phase,
+                          passiveGeneration:passiveGeneration,
+                          passiveAttempt:passiveAttempt,
+                          passiveMaxAttempts:passiveMaxAttempts,
+                          pageUrl:window.location.href,
+                          clicked:!!clicked,
+                          reason:reason||'',
+                          modalRect:rectString(rectOf(modal)),
+                          closeButtonRect:rectString(rectOf(closeButton)),
+                          buttonText:clipText(buttonSummary||'',64),
+                          primaryVideoAttached:!!primaryAttached,
+                          modalVariant:modalVariant||'unknown'
+                        }), '');
+                      }catch(_){}
+                    };
+                    var primaryAttachedVideoForLoginClose=function(){
+                      try{
+                        var videos=Array.from(document.querySelectorAll('video')).slice(0,6);
+                        for(var i=0;i<videos.length;i++){
+                          var video=videos[i];
+                          if(!visibleNode(video)){continue;}
+                          var currentSrc=(video.currentSrc||video.src||'');
+                          if(currentSrc&&video.readyState>=1&&video.videoWidth>0&&video.videoHeight>0){
+                            return {node:video,rect:rectOf(video)};
+                          }
+                        }
+                      }catch(_){}
+                      return null;
+                    };
+                    var loginModalText=function(node){
+                      try{
+                        return lowerText((node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||''),1200);
+                      }catch(_){return '';}
+                    };
+                    var classifyLoginModal=function(node){
+                      try{
+                        if(!visibleNode(node)){return '';}
+                        var role=lowerText((node.getAttribute&&node.getAttribute('role'))||'',32);
+                        var ariaModal=lowerText((node.getAttribute&&node.getAttribute('aria-modal'))||'',16);
+                        if(role!=='dialog'&&role!=='alertdialog'&&ariaModal!=='true'){return '';}
+                        if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return '';}
+                        var text=loginModalText(node);
+                        if(text.indexOf('cookie')>=0||text.indexOf('cookies')>=0||text.indexOf('optional cookies')>=0||text.indexOf('essential cookies')>=0||text.indexOf('allow the use of cookies')>=0){return '';}
+                        var portrait=text.indexOf('see more on facebook')>=0&&
+                          text.indexOf('email address or phone number')>=0&&
+                          text.indexOf('password')>=0&&
+                          text.indexOf('log in')>=0;
+                        if(portrait){return 'portrait';}
+                        var qrLike=text.indexOf('log in with qr code')>=0||text.indexOf('qr code')>=0||text.indexOf('scan this code')>=0;
+                        if(!qrLike){return '';}
+                        var signals=0;
+                        if(text.indexOf('email address or phone number')>=0){signals+=1;}
+                        if(text.indexOf('password')>=0){signals+=1;}
+                        if(text.indexOf('log in')>=0){signals+=1;}
+                        if(text.indexOf('see more on facebook')>=0){signals+=1;}
+                        return signals>=2?'qr':'';
+                      }catch(_){return '';}
+                    };
+                    var closeButtonSummary=function(node){
+                      try{
+                        return clipText(((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+(node.value||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||''),96);
+                      }catch(_){return '';}
+                    };
+                    var isSafeLoginModalCloseButton=function(node,modalRect){
+                      try{
+                        if(!visibleNode(node)){return false;}
+                        if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return false;}
+                        var summary=lowerText(closeButtonSummary(node),96).replace(/\s+/g,' ').trim();
+                        if(!summary){return false;}
+                        if(summary!=='close'&&summary.indexOf('close')<0){return false;}
+                        var forbidden=['log in','login','sign up','signup','continue','watch','play','video','comment','share','create account','qr code','scan this code'];
+                        for(var f=0;f<forbidden.length;f++){
+                          if(summary.indexOf(forbidden[f])>=0){return false;}
+                        }
+                        var r=rectOf(node);
+                        if(!r||!modalRect){return false;}
+                        var squareish=Math.abs(r.width-r.height)<=18&&r.width>=20&&r.height>=20&&r.width<=64&&r.height<=64;
+                        var topRight=r.top>=modalRect.top-8&&r.top<=modalRect.top+90&&r.right>=modalRect.right-110&&r.right<=modalRect.right+12;
+                        return squareish&&topRight;
+                      }catch(_){return false;}
+                    };
+                    var runLoginModalClose=function(phase){
+                      try{
+                        if(!loginModalCloseEnabled){return;}
+                        if(loginModalCloseState.clicked){
+                          emitLoginModalClose(phase,false,'already-clicked',null,null,'',false,'unknown');
+                          return;
+                        }
+                        var primary=primaryAttachedVideoForLoginClose();
+                        if(!primary){
+                          emitLoginModalClose(phase,false,'no-primary-attached-video',null,null,'',false,'unknown');
+                          return;
+                        }
+                        var dialogs=Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')).slice(0,40);
+                        var modal=null;
+                        var modalVariant='unknown';
+                        for(var d=0;d<dialogs.length;d++){
+                          var variant=classifyLoginModal(dialogs[d]);
+                          if(variant){modal=dialogs[d];modalVariant=variant;break;}
+                        }
+                        if(!modal){
+                          emitLoginModalClose(phase,false,'no-login-modal-match',null,null,'',true,'unknown');
+                          return;
+                        }
+                        var modalRect=rectOf(modal);
+                        var buttons=Array.from(modal.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"],[aria-label]')).slice(0,80);
+                        var best=null;
+                        for(var b=0;b<buttons.length;b++){
+                          if(isSafeLoginModalCloseButton(buttons[b],modalRect)){best=buttons[b];break;}
+                        }
+                        if(!best){
+                          emitLoginModalClose(phase,false,'no-safe-close-button',modal,null,'',true,modalVariant);
+                          return;
+                        }
+                        var summary=closeButtonSummary(best);
+                        try{
+                          best.click();
+                          loginModalCloseState.clicked=true;
+                          emitLoginModalClose(phase,true,'clicked',modal,best,summary,true,modalVariant);
+                        }catch(clickError){
+                          emitLoginModalClose(phase,false,'click-error',modal,best,summary,true,modalVariant);
+                        }
+                      }catch(error){
+                        emitLoginModalClose(phase,false,'scan-error',null,null,'',false,'unknown');
+                      }
+                    };
+                    var scheduleLoginModalClose=function(trigger,delayMs){
+                      try{
+                        if(!loginModalCloseEnabled){return;}
+                        if(loginModalCloseState.scheduled||loginModalCloseState.clicked){return;}
+                        loginModalCloseState.scheduled=true;
+                        var primary=primaryAttachedVideoForLoginClose();
+                        emitLoginModalClose('facebook-login-modal-close-scheduled',false,'scheduled',null,null,'',!!primary,'unknown');
+                        setTimeout(function(){runLoginModalClose('facebook-login-modal-close-'+trigger);},delayMs);
                       }catch(_){}
                     };
                     var emitCookieAllowAllAutoclick=function(phase, clicked, reason, buttonText, dialogRect, buttonRect){
@@ -2795,6 +2942,7 @@ return changed>0;
                         if((readyEnough||currentTimeAdvanced)&&!overlayDiagState.attached){
                           overlayDiagState.attached=true;
                           emitOverlayDiagnostics('after-attach');
+                          scheduleLoginModalClose('after-attach-2500',2500);
                           setTimeout(function(){
                             if(!overlayDiagState.attachedDelay){
                               overlayDiagState.attachedDelay=true;
@@ -3649,7 +3797,7 @@ return changed>0;
         payload: JSONObject,
     ): Boolean {
         val phase = payload.optString("phase")
-        if (!phase.startsWith("facebook-passive-") && !phase.startsWith("facebook-overlay-")) {
+        if (!phase.startsWith("facebook-passive-") && !phase.startsWith("facebook-overlay-") && !phase.startsWith("facebook-login-modal-close-")) {
             return true
         }
         if (!payload.has("passiveGeneration")) {
@@ -4867,7 +5015,7 @@ return changed>0;
         val title = payload.optString("title")
         val phase = payload.optString("phase")
         val type = payload.optString("type")
-        if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick") && !isCurrentFacebookPassiveGeneration(session, payload)) {
+        if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick" || type == "facebook-login-modal-close") && !isCurrentFacebookPassiveGeneration(session, payload)) {
             return
         }
         val candidates = payload.optJSONArray("directCandidates") ?: JSONArray()
@@ -4949,6 +5097,20 @@ return changed>0;
             GvLogger.i(
                 "GvLayout",
                 "facebook cookie allow-all autoclick result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} buttonText=${payload.optString("buttonText")} dialogRect=${payload.optString("dialogRect")} buttonRect=${payload.optString("buttonRect")} pageUrl=$pageUrl"
+            )
+            return
+        }
+        if (type == "facebook-login-modal-close") {
+            if (payload.optString("reason") == "scheduled") {
+                GvLogger.i(
+                    "GvLayout",
+                    "facebook login modal close scheduled modalVariant=${payload.optString("modalVariant")} phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} primaryVideoAttached=${payload.optBoolean("primaryVideoAttached")} pageUrl=$pageUrl"
+                )
+                return
+            }
+            GvLogger.i(
+                "GvLayout",
+                "facebook login modal close result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} modalVariant=${payload.optString("modalVariant")} phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} modalRect=${payload.optString("modalRect")} closeButtonRect=${payload.optString("closeButtonRect")} buttonText=${payload.optString("buttonText")} primaryVideoAttached=${payload.optBoolean("primaryVideoAttached")} pageUrl=$pageUrl"
             )
             return
         }
@@ -5131,6 +5293,7 @@ return changed>0;
         // Facebook active DOM helpers are intentionally disabled. Firefox desktop UA plus passive source-attach monitoring is the current strategy.
         private const val FACEBOOK_ACTIVE_HELPERS_ENABLED = 0
         private const val FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED = 1
+        private const val FACEBOOK_LOGIN_MODAL_CLOSE_AFTER_ATTACH_ENABLED = 1
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
