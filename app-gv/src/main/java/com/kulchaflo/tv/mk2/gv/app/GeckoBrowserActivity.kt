@@ -5495,8 +5495,8 @@ return changed>0;
         private const val FACEBOOK_DESKTOP_USER_AGENT_CHROME =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        // Firefox UA - current primary
-        private const val FACEBOOK_DESKTOP_USER_AGENT =
+        // Firefox UA - default browser identity for normal browsing and Facebook.
+        private const val DESKTOP_FIREFOX_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
         private const val FACEBOOK_PASSIVE_DIAGNOSTIC_MODE = true
         // Facebook active DOM helpers are intentionally disabled. Firefox desktop UA plus passive source-attach monitoring is the current strategy.
@@ -5614,9 +5614,7 @@ return changed>0;
         url: String,
         reason: String,
     ) {
-        val isFacebook = isFacebookUrl(url)
-        val targetUa = if (isFacebook) FACEBOOK_DESKTOP_USER_AGENT else SONY_BRAVIA_USER_AGENT
-        val policyMode = if (isFacebook) "desktop-firefox" else "sony-bravia"
+        val (targetUa, policyMode) = resolveUserAgentPolicyForUrl(url)
         if (session.settings.userAgentOverride == targetUa) {
             return
         }
@@ -5626,6 +5624,22 @@ return changed>0;
             "ua policy applied tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
                 "url=$url uaMode=$policyMode ua=$targetUa reason=$reason"
         )
+    }
+
+    private fun resolveUserAgentPolicyForUrl(url: String): Pair<String, String> {
+        return when {
+            isFacebookUrl(url) -> DESKTOP_FIREFOX_USER_AGENT to "desktop-firefox-facebook"
+            shouldUseSonyBraviaUserAgent(url) -> SONY_BRAVIA_USER_AGENT to "sony-bravia-override"
+            else -> DESKTOP_FIREFOX_USER_AGENT to "desktop-firefox-default"
+        }
+    }
+
+    private fun shouldUseSonyBraviaUserAgent(url: String): Boolean {
+        // Provider-specific TV UA rollback hook. Keep false until a source proves it needs Sony Bravia identity.
+        if (url.isBlank()) {
+            return false
+        }
+        return false
     }
 
     private fun isFacebookHost(hostValue: String?): Boolean {
