@@ -2248,9 +2248,11 @@ return changed>0;
                     var activeHelpersEnabled=$FACEBOOK_ACTIVE_HELPERS_ENABLED==1;
                     var cookieAllowAllAutoclickEnabled=$FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED==1;
                     var loginModalCloseEnabled=$FACEBOOK_LOGIN_MODAL_CLOSE_AFTER_ATTACH_ENABLED==1;
+                    var bottomLoginBarCosmeticHideEnabled=$FACEBOOK_BOTTOM_LOGIN_BAR_COSMETIC_HIDE_ENABLED==1;
                     var overlayDiagState=window.__kfFbOverlayDiagState||(window.__kfFbOverlayDiagState={early:false,attached:false,attachedDelay:false,visible:false});
                     var cookieAllowAllState=window.__kfFbCookieAllowAllAutoclickState||(window.__kfFbCookieAllowAllAutoclickState={generation:-1,clicked:false});
                     var loginModalCloseState=window.__kfFbLoginModalCloseState||(window.__kfFbLoginModalCloseState={generation:-1,scheduled:false,clicked:false});
+                    var bottomLoginBarHideState=window.__kfFbBottomLoginBarHideState||(window.__kfFbBottomLoginBarHideState={generation:-1,scheduled:false,hidden:false});
                     if(cookieAllowAllState.generation!==passiveGeneration){
                       cookieAllowAllState.generation=passiveGeneration;
                       cookieAllowAllState.clicked=false;
@@ -2259,6 +2261,11 @@ return changed>0;
                       loginModalCloseState.generation=passiveGeneration;
                       loginModalCloseState.scheduled=false;
                       loginModalCloseState.clicked=false;
+                    }
+                    if(bottomLoginBarHideState.generation!==passiveGeneration){
+                      bottomLoginBarHideState.generation=passiveGeneration;
+                      bottomLoginBarHideState.scheduled=false;
+                      bottomLoginBarHideState.hidden=false;
                     }
                     var clipText=function(v,n){
                       try{return ((v||'')+'').replace(/\s+/g,' ').trim().slice(0,n||96);}catch(_){return '';}
@@ -2535,6 +2542,18 @@ return changed>0;
                         return lowerText((node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||''),1200);
                       }catch(_){return '';}
                     };
+                    var hasVisibleCookieDialogForBottomHide=function(){
+                      try{
+                        var dialogs=Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')).slice(0,30);
+                        for(var d=0;d<dialogs.length;d++){
+                          var node=dialogs[d];
+                          if(!visibleNode(node)){continue;}
+                          var text=loginModalText(node);
+                          if(text.indexOf('cookie')>=0||text.indexOf('cookies')>=0||text.indexOf('optional cookies')>=0||text.indexOf('essential cookies')>=0||text.indexOf('allow all cookies')>=0||text.indexOf('allow the use of cookies')>=0){return true;}
+                        }
+                      }catch(_){}
+                      return false;
+                    };
                     var classifyLoginModal=function(node){
                       try{
                         if(!visibleNode(node)){return '';}
@@ -2567,7 +2586,7 @@ return changed>0;
                     var isSafeLoginModalCloseButton=function(node,modalRect){
                       try{
                         if(!visibleNode(node)){return false;}
-                        if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return false;}
+                        if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return true;}
                         var summary=lowerText(closeButtonSummary(node),96).replace(/\s+/g,' ').trim();
                         if(!summary){return false;}
                         if(summary!=='close'&&summary.indexOf('close')<0){return false;}
@@ -2602,6 +2621,7 @@ return changed>0;
                           if(variant){modal=dialogs[d];modalVariant=variant;break;}
                         }
                         if(!modal){
+                          scheduleBottomLoginBarHide('after-no-login-modal-2000',2000);
                           emitLoginModalClose(phase,false,'no-login-modal-match',null,null,'',true,'unknown');
                           return;
                         }
@@ -2620,6 +2640,7 @@ return changed>0;
                           best.click();
                           loginModalCloseState.clicked=true;
                           emitLoginModalClose(phase,true,'clicked',modal,best,summary,true,modalVariant);
+                          scheduleBottomLoginBarHide('after-login-modal-close-2000',2000);
                         }catch(clickError){
                           emitLoginModalClose(phase,false,'click-error',modal,best,summary,true,modalVariant);
                         }
@@ -2635,6 +2656,180 @@ return changed>0;
                         var primary=primaryAttachedVideoForLoginClose();
                         emitLoginModalClose('facebook-login-modal-close-scheduled',false,'scheduled',null,null,'',!!primary,'unknown');
                         setTimeout(function(){runLoginModalClose('facebook-login-modal-close-'+trigger);},delayMs);
+                      }catch(_){}
+                    };
+                    var emitBottomLoginBarHide=function(phase, hidden, reason, bar, barTextSummary, primaryAttached, overlapsVideo, anchor, anchorTextSummary, climbDepth){
+                      try{
+                        window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                          type:'facebook-bottom-login-bar-cosmetic-hide',
+                          phase:phase,
+                          passiveGeneration:passiveGeneration,
+                          passiveAttempt:passiveAttempt,
+                          passiveMaxAttempts:passiveMaxAttempts,
+                          pageUrl:window.location.href,
+                          hidden:!!hidden,
+                          reason:reason||'',
+                          barRect:rectString(rectOf(bar)),
+                          barTextSummary:clipText(barTextSummary||'',96),
+                          anchorRect:rectString(rectOf(anchor)),
+                          anchorText:clipText(anchorTextSummary||'',64),
+                          climbDepth:typeof climbDepth==='number'?climbDepth:-1,
+                          primaryVideoAttached:!!primaryAttached,
+                          overlapsVideo:!!overlapsVideo
+                        }), '');
+                      }catch(_){}
+                    };
+                    var bottomLoginText=function(node,limit){
+                      try{
+                        return lowerText((node.innerText||node.textContent||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||''),limit||800);
+                      }catch(_){return '';}
+                    };
+                    var isInsideBlockedBottomLoginContext=function(node){
+                      try{
+                        if(!visibleNode(node)){return false;}
+                        if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return false;}
+                        var cur=node;
+                        for(var depth=0;depth<8&&cur;depth++){
+                          if(cur.tagName&&['VIDEO','SOURCE','CANVAS','IFRAME'].indexOf(cur.tagName)>=0){return true;}
+                          var role=lowerText((cur.getAttribute&&cur.getAttribute('role'))||'',32);
+                          var ariaModal=lowerText((cur.getAttribute&&cur.getAttribute('aria-modal'))||'',16);
+                          if(role==='dialog'||role==='alertdialog'||ariaModal==='true'){return true;}
+                          var text=bottomLoginText(cur,500);
+                          if(text.indexOf('cookie')>=0||text.indexOf('cookies')>=0||text.indexOf('essential')>=0||text.indexOf('optional')>=0||text.indexOf('allow all cookies')>=0){return true;}
+                          cur=cur.parentElement;
+                        }
+                      }catch(_){return true;}
+                      return false;
+                    };
+                    var isBottomLoginAnchor=function(node){
+                      try{
+                        if(!visibleNode(node)){return false;}
+                        var r=rectOf(node);
+                        if(!r){return false;}
+                        var vw=window.innerWidth||0;
+                        var vh=window.innerHeight||0;
+                        if(r.bottom<vh-120){return false;}
+                        if(r.top<vh*0.50){return false;}
+                        if(r.top<90){return false;}
+                        var text=bottomLoginText(node,240);
+                        if(text.indexOf('cookie')>=0||text.indexOf('cookies')>=0||text.indexOf('essential')>=0||text.indexOf('optional')>=0||text.indexOf('allow all cookies')>=0){return false;}
+                        var loginLike=text.indexOf('log in')>=0||text.indexOf('create new account')>=0||text.indexOf('sign up')>=0||text.indexOf('see more on facebook')>=0;
+                        if(!loginLike){return false;}
+                        if(isInsideBlockedBottomLoginContext(node)){return false;}
+                        return true;
+                      }catch(_){return false;}
+                    };
+                    var playerControlText=function(text){
+                      var words=['pause','play','mute','volume','fullscreen','timeline','progress','duration','captions','settings'];
+                      for(var p=0;p<words.length;p++){
+                        if(text.indexOf(words[p])>=0){return true;}
+                      }
+                      return false;
+                    };
+                    var findBottomLoginRailFromAnchor=function(anchor,videoRect){
+                      try{
+                        var anchorRect=rectOf(anchor);
+                        if(!anchorRect){return null;}
+                        var vw=window.innerWidth||0;
+                        var vh=window.innerHeight||0;
+                        var cur=anchor;
+                        for(var depth=0;depth<=8&&cur&&cur!==document.body&&cur!==document.documentElement;depth++){
+                          if(!visibleNode(cur)){cur=cur.parentElement;continue;}
+                          if(cur.querySelector&&cur.querySelector('video,source,canvas,iframe')){break;}
+                          var role=lowerText((cur.getAttribute&&cur.getAttribute('role'))||'',32);
+                          var ariaModal=lowerText((cur.getAttribute&&cur.getAttribute('aria-modal'))||'',16);
+                          if(role==='dialog'||role==='alertdialog'||ariaModal==='true'){break;}
+                          var r=rectOf(cur);
+                          if(!r){cur=cur.parentElement;continue;}
+                          var text=bottomLoginText(cur,900);
+                          if(text.indexOf('cookie')>=0||text.indexOf('cookies')>=0||text.indexOf('essential')>=0||text.indexOf('optional')>=0||text.indexOf('allow all cookies')>=0){break;}
+                          var loginLike=text.indexOf('log in')>=0||text.indexOf('create new account')>=0||text.indexOf('sign up')>=0||text.indexOf('see more on facebook')>=0;
+                          var nearBottom=r.bottom>=vh-120&&r.top>=vh*0.40&&r.top>=90;
+                          var wide=r.width>=Math.max(anchorRect.width*1.8,vw*0.55);
+                          var shallow=r.height>=35&&r.height<=Math.max(190,vh*0.35);
+                          var overlaps=rectIntersects(r,videoRect);
+                          if(loginLike&&nearBottom&&wide&&shallow&&!playerControlText(text)){
+                            if(overlaps&&videoRect){
+                              var ix=Math.max(0,Math.min(r.right,videoRect.right)-Math.max(r.left,videoRect.left));
+                              var iy=Math.max(0,Math.min(r.bottom,videoRect.bottom)-Math.max(r.top,videoRect.top));
+                              var overlapArea=ix*iy;
+                              var area=Math.max(1,r.width*r.height);
+                              if((overlapArea/area)>0.35){cur=cur.parentElement;continue;}
+                            }
+                            return {node:cur,depth:depth,text:text,anchor:anchor,anchorText:bottomLoginText(anchor,240)};
+                          }
+                          cur=cur.parentElement;
+                        }
+                      }catch(_){}
+                      return null;
+                    };
+                    var findBottomLoginBar=function(videoRect){
+                      try{
+                        var anchors=Array.from(document.querySelectorAll('a,button,[role="button"],[role="link"],input[type="button"],input[type="submit"]')).slice(0,220);
+                        var best=null;
+                        for(var i=0;i<anchors.length;i++){
+                          var anchor=anchors[i];
+                          if(!isBottomLoginAnchor(anchor)){continue;}
+                          var found=findBottomLoginRailFromAnchor(anchor,videoRect);
+                          if(!found){continue;}
+                          if(!best||found.node.getBoundingClientRect().width<best.node.getBoundingClientRect().width){best=found;}
+                        }
+                        return best;
+                      }catch(_){return false;}
+                    };
+                    var runBottomLoginBarHide=function(phase){
+                      try{
+                        if(!bottomLoginBarCosmeticHideEnabled){return;}
+                        if(bottomLoginBarHideState.hidden){
+                          emitBottomLoginBarHide(phase,false,'already-hidden',null,'',false,false,null,'',-1);
+                          return;
+                        }
+                        var primary=primaryAttachedVideoForLoginClose();
+                        if(!primary){
+                          emitBottomLoginBarHide(phase,false,'no-primary-attached-video',null,'',false,false,null,'',-1);
+                          return;
+                        }
+                        if(!cookieAllowAllState.clicked&&hasVisibleCookieDialogForBottomHide()){
+                          emitBottomLoginBarHide(phase,false,'cookie-dialog-visible',null,'',true,false,null,'',-1);
+                          return;
+                        }
+                        var visibleLoginModal=false;
+                        var dialogs=Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')).slice(0,40);
+                        for(var d=0;d<dialogs.length;d++){
+                          if(classifyLoginModal(dialogs[d])){visibleLoginModal=true;break;}
+                        }
+                        if(visibleLoginModal){
+                          emitBottomLoginBarHide(phase,false,'login-modal-visible',null,'',true,false,null,'',-1);
+                          return;
+                        }
+                        var best=findBottomLoginBar(primary.rect);
+                        if(!best){
+                          emitBottomLoginBarHide(phase,false,'no-bottom-login-bar-match',null,'',true,false,null,'',-1);
+                          return;
+                        }
+                        var rail=best.node;
+                        var summary=clipText((rail.innerText||rail.textContent||''),96);
+                        var overlaps=rectIntersects(rectOf(rail),primary.rect);
+                        try{
+                          rail.setAttribute('data-kf-fb-bottom-login-hidden','1');
+                          rail.style.display='none';
+                          bottomLoginBarHideState.hidden=true;
+                          emitBottomLoginBarHide(phase,true,'hidden',rail,summary,true,overlaps,best.anchor,best.anchorText,best.depth);
+                        }catch(hideError){
+                          emitBottomLoginBarHide(phase,false,'hide-error',rail,summary,true,overlaps,best.anchor,best.anchorText,best.depth);
+                        }
+                      }catch(error){
+                        emitBottomLoginBarHide(phase,false,'scan-error',null,'',false,false,null,'',-1);
+                      }
+                    };
+                    var scheduleBottomLoginBarHide=function(trigger,delayMs){
+                      try{
+                        if(!bottomLoginBarCosmeticHideEnabled){return;}
+                        if(bottomLoginBarHideState.scheduled||bottomLoginBarHideState.hidden){return;}
+                        bottomLoginBarHideState.scheduled=true;
+                        var primary=primaryAttachedVideoForLoginClose();
+                        emitBottomLoginBarHide('facebook-bottom-login-bar-hide-scheduled',false,'scheduled',null,'',!!primary,false,null,'',-1);
+                        setTimeout(function(){runBottomLoginBarHide('facebook-bottom-login-bar-hide-'+trigger);},delayMs);
                       }catch(_){}
                     };
                     var emitCookieAllowAllAutoclick=function(phase, clicked, reason, buttonText, dialogRect, buttonRect){
@@ -3797,7 +3992,7 @@ return changed>0;
         payload: JSONObject,
     ): Boolean {
         val phase = payload.optString("phase")
-        if (!phase.startsWith("facebook-passive-") && !phase.startsWith("facebook-overlay-") && !phase.startsWith("facebook-login-modal-close-")) {
+        if (!phase.startsWith("facebook-passive-") && !phase.startsWith("facebook-overlay-") && !phase.startsWith("facebook-login-modal-close-") && !phase.startsWith("facebook-bottom-login-bar-hide-")) {
             return true
         }
         if (!payload.has("passiveGeneration")) {
@@ -5015,7 +5210,7 @@ return changed>0;
         val title = payload.optString("title")
         val phase = payload.optString("phase")
         val type = payload.optString("type")
-        if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick" || type == "facebook-login-modal-close") && !isCurrentFacebookPassiveGeneration(session, payload)) {
+        if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick" || type == "facebook-login-modal-close" || type == "facebook-bottom-login-bar-cosmetic-hide") && !isCurrentFacebookPassiveGeneration(session, payload)) {
             return
         }
         val candidates = payload.optJSONArray("directCandidates") ?: JSONArray()
@@ -5111,6 +5306,20 @@ return changed>0;
             GvLogger.i(
                 "GvLayout",
                 "facebook login modal close result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} modalVariant=${payload.optString("modalVariant")} phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} modalRect=${payload.optString("modalRect")} closeButtonRect=${payload.optString("closeButtonRect")} buttonText=${payload.optString("buttonText")} primaryVideoAttached=${payload.optBoolean("primaryVideoAttached")} pageUrl=$pageUrl"
+            )
+            return
+        }
+        if (type == "facebook-bottom-login-bar-cosmetic-hide") {
+            if (payload.optString("reason") == "scheduled") {
+                GvLogger.i(
+                    "GvLayout",
+                    "facebook bottom login bar cosmetic hide scheduled phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} primaryVideoAttached=${payload.optBoolean("primaryVideoAttached")} pageUrl=$pageUrl"
+                )
+                return
+            }
+            GvLogger.i(
+                "GvLayout",
+                "facebook bottom login bar cosmetic hide result hidden=${payload.optBoolean("hidden")} reason=${payload.optString("reason")} phase=${payload.optString("phase")} generation=${payload.optInt("passiveGeneration")} attempt=${payload.optInt("passiveAttempt")}/${payload.optInt("passiveMaxAttempts")} anchorRect=${payload.optString("anchorRect")} anchorText=${payload.optString("anchorText")} barRect=${payload.optString("barRect")} barText=${payload.optString("barTextSummary")} climbDepth=${payload.optInt("climbDepth", -1)} overlapsVideo=${payload.optBoolean("overlapsVideo")} primaryVideoAttached=${payload.optBoolean("primaryVideoAttached")} pageUrl=$pageUrl"
             )
             return
         }
@@ -5294,6 +5503,7 @@ return changed>0;
         private const val FACEBOOK_ACTIVE_HELPERS_ENABLED = 0
         private const val FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED = 1
         private const val FACEBOOK_LOGIN_MODAL_CLOSE_AFTER_ATTACH_ENABLED = 1
+        private const val FACEBOOK_BOTTOM_LOGIN_BAR_COSMETIC_HIDE_ENABLED = 1
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
