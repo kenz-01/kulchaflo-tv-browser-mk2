@@ -45,7 +45,20 @@ class GvApplication : Application() {
                 .loginAutofillEnabled(false)
                 .lowMemoryDetection(false)
                 .consoleOutput(BuildConfig.DEBUG)
+                .apply {
+                    if (GvRuntimeExperimentConfig.ENABLE_TV_VIEWPORT_POLICY) {
+                        displayDensityOverride(GvRuntimeExperimentConfig.TV_VIEWPORT_POLICY_DENSITY)
+                    }
+                }
                 .build()
+
+        val displayMetrics = resources.displayMetrics
+        GvLogger.i(
+            "GvRuntime",
+            "tv viewport policy startup enabled=${GvRuntimeExperimentConfig.ENABLE_TV_VIEWPORT_POLICY} " +
+                "requestedDisplayDensityOverride=${GvRuntimeExperimentConfig.TV_VIEWPORT_POLICY_DENSITY} " +
+                "androidDensity=${displayMetrics.density} densityDpi=${displayMetrics.densityDpi}"
+        )
 
         val runtime = runCatching {
             GeckoRuntime.create(this, buildSettings())
@@ -59,6 +72,15 @@ class GvApplication : Application() {
                 throw throwable
             }
         }
+        val runtimeSettings = runtime.settings
+        GvLogger.i(
+            "GvRuntime",
+            "tv viewport policy runtime enabled=${GvRuntimeExperimentConfig.ENABLE_TV_VIEWPORT_POLICY} " +
+                "requestedDisplayDensityOverride=${GvRuntimeExperimentConfig.TV_VIEWPORT_POLICY_DENSITY} " +
+                "runtimeDisplayDensityOverride=${runtimeSettings.displayDensityOverride} " +
+                "runtimeDisplayDpiOverride=${runtimeSettings.displayDpiOverride} " +
+                "runtimeScreenSizeOverride=${runtimeSettings.screenSizeOverride}"
+        )
         runtime.getWebExtensionController()
             .ensureBuiltIn(GvBuiltInExtension.LOCATION, GvBuiltInExtension.ID)
             .accept(

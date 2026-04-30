@@ -309,6 +309,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
             if (success) {
                 loadRetryAttemptsBySession.remove(session)
+                maybeDispatchViewportDiagnostic(session, pageUrl, reason = "page-stop")
+                maybeDispatchRailDiagnostic(session, pageUrl, reason = "page-stop")
             }
             handleMediaObservation(mediaPathController.onPageObserved(pageUrl, titleView.text?.toString()))
             if (success) {
@@ -330,7 +332,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     } else {
                         GvLogger.i(
                             "GvExt",
-                            "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$pageUrl reason=media-surface"
+                            "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$pageUrl reason=${unifiedCompatSkipReason(pageUrl) ?: "unknown"}"
                         )
                     }
                 }
@@ -873,17 +875,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         if (normalizedUrl == "about:blank") {
             return
         }
-        if (isFacebookUrl(normalizedUrl)) {
+        val skipReason = unifiedCompatSkipReason(normalizedUrl)
+        if (skipReason != null) {
             GvLogger.i(
                 "GvExt",
-                "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl reason=facebook-host"
-            )
-            return
-        }
-        if (!shouldApplyUnifiedCompat(normalizedUrl)) {
-            GvLogger.i(
-                "GvExt",
-                "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl reason=media-surface"
+                "unified compat skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl reason=$skipReason"
             )
             return
         }
@@ -1279,6 +1275,134 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             })();
         """.trimIndent()
         GvLogger.i("GvExt", "unified compat dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl")
+        session.loadUri(script)
+    }
+
+    private fun maybeDispatchViewportDiagnostic(session: GeckoSession, pageUrl: String, reason: String) {
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isWebHttpUrl(normalizedUrl)) {
+            return
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var root=document.documentElement;
+                var body=document.body;
+                var vv=window.visualViewport;
+                var bodyStyle=body?window.getComputedStyle(body):null;
+                var meta=document.querySelector('meta[name="viewport"]');
+                var clip=function(value,maxLen){
+                  value=(value==null?'':String(value));
+                  maxLen=maxLen||180;
+                  return value.length>maxLen?value.slice(0,maxLen):value;
+                };
+                window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                  type:'viewport-diagnostic',
+                  phase:'activity-viewport-diagnostic',
+                  reason:${JSONObject.quote(reason)},
+                  pageUrl:window.location.href,
+                  path:(function(){try{return new URL(window.location.href).pathname||'/';}catch(_){return ''}})(),
+                  windowInnerWidth:window.innerWidth||0,
+                  windowInnerHeight:window.innerHeight||0,
+                  windowOuterWidth:window.outerWidth||0,
+                  windowOuterHeight:window.outerHeight||0,
+                  visualViewportWidth:vv?(vv.width||0):0,
+                  visualViewportHeight:vv?(vv.height||0):0,
+                  visualViewportScale:vv?(vv.scale||0):0,
+                  devicePixelRatio:window.devicePixelRatio||0,
+                  screenWidth:window.screen?(window.screen.width||0):0,
+                  screenHeight:window.screen?(window.screen.height||0):0,
+                  documentClientWidth:root?(root.clientWidth||0):0,
+                  documentScrollWidth:root?(root.scrollWidth||0):0,
+                  bodyClientWidth:body?(body.clientWidth||0):0,
+                  bodyScrollWidth:body?(body.scrollWidth||0):0,
+                  metaViewport:clip(meta?(meta.getAttribute('content')||''):'',180),
+                  cssCompatActive:!!(body&&body.style&&String(body.style.transform||'').indexOf('scale(')>=0),
+                  bodyComputedTransform:clip(bodyStyle?(bodyStyle.transform||''):'',120),
+                  tvViewportPolicyEnabled:${GvRuntimeExperimentConfig.ENABLE_TV_VIEWPORT_POLICY},
+                  tvViewportPolicyDensity:${GvRuntimeExperimentConfig.TV_VIEWPORT_POLICY_DENSITY},
+                  cssCompatDuringTvViewportPolicy:${GvRuntimeExperimentConfig.ENABLE_CSS_VISUAL_SCALE_COMPAT_DURING_TV_VIEWPORT_POLICY}
+                }), '');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "viewport diagnostic dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$normalizedUrl"
+        )
+        session.loadUri(script)
+    }
+
+    private fun maybeDispatchRailDiagnostic(session: GeckoSession, pageUrl: String, reason: String) {
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isKulchaFloPage(normalizedUrl)) {
+            return
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var clip=function(value,maxLen){
+                  value=(value==null?'':String(value));
+                  maxLen=maxLen||160;
+                  return value.length>maxLen?value.slice(0,maxLen):value;
+                };
+                var rectSummary=function(rect){
+                  if(!rect){return '';}
+                  return Math.round(rect.left)+','+Math.round(rect.top)+' '+Math.round(rect.width)+'x'+Math.round(rect.height);
+                };
+                var visibleItemEstimate=function(rail){
+                  try{
+                    var railRect=rail.getBoundingClientRect();
+                    var items=Array.from(rail.querySelectorAll('.kf-card,.kf-mini,.kf-chipbtn,.kf-search-card,a')).slice(0,80);
+                    var first=-1,last=-1;
+                    for(var i=0;i<items.length;i++){
+                      var r=items[i].getBoundingClientRect();
+                      var visible=r.width>1&&r.height>1&&r.right>railRect.left+1&&r.left<railRect.right-1&&r.bottom>railRect.top+1&&r.top<railRect.bottom-1;
+                      if(visible){
+                        if(first<0){first=i;}
+                        last=i;
+                      }
+                    }
+                    return {total:items.length,first:first,last:last};
+                  }catch(_){return {total:0,first:-1,last:-1};}
+                };
+                var rails=Array.from(document.querySelectorAll('.kf-rail,.kf-chiprail,.kf-search-rail')).slice(0,40).map(function(rail,index){
+                  var style=window.getComputedStyle(rail);
+                  var rect=rail.getBoundingClientRect();
+                  var estimate=visibleItemEstimate(rail);
+                  return {
+                    index:index,
+                    className:clip(rail.className||'',140),
+                    rect:rectSummary(rect),
+                    overflowX:style?(style.overflowX||''):'',
+                    overflowY:style?(style.overflowY||''):'',
+                    scrollWidth:rail.scrollWidth||0,
+                    clientWidth:rail.clientWidth||0,
+                    scrollLeft:rail.scrollLeft||0,
+                    hasHorizontalOverflow:(rail.scrollWidth||0)>(rail.clientWidth||0)+1,
+                    scrollbarWidth:style?(style.scrollbarWidth||''):'',
+                    scrollbarColor:style?(style.scrollbarColor||''):'',
+                    visibleItemCount:estimate.total,
+                    firstVisibleIndex:estimate.first,
+                    lastVisibleIndex:estimate.last
+                  };
+                });
+                window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                  type:'rail-diagnostic',
+                  phase:'activity-rail-diagnostic',
+                  reason:${JSONObject.quote(reason)},
+                  pageUrl:window.location.href,
+                  path:(function(){try{return new URL(window.location.href).pathname||'/';}catch(_){return ''}})(),
+                  railCount:rails.length,
+                  rails:rails
+                }), '');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "rail diagnostic dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$normalizedUrl"
+        )
         session.loadUri(script)
     }
 
@@ -5239,8 +5363,49 @@ return changed>0;
         if (type == "compat-policy") {
             GvLogger.i(
                 "GvLayout",
-                "unified compat applied pageUrl=$pageUrl reason=${payload.optString("reason")} clicked=${payload.optBoolean("clicked")} matched=${payload.optString("matched")} noCandidatePasses=${payload.optInt("noCandidatePasses")} redirected=${payload.optBoolean("redirectedByFallback")} decision=${payload.optString("decision")} scale=${payload.optDouble("scale")}"
+                "unified compat applied reason=normal-browsing-page pageUrl=$pageUrl trigger=${payload.optString("reason")} clicked=${payload.optBoolean("clicked")} matched=${payload.optString("matched")} noCandidatePasses=${payload.optInt("noCandidatePasses")} redirected=${payload.optBoolean("redirectedByFallback")} decision=${payload.optString("decision")} scale=${payload.optDouble("scale")}"
             )
+            return
+        }
+        if (type == "viewport-diagnostic") {
+            GvLogger.i(
+                "GvLayout",
+                "viewport diagnostic reason=${payload.optString("reason")} pageUrl=$pageUrl path=${payload.optString("path")} " +
+                    "window=${payload.optInt("windowInnerWidth")}x${payload.optInt("windowInnerHeight")} " +
+                    "outer=${payload.optInt("windowOuterWidth")}x${payload.optInt("windowOuterHeight")} " +
+                    "visualViewport=${payload.optDouble("visualViewportWidth")}x${payload.optDouble("visualViewportHeight")}@${payload.optDouble("visualViewportScale")} " +
+                    "dpr=${payload.optDouble("devicePixelRatio")} screen=${payload.optInt("screenWidth")}x${payload.optInt("screenHeight")} " +
+                    "documentWidth=${payload.optInt("documentClientWidth")}/${payload.optInt("documentScrollWidth")} " +
+                    "bodyWidth=${payload.optInt("bodyClientWidth")}/${payload.optInt("bodyScrollWidth")} " +
+                    "metaViewport=${payload.optString("metaViewport")} cssCompatActive=${payload.optBoolean("cssCompatActive")} " +
+                    "bodyTransform=${payload.optString("bodyComputedTransform")} tvViewportPolicyEnabled=${payload.optBoolean("tvViewportPolicyEnabled")} " +
+                    "tvViewportPolicyDensity=${payload.optDouble("tvViewportPolicyDensity")} cssCompatDuringTvViewportPolicy=${payload.optBoolean("cssCompatDuringTvViewportPolicy")}"
+            )
+            return
+        }
+        if (type == "rail-diagnostic") {
+            val rails = payload.optJSONArray("rails") ?: JSONArray()
+            if (rails.length() == 0) {
+                GvLogger.i(
+                    "GvLayout",
+                    "rail diagnostic reason=${payload.optString("reason")} pageUrl=$pageUrl path=${payload.optString("path")} railCount=0"
+                )
+                return
+            }
+            val limit = minOf(rails.length(), 40)
+            for (index in 0 until limit) {
+                val rail = rails.optJSONObject(index) ?: continue
+                GvLogger.i(
+                    "GvLayout",
+                    "rail diagnostic reason=${payload.optString("reason")} pageUrl=$pageUrl path=${payload.optString("path")} " +
+                        "index=${rail.optInt("index")} class=${rail.optString("className").take(140)} rect=${rail.optString("rect")} " +
+                        "overflow=${rail.optString("overflowX")}/${rail.optString("overflowY")} " +
+                        "width=${rail.optInt("clientWidth")}/${rail.optInt("scrollWidth")} scrollLeft=${rail.optInt("scrollLeft")} " +
+                        "hasHorizontalOverflow=${rail.optBoolean("hasHorizontalOverflow")} " +
+                        "scrollbarWidth=${rail.optString("scrollbarWidth")} scrollbarColor=${rail.optString("scrollbarColor").take(120)} " +
+                        "visibleItems=${rail.optInt("firstVisibleIndex")}-${rail.optInt("lastVisibleIndex")}/${rail.optInt("visibleItemCount")}"
+                )
+            }
             return
         }
         if (type == "tego-quality") {
@@ -5583,6 +5748,16 @@ return changed>0;
         return path == "/" || path.isBlank()
     }
 
+    private fun isKulchaFloPage(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
+        return host == "kulchaflo.com"
+    }
+
     private fun applyMediaSessionDelegateForUrl(
         session: GeckoSession,
         url: String?,
@@ -5699,13 +5874,7 @@ return changed>0;
     }
 
     private fun shouldApplyUnifiedCompat(url: String): Boolean {
-        if (url.isBlank() || url == "about:blank") {
-            return false
-        }
-        if (isFacebookUrl(url) || isLiveMediaSurfaceUrl(url)) {
-            return false
-        }
-        return isUnifiedCompatAllowlistedUrl(url)
+        return unifiedCompatSkipReason(url) == null
     }
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
@@ -5728,8 +5897,79 @@ return changed>0;
         }
     }
 
-    private fun isUnifiedCompatAllowlistedUrl(url: String): Boolean {
-        return isKulchaFloHomepage(url)
+    private fun unifiedCompatSkipReason(url: String): String? {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return "unsupported-scheme"
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return "unsupported-scheme"
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().ifBlank { "/" }
+        if (isFacebookHost(host)) {
+            return "facebook"
+        }
+        if (isYouTubeSurfaceHostForUnifiedCompat(host)) {
+            return "youtube"
+        }
+        if (isAdminOrBackendRoute(host, path)) {
+            return "admin-backend"
+        }
+        if (host == "kulchaflo.com") {
+            return unifiedCompatKulchaFloSkipReason(path) ?: tvViewportPolicyCssCompatSkipReason()
+        }
+        if (isLiveMediaSurfaceUrl(url)) {
+            return "media-surface"
+        }
+        tvViewportPolicyCssCompatSkipReason()?.let { return it }
+        return null
+    }
+
+    private fun unifiedCompatKulchaFloSkipReason(path: String): String? {
+        if (path == "/watch" || path.startsWith("/watch/")) {
+            return "internal-watch-route"
+        }
+        return null
+    }
+
+    private fun tvViewportPolicyCssCompatSkipReason(): String? {
+        if (GvRuntimeExperimentConfig.ENABLE_TV_VIEWPORT_POLICY &&
+            !GvRuntimeExperimentConfig.ENABLE_CSS_VISUAL_SCALE_COMPAT_DURING_TV_VIEWPORT_POLICY
+        ) {
+            return "tv-viewport-policy-css-disabled"
+        }
+        return null
+    }
+
+    private fun isAdminOrBackendRoute(host: String, path: String): Boolean {
+        if (path.startsWith("/api/") ||
+            path.contains("/api/") ||
+            path.startsWith("/graphql") ||
+            path == "/xmlrpc.php"
+        ) {
+            return true
+        }
+        if (host != "kulchaflo.com") {
+            return false
+        }
+        return path.startsWith("/wp-admin") ||
+            path == "/wp-login.php" ||
+            path.startsWith("/wp-json") ||
+            path.contains("/admin-ajax.php") ||
+            path == "/wp-cron.php" ||
+            path.startsWith("/wp-content/uploads/") && (
+                path.endsWith(".json") ||
+                    path.endsWith(".xml")
+                )
+    }
+
+    private fun isYouTubeSurfaceHostForUnifiedCompat(host: String): Boolean {
+        return host == "youtube.com" ||
+            host.endsWith(".youtube.com") ||
+            host == "youtu.be" ||
+            host == "youtube-nocookie.com" ||
+            host.endsWith(".youtube-nocookie.com") ||
+            host == "googlevideo.com" ||
+            host.endsWith(".googlevideo.com")
     }
 
     private fun suppressDirectMediaPromotion(
