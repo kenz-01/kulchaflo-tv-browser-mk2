@@ -40,6 +40,17 @@ import java.util.Collections
 import java.util.WeakHashMap
 
 class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
+    private data class LiveLoadTimingState(
+        val surface: String,
+        val rootUrl: String,
+        val startedAtMs: Long,
+        var pageStopLogged: Boolean = false,
+        var tegoIframeLogged: Boolean = false,
+        var mediaEvidenceLogged: Boolean = false,
+        var tegoQualityLogged: Boolean = false,
+        var playableVideoLogged: Boolean = false,
+    )
+
     private lateinit var geckoView: GeckoView
     private lateinit var pointerOverlay: PointerOverlayView
     private lateinit var loadingOverlay: View
@@ -69,6 +80,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val facebookPassiveAttachedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val facebookPassiveGenerationBySession = LinkedHashMap<GeckoSession, Int>()
     private val amazonConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val tttConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val kulchaFloCookieConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val liveLoadTimingBySession = LinkedHashMap<GeckoSession, LiveLoadTimingState>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookCompatResolvedBySession =
@@ -83,6 +97,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var lastBackToExitAtMs = 0L
     private var lastBackToHomeAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
+    private var lastDpadDocumentScrollFallbackMs = 0L
+    private var lastKulchaFloRailScrollFallbackMs = 0L
 
     private val pointerIdleRunnable = Runnable {
         if (!pointerDirectionKeys.isEmpty()) {
@@ -109,7 +125,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 deltaX = delta.first * POINTER_MOVE_STEP_PX * multiplier,
                 deltaY = delta.second * POINTER_MOVE_STEP_PX * multiplier,
             )
-            maybeScrollContent(move.overshootX, move.overshootY, "repeat")
+            maybeDispatchKulchaFloRailScrollFallback(
+                reason = "repeat",
+                scrollX = normalizedEdgeScrollAmount(move.overshootX),
+            )
+            maybeDispatchDpadDocumentScrollFallback(
+                keyCode = currentVerticalDpadKey(),
+                reason = "repeat",
+                scrollY = normalizedEdgeScrollAmount(move.overshootY),
+            )
             pointerHandler.postDelayed(this, POINTER_REPEAT_FRAME_MS)
         }
     }
@@ -289,6 +313,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             loadingOverlay.visibility = View.VISIBLE
             progressBar.visibility = View.VISIBLE
             tabController.updateLoading(session, true)
+            maybeStartLiveLoadTiming(session, url, event = "page-start")
             GvLogger.i("GvNav", "page start tabId=${tab?.id ?: "unknown"} url=$url")
         }
 
@@ -301,6 +326,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             loadingOverlay.visibility = View.GONE
             tabController.updateLoading(session, false)
             GvLogger.i("GvNav", "page stop tabId=${tab?.id ?: "unknown"} success=$success url=$pageUrl")
+            logLiveLoadTimingPageStop(session, pageUrl, success)
             if (isFacebookUrl(pageUrl)) {
                 GvLogger.i(
                     "GvMedia",
@@ -317,7 +343,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 if (isFacebookUrl(pageUrl)) {
                     maybeDispatchFacebookCompat(session, pageUrl, reason = "page-stop")
                 } else {
+                    maybeDispatchKulchaFloCookieConsentCompat(session, pageUrl, reason = "page-stop")
                     maybeDispatchAmazonConsentCompat(session, pageUrl, reason = "page-stop")
+                    maybeDispatchTttConsentCompat(session, pageUrl, reason = "page-stop")
                     maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
                     if (shouldPromoteDirectMedia(pageUrl)) {
                         triggerDirectMediaProbe(session, pageUrl)
@@ -355,11 +383,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             val tab = tabController.findTabBySession(session)
             currentUrl = url ?: currentUrl
             tabController.updateLocation(session, url)
+            handleLiveLoadTimingLocationChange(session, url.orEmpty())
             if (isWebHttpUrl(url.orEmpty())) {
                 applyUserAgentPolicyForUrl(session, url.orEmpty(), reason = "location-change")
             }
             updateFacebookPassiveReentryUrlState(session, url.orEmpty())
+            maybeDispatchKulchaFloCookieConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchAmazonConsentCompat(session, url.orEmpty(), reason = "location-change")
+            maybeDispatchTttConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
@@ -4636,6 +4667,343 @@ return changed>0;
         session.loadUri(script)
     }
 
+    private fun maybeDispatchTttConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isTttLiveSurfaceUrl(pageUrl)) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastDispatch = tttConsentLastDispatchMsBySession[session] ?: 0L
+        if (now - lastDispatch < 1800L) {
+            return
+        }
+        tttConsentLastDispatchMsBySession[session] = now
+        triggerTttConsentCompat(session, pageUrl, reason)
+        if (reason == "location-change") {
+            scheduleTttConsentFollowUp(session, 1200L)
+            scheduleTttConsentFollowUp(session, 3500L)
+            scheduleTttConsentFollowUp(session, 8000L)
+            scheduleTttConsentFollowUp(session, 12000L)
+            scheduleTttConsentFollowUp(session, 18000L)
+        }
+    }
+
+    private fun scheduleTttConsentFollowUp(session: GeckoSession, delayMs: Long) {
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                val currentTabUrl = tab.url
+                if (!isTttLiveSurfaceUrl(currentTabUrl)) {
+                    return@postDelayed
+                }
+                triggerTttConsentCompat(session, currentTabUrl, reason = "follow-up-$delayMs")
+            },
+            delayMs,
+        )
+    }
+
+    private fun triggerTttConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!TTT_CONSENT_AUTOCLICK_ENABLED) {
+            return
+        }
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isTttLiveSurfaceUrl(normalizedUrl)) {
+            return
+        }
+        val pageUrlJson = JSONObject.quote(normalizedUrl)
+        val reasonJson = JSONObject.quote(reason)
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=$pageUrlJson;
+                var phase=$reasonJson;
+                var lower=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().toLowerCase();};
+                var clean=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().slice(0,140);};
+                var rect=function(node){
+                  try{
+                    var r=node.getBoundingClientRect();
+                    return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
+                  }catch(_){return '';}
+                };
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)){return false;}
+                    var r=node.getBoundingClientRect();
+                    return r.width>20&&r.height>16&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var textOf=function(node){
+                  try{
+                    return lower(
+                      (node.value||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('title'))||'')+' '+
+                      (node.innerText||node.textContent||'')
+                    );
+                  }catch(_){return '';}
+                };
+                var buttonLabel=function(node){
+                  try{
+                    return clean(
+                      (node.value||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('title'))||'')+' '+
+                      (node.innerText||node.textContent||'')
+                    );
+                  }catch(_){return '';}
+                };
+                var isForbiddenConsentControl=function(label){
+                  return label.indexOf('manage')>=0 ||
+                    label.indexOf('option')>=0 ||
+                    label.indexOf('reject')>=0 ||
+                    label.indexOf('decline')>=0 ||
+                    label.indexOf('disagree')>=0 ||
+                    label.indexOf('learn more')>=0;
+                };
+                var isPositiveConsentLabel=function(label){
+                  return label==='consent' ||
+                    label==='accept' ||
+                    label==='accept all' ||
+                    label==='agree' ||
+                    label==='i agree' ||
+                    label.indexOf('consent')===0 ||
+                    label.indexOf('accept all')>=0;
+                };
+                var clickableFor=function(node){
+                  var cur=node;
+                  var limit=0;
+                  while(cur&&cur!==bestDialog&&limit<5){
+                    try{
+                      if(!visible(cur)){return null;}
+                      var tag=(cur.tagName||'').toLowerCase();
+                      var role=((cur.getAttribute&&cur.getAttribute('role'))||'').toLowerCase();
+                      var style=window.getComputedStyle(cur);
+                      var cursor=(style&&style.cursor||'').toLowerCase();
+                      var onclick=!!(cur.onclick||(cur.getAttribute&&cur.getAttribute('onclick')));
+                      var tabbable=!!(cur.getAttribute&&cur.getAttribute('tabindex')!==null);
+                      if(tag==='button'||tag==='a'||tag==='input'||role==='button'||onclick||cursor==='pointer'||tabbable){
+                        return cur;
+                      }
+                    }catch(_){}
+                    cur=cur.parentElement;
+                    limit++;
+                  }
+                  return node;
+                };
+                var emit=function(clicked, resultReason, dialog, button){
+                  try{
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'ttt-consent-autoclick',
+                      phase:phase,
+                      pageUrl:pageUrl,
+                      clicked:!!clicked,
+                      reason:resultReason||'',
+                      dialogRect:dialog?rect(dialog):'',
+                      buttonRect:button?rect(button):'',
+                      buttonText:button?buttonLabel(button):'',
+                      dialogText:dialog?clean(dialog.innerText||dialog.textContent||''):''
+                    }),'');
+                  }catch(_){}
+                };
+                var dialogCandidates=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],div,section')).slice(0,700);
+                var bestDialog=null;
+                for(var i=0;i<dialogCandidates.length;i++){
+                  var dialog=dialogCandidates[i];
+                  if(!visible(dialog)){continue;}
+                  if(dialog.querySelector&&dialog.querySelector('video,source,canvas,iframe')){continue;}
+                  var blob=textOf(dialog);
+                  var tttSignal=blob.indexOf('ttt news asks for your consent')>=0 || (
+                    blob.indexOf('personal data')>=0 &&
+                    blob.indexOf('store and/or access information on a device')>=0 &&
+                    blob.indexOf('manage options')>=0 &&
+                    blob.indexOf('consent')>=0
+                  );
+                  if(!tttSignal){continue;}
+                  bestDialog=dialog;
+                  break;
+                }
+                if(!bestDialog){
+                  emit(false,'no-consent-dialog-match',null,null);
+                  return;
+                }
+                emit(false,'scan',bestDialog,null);
+                var buttons=Array.from(bestDialog.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"],a,div,span')).slice(0,220);
+                var bestButton=null;
+                var bestScore=-1;
+                for(var j=0;j<buttons.length;j++){
+                  var candidate=buttons[j];
+                  if(!visible(candidate)){continue;}
+                  var label=textOf(candidate);
+                  if(!label||label.length>80){continue;}
+                  if(isForbiddenConsentControl(label)){continue;}
+                  if(!isPositiveConsentLabel(label)){continue;}
+                  var button=clickableFor(candidate);
+                  if(!button||!visible(button)){continue;}
+                  var buttonLabelText=textOf(button);
+                  if(isForbiddenConsentControl(buttonLabelText)){continue;}
+                  var score=0;
+                  if(label==='consent'){score+=100;}
+                  if(label==='accept all'){score+=90;}
+                  if(label==='accept'){score+=80;}
+                  if(label==='agree'||label==='i agree'){score+=70;}
+                  if((button.tagName||'').toLowerCase()==='button'){score+=20;}
+                  if(((button.getAttribute&&button.getAttribute('role'))||'').toLowerCase()==='button'){score+=15;}
+                  var r=button.getBoundingClientRect();
+                  score+=Math.min(40,Math.max(0,r.width/12));
+                  if(score>bestScore){
+                    bestButton=button;
+                    bestScore=score;
+                  }
+                }
+                if(!bestButton){
+                  emit(false,'no-consent-button-match',bestDialog,null);
+                  return;
+                }
+                try{bestButton.click();}catch(_){}
+                emit(true,'clicked',bestDialog,bestButton);
+              }catch(error){
+                try{
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                    type:'ttt-consent-autoclick',
+                    phase:${JSONObject.quote(reason)},
+                    pageUrl:${JSONObject.quote(normalizedUrl)},
+                    clicked:false,
+                    reason:'exception'
+                  }),'');
+                }catch(_){}
+              }
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "ttt consent autoclick dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$normalizedUrl"
+        )
+        session.loadUri(script)
+    }
+
+    private fun maybeDispatchKulchaFloCookieConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!KULCHAFLO_COOKIE_CONSENT_ACCEPT_ALL_AUTOCLICK_ENABLED || !isKulchaFloPage(pageUrl)) {
+            return
+        }
+        val uri = runCatching { android.net.Uri.parse(pageUrl) }.getOrNull() ?: return
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().ifBlank { "/" }
+        if (path == "/watch" || path.startsWith("/watch/") || isAdminOrBackendRoute(host, path)) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastDispatch = kulchaFloCookieConsentLastDispatchMsBySession[session] ?: 0L
+        if (now - lastDispatch < 1600L) {
+            return
+        }
+        kulchaFloCookieConsentLastDispatchMsBySession[session] = now
+        triggerKulchaFloCookieConsentCompat(session, pageUrl, reason)
+        if (reason == "location-change") {
+            scheduleKulchaFloCookieConsentFollowUp(session, 1200L)
+            scheduleKulchaFloCookieConsentFollowUp(session, 3200L)
+            scheduleKulchaFloCookieConsentFollowUp(session, 6500L)
+            scheduleKulchaFloCookieConsentFollowUp(session, 10000L)
+        }
+    }
+
+    private fun scheduleKulchaFloCookieConsentFollowUp(session: GeckoSession, delayMs: Long) {
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                val currentTabUrl = tab.url
+                if (!isKulchaFloPage(currentTabUrl)) {
+                    return@postDelayed
+                }
+                triggerKulchaFloCookieConsentCompat(session, currentTabUrl, reason = "follow-up-$delayMs")
+            },
+            delayMs,
+        )
+    }
+
+    private fun triggerKulchaFloCookieConsentCompat(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!KULCHAFLO_COOKIE_CONSENT_ACCEPT_ALL_AUTOCLICK_ENABLED) {
+            return
+        }
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isKulchaFloPage(normalizedUrl)) {
+            return
+        }
+        val pageUrlJson = JSONObject.quote(normalizedUrl)
+        val reasonJson = JSONObject.quote(reason)
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=$pageUrlJson;
+                var phase=$reasonJson;
+                var lower=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().toLowerCase();};
+                var clean=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().slice(0,160);};
+                var rect=function(node){try{var r=node.getBoundingClientRect();return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);}catch(_){return '';}};
+                var visible=function(node){try{if(!node){return false;}var style=window.getComputedStyle(node);if(style&&(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)){return false;}var r=node.getBoundingClientRect();return r.width>24&&r.height>18&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;}catch(_){return false;}};
+                var textOf=function(node){try{return lower((node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||''));}catch(_){return '';}};
+                var labelOf=function(node){try{return clean((node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||''));}catch(_){return '';}};
+                var emit=function(clicked,resultReason,panel,button){try{window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-cookie-consent-autoclick',phase:phase,pageUrl:pageUrl,clicked:!!clicked,reason:resultReason||'',panelRect:panel?rect(panel):'',buttonRect:button?rect(button):'',buttonText:button?labelOf(button):'',panelText:panel?clean(panel.innerText||panel.textContent||''):''}),'');}catch(_){}};
+                var panels=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],div,section,aside')).slice(0,900);
+                var bestPanel=null;
+                for(var i=0;i<panels.length;i++){
+                  var panel=panels[i];
+                  if(!visible(panel)){continue;}
+                  if(panel.querySelector&&panel.querySelector('video,source,canvas,iframe')){continue;}
+                  var blob=textOf(panel);
+                  if(blob.indexOf('we respect your privacy')>=0&&blob.indexOf('accept all')>=0&&
+                    (blob.indexOf('cookies help us improve your experience')>=0||blob.indexOf('customize')>=0||blob.indexOf('reject all')>=0||blob.indexOf('cookieadmin')>=0)){
+                    bestPanel=panel;
+                    break;
+                  }
+                }
+                if(!bestPanel){emit(false,'no-cookie-panel-match',null,null);return;}
+                var buttons=Array.from(bestPanel.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"]')).slice(0,80);
+                var bestButton=null;
+                for(var j=0;j<buttons.length;j++){
+                  var button=buttons[j];
+                  if(!visible(button)){continue;}
+                  var label=textOf(button);
+                  if(label==='accept all'||label.indexOf('accept all')>=0){bestButton=button;break;}
+                }
+                if(!bestButton){emit(false,'no-accept-all-button-match',bestPanel,null);return;}
+                try{bestButton.click();}catch(_){}
+                emit(true,'clicked',bestPanel,bestButton);
+              }catch(error){
+                try{window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'kulchaflo-cookie-consent-autoclick',phase:${JSONObject.quote(reason)},pageUrl:${JSONObject.quote(normalizedUrl)},clicked:false,reason:'exception'}),'');}catch(_){}
+              }
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvExt",
+            "kulchaflo cookie consent autoclick dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} reason=$reason url=$normalizedUrl"
+        )
+        session.loadUri(script)
+    }
+
     private fun triggerYouTubeConsentCompat(session: GeckoSession, pageUrl: String, reason: String) {
         val normalizedUrl = pageUrl.ifBlank { return }
         if (!isGoogleVideoSurfaceUrl(normalizedUrl)) {
@@ -4909,8 +5277,16 @@ return changed>0;
                                 deltaX = delta.first * POINTER_MOVE_STEP_PX,
                                 deltaY = delta.second * POINTER_MOVE_STEP_PX,
                             )
-                            maybeScrollContent(move.overshootX, move.overshootY, "initial")
+                            maybeDispatchKulchaFloRailScrollFallback(
+                                reason = "initial-edge",
+                                scrollX = normalizedEdgeScrollAmount(move.overshootX),
+                            )
                             startPointerRepeater()
+                            maybeDispatchDpadDocumentScrollFallback(
+                                keyCode = event.keyCode,
+                                reason = "initial-edge",
+                                scrollY = normalizedEdgeScrollAmount(move.overshootY),
+                            )
                         }
                         return true
                     }
@@ -5013,13 +5389,15 @@ return changed>0;
         pointerRepeatTicks = 0
     }
 
-    private fun maybeScrollContent(overshootX: Float, overshootY: Float, reason: String) {
-        val scrollX = (overshootX * EDGE_SCROLL_MULTIPLIER).toInt()
-        val scrollY = (overshootY * EDGE_SCROLL_MULTIPLIER).toInt()
-        if (scrollX == 0 && scrollY == 0) {
-            return
+    private fun normalizedEdgeScrollAmount(overshoot: Float): Int {
+        if (overshoot == 0f) {
+            return 0
         }
-        scrollActivePageBy(scrollX, scrollY, reason)
+        val raw = (overshoot * EDGE_SCROLL_MULTIPLIER).toInt()
+        if (raw == 0) {
+            return if (overshoot > 0f) EDGE_SCROLL_MIN_STEP_PX else -EDGE_SCROLL_MIN_STEP_PX
+        }
+        return raw.coerceIn(-EDGE_SCROLL_MAX_STEP_PX, EDGE_SCROLL_MAX_STEP_PX)
     }
 
     private fun currentPointerDelta(): Pair<Float, Float>? {
@@ -5030,6 +5408,14 @@ return changed>0;
         if (pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_UP)) dy -= 1
         if (pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN)) dy += 1
         return if (dx == 0 && dy == 0) null else dx.toFloat() to dy.toFloat()
+    }
+
+    private fun currentVerticalDpadKey(): Int? {
+        return when {
+            pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) -> KeyEvent.KEYCODE_DPAD_DOWN
+            pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_UP) -> KeyEvent.KEYCODE_DPAD_UP
+            else -> null
+        }
     }
 
     private fun directionalPointerDelta(keyCode: Int): Pair<Float, Float> {
@@ -5297,6 +5683,310 @@ return changed>0;
         GvLogger.d("GvInput", "content scroll x=$scrollX y=$scrollY reason=$reason")
     }
 
+    private fun maybeDispatchKulchaFloRailScrollFallback(reason: String, scrollX: Int): Boolean {
+        if (!ENABLE_KULCHAFLO_RAIL_EDGE_SCROLL_FALLBACK) {
+            return false
+        }
+        if (scrollX == 0 || tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        if (!isKulchaFloPage(activeUrl)) {
+            return false
+        }
+        val uri = runCatching { android.net.Uri.parse(activeUrl) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().ifBlank { "/" }
+        if (path == "/watch" || path.startsWith("/watch/") || isAdminOrBackendRoute(host, path)) {
+            return false
+        }
+        val now = SystemClock.uptimeMillis()
+        if (now - lastKulchaFloRailScrollFallbackMs < KULCHAFLO_RAIL_SCROLL_FALLBACK_MIN_INTERVAL_MS) {
+            return false
+        }
+        lastKulchaFloRailScrollFallbackMs = now
+        val pointerXValue = pointerX.toInt().coerceAtLeast(0)
+        val pointerYValue = pointerY.toInt().coerceAtLeast(0)
+        val pageUrlJson = JSONObject.quote(activeUrl)
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=$pageUrlJson;
+                var amount=$scrollX;
+                var px=$pointerXValue;
+                var py=$pointerYValue;
+                var selector='.kf-rail,.kf-chiprail,.kf-search-rail';
+                var clip=function(value,limit){
+                  value=String(value||'').replace(/\s+/g,' ').trim();
+                  return value.length>limit?value.slice(0,limit):value;
+                };
+                var rectText=function(node){
+                  try{
+                    var r=node.getBoundingClientRect();
+                    return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
+                  }catch(_){return '';}
+                };
+                var summary=function(node){
+                  try{
+                    if(!node){return 'none';}
+                    return clip((node.tagName||'').toLowerCase()+'.'+String(node.className||'').replace(/\s+/g,'.')+' rect='+rectText(node),160);
+                  }catch(_){return 'unknown';}
+                };
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
+                    var r=node.getBoundingClientRect();
+                    return r.width>24&&r.height>16&&r.bottom>0&&r.right>0&&r.top<(window.innerHeight||720)&&r.left<(window.innerWidth||1280);
+                  }catch(_){return false;}
+                };
+                var scrollableRail=function(node){
+                  return !!(node&&visible(node)&&node.scrollWidth>node.clientWidth+4);
+                };
+                var pointNode=null;
+                try{
+                  var w=Math.max(1,window.innerWidth||0);
+                  var h=Math.max(1,window.innerHeight||0);
+                  pointNode=document.elementFromPoint(Math.min(Math.max(0,px),w-1),Math.min(Math.max(0,py),h-1));
+                }catch(_){}
+                var rail=null;
+                try{
+                  rail=pointNode&&pointNode.closest&&pointNode.closest(selector);
+                }catch(_){}
+                if(!scrollableRail(rail)){
+                  rail=null;
+                  var rails=Array.from(document.querySelectorAll(selector)).slice(0,80);
+                  var best=null,bestScore=-1;
+                  rails.forEach(function(candidate){
+                    if(!scrollableRail(candidate)){return;}
+                    var r=candidate.getBoundingClientRect();
+                    var withinY=py>=r.top-36&&py<=r.bottom+36;
+                    if(!withinY){return;}
+                    var centerPenalty=Math.abs(((r.top+r.bottom)/2)-py);
+                    var score=candidate.scrollWidth-candidate.clientWidth-centerPenalty;
+                    if(score>bestScore){best=candidate;bestScore=score;}
+                  });
+                  rail=best;
+                }
+                var skippedReason='';
+                var beforeX=0,afterX=0;
+                if(!rail){
+                  skippedReason='no-rail-near-pointer';
+                }else{
+                  beforeX=Number(rail.scrollLeft||0);
+                  try{rail.scrollBy({left:amount,top:0,behavior:'auto'});}catch(_){rail.scrollLeft=beforeX+amount;}
+                  afterX=Number(rail.scrollLeft||0);
+                }
+                setTimeout(function(){
+                  try{
+                    var finalX=rail?Number(rail.scrollLeft||0):afterX;
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'kulchaflo-rail-scroll-fallback',
+                      phase:'kulchaflo-rail-scroll-fallback',
+                      pageUrl:pageUrl,
+                      pointerX:px,
+                      pointerY:py,
+                      direction:amount>0?'right':'left',
+                      amount:amount,
+                      skippedReason:skippedReason,
+                      beforeX:beforeX,
+                      afterX:finalX,
+                      deltaX:finalX-beforeX,
+                      railSummary:summary(rail)
+                    }),'');
+                  }catch(_){}
+                },60);
+              }catch(_){}
+            })();
+        """.trimIndent()
+        activeTab.session.loadUri(script)
+        GvLogger.i(
+            "GvInput",
+            "kulchaflo rail scroll fallback attempted=true reason=$reason url=$activeUrl pointer=$pointerXValue,$pointerYValue scrollX=$scrollX"
+        )
+        return true
+    }
+
+    private fun maybeDispatchDpadDocumentScrollFallback(keyCode: Int?, reason: String, scrollY: Int): Boolean {
+        if (!ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK) {
+            return false
+        }
+        if (keyCode != KeyEvent.KEYCODE_DPAD_DOWN && keyCode != KeyEvent.KEYCODE_DPAD_UP) {
+            return false
+        }
+        if (scrollY == 0) {
+            return false
+        }
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        val skipReason = dpadDocumentScrollFallbackSkipReason(activeUrl)
+        val direction = if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) "down" else "up"
+        val liveMediaSurface = isLiveMediaSurfaceUrl(activeUrl)
+        if (skipReason != null) {
+            GvLogger.i(
+                "GvInput",
+                "dpad document scroll fallback keyCode=$keyCode direction=$direction attempted=false reason=$skipReason url=$activeUrl pointer=${pointerX.toInt()},${pointerY.toInt()} liveMediaSurface=$liveMediaSurface"
+            )
+            return false
+        }
+        val now = SystemClock.uptimeMillis()
+        if (now - lastDpadDocumentScrollFallbackMs < DPAD_DOCUMENT_SCROLL_FALLBACK_MIN_INTERVAL_MS) {
+            return false
+        }
+        lastDpadDocumentScrollFallbackMs = now
+        val pointerXValue = pointerX.toInt().coerceAtLeast(0)
+        val pointerYValue = pointerY.toInt().coerceAtLeast(0)
+        val pageUrlJson = JSONObject.quote(activeUrl)
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=$pageUrlJson;
+                var keyCode=$keyCode;
+                var direction=${if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) 1 else -1};
+                var px=$pointerXValue;
+                var py=$pointerYValue;
+                var viewportH=Math.max(1,window.innerHeight||document.documentElement.clientHeight||720);
+                var amount=$scrollY;
+                var scrollingElement=document.scrollingElement||document.documentElement||document.body;
+                var active=document.activeElement;
+                var activeTag=(active&&active.tagName?active.tagName:'').toLowerCase();
+                var activeType=(active&&active.getAttribute?String(active.getAttribute('type')||''):'').toLowerCase();
+                var editable=!!(active&&(active.isContentEditable||activeTag==='textarea'||activeTag==='select'||(activeTag==='input'&&activeType!=='button'&&activeType!=='submit'&&activeType!=='checkbox'&&activeType!=='radio')));
+                var nodeSummary=function(node){
+                  try{
+                    if(!node){return 'none';}
+                    var tag=(node.tagName||'').toLowerCase();
+                    var role=(node.getAttribute&&node.getAttribute('role'))||'';
+                    var id=(node.getAttribute&&node.getAttribute('id'))||'';
+                    var cls=(typeof node.className==='string'?node.className:'');
+                    if(cls.length>80){cls=cls.slice(0,80);}
+                    var out=tag;
+                    if(role){out+='[role='+role+']';}
+                    if(id){out+='#'+id.slice(0,60);}
+                    if(cls){out+='.'+cls.replace(/\s+/g,'.');}
+                    return out;
+                  }catch(_){return 'unknown';}
+                };
+                var pointNode=null;
+                try{
+                  var w=Math.max(1,window.innerWidth||0);
+                  var h=Math.max(1,window.innerHeight||0);
+                  pointNode=document.elementFromPoint(Math.min(Math.max(0,px),w-1),Math.min(Math.max(0,py),h-1));
+                }catch(_){}
+                var beforeY=Number((scrollingElement&&scrollingElement.scrollTop)||window.pageYOffset||0);
+                var beforeX=Number((scrollingElement&&scrollingElement.scrollLeft)||window.pageXOffset||0);
+                var afterY=beforeY;
+                var afterX=beforeX;
+                var skippedReason='';
+                if(editable){
+                  skippedReason='text-input-focused';
+                }else if(!scrollingElement){
+                  skippedReason='no-scrolling-element';
+                }else{
+                  try{
+                    scrollingElement.scrollBy({top:amount,left:0,behavior:'auto'});
+                  }catch(_){
+                    try{scrollingElement.scrollTop=beforeY+amount;}catch(__){window.scrollBy(0,amount);}
+                  }
+                  afterY=Number((scrollingElement&&scrollingElement.scrollTop)||window.pageYOffset||0);
+                  afterX=Number((scrollingElement&&scrollingElement.scrollLeft)||window.pageXOffset||0);
+                }
+                var emit=function(){
+                  try{
+                    var finalY=Number((scrollingElement&&scrollingElement.scrollTop)||window.pageYOffset||0);
+                    var finalX=Number((scrollingElement&&scrollingElement.scrollLeft)||window.pageXOffset||0);
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'dpad-document-scroll-fallback',
+                      phase:'dpad-document-scroll-fallback',
+                      pageUrl:pageUrl,
+                      keyCode:keyCode,
+                      direction:direction>0?'down':'up',
+                      pointerX:px,
+                      pointerY:py,
+                      amount:amount,
+                      skippedReason:skippedReason,
+                      activeElement:nodeSummary(active),
+                      pointElement:nodeSummary(pointNode),
+                      beforeY:beforeY,
+                      afterY:finalY,
+                      deltaY:finalY-beforeY,
+                      beforeX:beforeX,
+                      afterX:finalX,
+                      deltaX:finalX-beforeX,
+                      viewportHeight:viewportH
+                    }),'');
+                  }catch(_){}
+                };
+                setTimeout(emit,60);
+              }catch(_){}
+            })();
+        """.trimIndent()
+        activeTab.session.loadUri(script)
+        GvLogger.i(
+            "GvInput",
+            "dpad document scroll fallback keyCode=$keyCode direction=$direction attempted=true reason=$reason url=$activeUrl pointer=$pointerXValue,$pointerYValue scrollY=$scrollY liveMediaSurface=$liveMediaSurface"
+        )
+        return true
+    }
+
+    private fun dpadDocumentScrollFallbackSkipReason(url: String): String? {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return "unsupported-scheme"
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return "unsupported-scheme"
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().ifBlank { "/" }
+        if (isFacebookHost(host)) {
+            return "facebook"
+        }
+        if (host == "googlevideo.com" || host.endsWith(".googlevideo.com")) {
+            return "youtube-media"
+        }
+        if (host == "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com")) {
+            return "youtube-embed"
+        }
+        if ((host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be") &&
+            isProtectedYouTubeScrollRoute(host, path)
+        ) {
+            return "youtube-player-route"
+        }
+        if (host == "kulchaflo.com" && (path == "/watch" || path.startsWith("/watch/"))) {
+            return "internal-watch-route"
+        }
+        if (host == "cvmtv.com" && path.contains("cvm-live-stream")) {
+            return "cvm-vimeo-player"
+        }
+        if (host == "vimeo.com" && path.contains("/event/") && path.contains("embed")) {
+            return "cvm-vimeo-player"
+        }
+        if (isAdminOrBackendRoute(host, path)) {
+            return "admin-backend"
+        }
+        return null
+    }
+
+    private fun isProtectedYouTubeScrollRoute(host: String, path: String): Boolean {
+        if (host == "youtu.be") {
+            return true
+        }
+        return path == "/watch" ||
+            path.startsWith("/watch/") ||
+            path == "/shorts" ||
+            path.startsWith("/shorts/") ||
+            path == "/embed" ||
+            path.startsWith("/embed/") ||
+            path == "/live" ||
+            path.startsWith("/live/")
+    }
+
     private fun syncPointerToActivePage(reason: String) {
         if (tabController.getActiveTab() == null) {
             cancelPointerIdleTimeout()
@@ -5323,6 +6013,207 @@ return changed>0;
 
     private fun cancelPointerIdleTimeout() {
         pointerHandler.removeCallbacks(pointerIdleRunnable)
+    }
+
+    private fun maybeStartLiveLoadTiming(session: GeckoSession, url: String, event: String) {
+        val surface = liveLoadTimingSurface(url)
+        if (surface == null) {
+            if (liveLoadTimingBySession.remove(session) != null) {
+                GvLogger.i(
+                    "GvNav",
+                    "live load timing event=state-clear reason=non-live-url tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+                )
+            }
+            return
+        }
+        val nowMs = SystemClock.elapsedRealtime()
+        val state = LiveLoadTimingState(
+            surface = surface,
+            rootUrl = url,
+            startedAtMs = nowMs,
+        )
+        liveLoadTimingBySession[session] = state
+        GvLogger.i(
+            "GvNav",
+            "live load timing event=$event surface=$surface elapsedMs=0 tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+        )
+        scheduleLiveLoadTimingCheckpoints(session, state)
+    }
+
+    private fun handleLiveLoadTimingLocationChange(session: GeckoSession, url: String) {
+        val state = liveLoadTimingBySession[session]
+        val surface = liveLoadTimingSurface(url)
+        if (state == null) {
+            if (surface != null) {
+                maybeStartLiveLoadTiming(session, url, event = "location-change-start")
+            }
+            return
+        }
+        if (surface == null) {
+            liveLoadTimingBySession.remove(session)
+            GvLogger.i(
+                "GvNav",
+                "live load timing event=state-clear reason=left-live-surface surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+            )
+            return
+        }
+        logLiveLoadTimingEvent(session, state, event = "location-change", url = url)
+        if (isTegoPlayerUrl(url) && !state.tegoIframeLogged) {
+            state.tegoIframeLogged = true
+            logLiveLoadTimingEvent(session, state, event = "tego-player-location", url = url)
+        }
+    }
+
+    private fun logLiveLoadTimingPageStop(session: GeckoSession, url: String, success: Boolean) {
+        val state = liveLoadTimingBySession[session] ?: return
+        if (!state.pageStopLogged) {
+            state.pageStopLogged = true
+            logLiveLoadTimingEvent(session, state, event = "page-stop", url = url, extra = " success=$success")
+        }
+    }
+
+    private fun scheduleLiveLoadTimingCheckpoints(session: GeckoSession, state: LiveLoadTimingState) {
+        LIVE_LOAD_TIMING_CHECKPOINTS_MS.forEach { delayMs ->
+            pointerHandler.postDelayed(
+                {
+                    if (isFinishing || isDestroyed) {
+                        return@postDelayed
+                    }
+                    val currentState = liveLoadTimingBySession[session] ?: return@postDelayed
+                    if (currentState.startedAtMs != state.startedAtMs) {
+                        return@postDelayed
+                    }
+                    val currentSessionUrl = tabController.findTabBySession(session)?.url ?: currentUrl
+                    GvLogger.i(
+                        "GvNav",
+                        "live load timing checkpoint surface=${currentState.surface} elapsedMs=${elapsedLiveLoadMs(currentState)} " +
+                            "targetMs=$delayMs tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} currentUrl=$currentSessionUrl " +
+                            "pageStopLogged=${currentState.pageStopLogged} tegoIframeLogged=${currentState.tegoIframeLogged} " +
+                            "mediaEvidenceLogged=${currentState.mediaEvidenceLogged} tegoQualityLogged=${currentState.tegoQualityLogged} " +
+                            "playableVideoLogged=${currentState.playableVideoLogged}"
+                    )
+                },
+                delayMs,
+            )
+        }
+    }
+
+    private fun maybeLogLiveLoadTimingFromPayload(session: GeckoSession, payload: JSONObject) {
+        val pageUrl = payload.optString("pageUrl")
+        val surface = liveLoadTimingSurface(pageUrl)
+        var state = liveLoadTimingBySession[session]
+        if (state == null && surface != null) {
+            maybeStartLiveLoadTiming(session, pageUrl, event = "payload-start")
+            state = liveLoadTimingBySession[session]
+        }
+        state ?: return
+        val type = payload.optString("type")
+        if (isTegoPlayerUrl(pageUrl) && !state.tegoIframeLogged) {
+            state.tegoIframeLogged = true
+            logLiveLoadTimingEvent(session, state, event = "tego-player-payload", url = pageUrl)
+        }
+        if (type == "media-evidence") {
+            val candidates = payload.optJSONArray("directCandidates") ?: JSONArray()
+            if (candidates.length() > 0 && !state.mediaEvidenceLogged) {
+                state.mediaEvidenceLogged = true
+                logLiveLoadTimingEvent(
+                    session,
+                    state,
+                    event = "media-evidence",
+                    url = pageUrl,
+                    extra = " candidateCount=${candidates.length()} playableCandidate=${hasPlayableDirectCandidate(candidates)}"
+                )
+            }
+            if (!state.playableVideoLogged && hasPlayableDirectCandidate(candidates)) {
+                state.playableVideoLogged = true
+                logLiveLoadTimingEvent(session, state, event = "playable-video", url = pageUrl, extra = " source=media-evidence")
+            }
+        }
+        if (type == "tego-quality") {
+            if (!state.tegoQualityLogged) {
+                state.tegoQualityLogged = true
+                logLiveLoadTimingEvent(
+                    session,
+                    state,
+                    event = "tego-quality",
+                    url = pageUrl,
+                    extra = " applied=${payload.optBoolean("applied")} playerCount=${payload.optInt("playerCount")}"
+                )
+            }
+            val videos = payload.optJSONArray("videos") ?: JSONArray()
+            if (!state.playableVideoLogged && hasPlayableTegoVideo(videos)) {
+                state.playableVideoLogged = true
+                logLiveLoadTimingEvent(
+                    session,
+                    state,
+                    event = "playable-video",
+                    url = pageUrl,
+                    extra = " source=tego-quality videos=${summarizeTegoVideosForTiming(videos)}"
+                )
+            }
+        }
+    }
+
+    private fun logLiveLoadTimingEvent(
+        session: GeckoSession,
+        state: LiveLoadTimingState,
+        event: String,
+        url: String,
+        extra: String = "",
+    ) {
+        GvLogger.i(
+            "GvNav",
+            "live load timing event=$event surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} " +
+                "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url rootUrl=${state.rootUrl}$extra"
+        )
+    }
+
+    private fun elapsedLiveLoadMs(state: LiveLoadTimingState): Long {
+        return (SystemClock.elapsedRealtime() - state.startedAtMs).coerceAtLeast(0L)
+    }
+
+    private fun hasPlayableDirectCandidate(candidates: JSONArray): Boolean {
+        for (index in 0 until candidates.length()) {
+            val candidate = candidates.optJSONObject(index) ?: continue
+            val readyState = candidate.optInt("readyState")
+            val videoWidth = candidate.optInt("videoWidth")
+            val videoHeight = candidate.optInt("videoHeight")
+            val currentTime = candidate.optDouble("currentTime")
+            val src = candidate.optString("src")
+            if (src.isNotBlank() && (readyState >= 1 || videoWidth > 0 || videoHeight > 0 || currentTime > 0.0)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun hasPlayableTegoVideo(videos: JSONArray): Boolean {
+        for (index in 0 until videos.length()) {
+            val video = videos.optJSONObject(index) ?: continue
+            val readyState = video.optInt("readyState")
+            val videoWidth = video.optInt("videoWidth")
+            val videoHeight = video.optInt("videoHeight")
+            val paused = video.optBoolean("paused")
+            if (videoWidth > 0 && videoHeight > 0 && (readyState >= 4 || (readyState >= 1 && !paused))) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun summarizeTegoVideosForTiming(videos: JSONArray): String {
+        return buildString {
+            val limit = minOf(videos.length(), 3)
+            for (index in 0 until limit) {
+                val video = videos.optJSONObject(index) ?: continue
+                if (isNotEmpty()) append("|")
+                append("#").append(index + 1)
+                append(":").append(video.optInt("videoWidth"))
+                append("x").append(video.optInt("videoHeight"))
+                append(":ready=").append(video.optInt("readyState"))
+                append(":paused=").append(video.optBoolean("paused"))
+            }
+        }.ifBlank { "none" }
     }
 
     private fun handleExtensionPayload(
@@ -5408,6 +6299,42 @@ return changed>0;
             }
             return
         }
+        if (type == "dpad-document-scroll-fallback") {
+            GvLogger.i(
+                "GvInput",
+                "dpad document scroll fallback result keyCode=${payload.optInt("keyCode")} direction=${payload.optString("direction")} " +
+                    "pageUrl=$pageUrl pointer=${payload.optInt("pointerX")},${payload.optInt("pointerY")} " +
+                    "amount=${payload.optInt("amount")} skippedReason=${payload.optString("skippedReason").ifBlank { "none" }} " +
+                    "beforeY=${payload.optDouble("beforeY")} afterY=${payload.optDouble("afterY")} deltaY=${payload.optDouble("deltaY")} " +
+                    "active=${payload.optString("activeElement")} point=${payload.optString("pointElement")} viewportHeight=${payload.optInt("viewportHeight")}"
+            )
+            return
+        }
+        if (type == "kulchaflo-rail-scroll-fallback") {
+            GvLogger.i(
+                "GvInput",
+                "kulchaflo rail scroll fallback result direction=${payload.optString("direction")} pageUrl=$pageUrl " +
+                    "pointer=${payload.optInt("pointerX")},${payload.optInt("pointerY")} amount=${payload.optInt("amount")} " +
+                    "skippedReason=${payload.optString("skippedReason").ifBlank { "none" }} beforeX=${payload.optDouble("beforeX")} " +
+                    "afterX=${payload.optDouble("afterX")} deltaX=${payload.optDouble("deltaX")} rail=${payload.optString("railSummary")}"
+            )
+            return
+        }
+        if (type == "ttt-consent-autoclick") {
+            GvLogger.i(
+                "GvLayout",
+                "ttt consent autoclick result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} phase=${payload.optString("phase")} pageUrl=$pageUrl dialogRect=${payload.optString("dialogRect")} buttonRect=${payload.optString("buttonRect")} buttonText=${payload.optString("buttonText")} dialogText=${payload.optString("dialogText").take(180)}"
+            )
+            return
+        }
+        if (type == "kulchaflo-cookie-consent-autoclick") {
+            GvLogger.i(
+                "GvLayout",
+                "kulchaflo cookie consent autoclick result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} phase=${payload.optString("phase")} pageUrl=$pageUrl panelRect=${payload.optString("panelRect")} buttonRect=${payload.optString("buttonRect")} buttonText=${payload.optString("buttonText")} panelText=${payload.optString("panelText").take(180)}"
+            )
+            return
+        }
+        maybeLogLiveLoadTimingFromPayload(session, payload)
         if (type == "tego-quality") {
             val results = payload.optJSONArray("results") ?: JSONArray()
             val resultSummary = buildString {
@@ -5669,6 +6596,8 @@ return changed>0;
         private const val FACEBOOK_COOKIE_CONSENT_ALLOW_ALL_AUTOCLICK_ENABLED = 1
         private const val FACEBOOK_LOGIN_MODAL_CLOSE_AFTER_ATTACH_ENABLED = 1
         private const val FACEBOOK_BOTTOM_LOGIN_BAR_COSMETIC_HIDE_ENABLED = 1
+        private const val KULCHAFLO_COOKIE_CONSENT_ACCEPT_ALL_AUTOCLICK_ENABLED = true
+        private const val TTT_CONSENT_AUTOCLICK_ENABLED = true
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -5688,7 +6617,14 @@ return changed>0;
         private const val POINTER_MOVE_STEP_PX = 18f
         private const val EDGE_PADDING_PX = 8f
         private const val EDGE_SCROLL_MULTIPLIER = 2.0f
+        private const val EDGE_SCROLL_MIN_STEP_PX = 8
+        private const val EDGE_SCROLL_MAX_STEP_PX = 56
+        private const val ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK = true
+        private const val DPAD_DOCUMENT_SCROLL_FALLBACK_MIN_INTERVAL_MS = 120L
+        private const val ENABLE_KULCHAFLO_RAIL_EDGE_SCROLL_FALLBACK = true
+        private const val KULCHAFLO_RAIL_SCROLL_FALLBACK_MIN_INTERVAL_MS = 120L
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
+        private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
         private const val POINTER_IDLE_HIDE_MS = 3500L
         private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
         private const val GLOBAL_SITE_SCALE = 0.76
@@ -5844,6 +6780,49 @@ return changed>0;
             host.endsWith(".amazon.com") ||
             host == "primevideo.com" ||
             host.endsWith(".primevideo.com")
+    }
+
+    private fun isTttLiveSurfaceUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "ttt.live" || host.endsWith(".ttt.live")
+    }
+
+    private fun isTegoPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "player.tegotv.com" || path.contains("/player.php")
+    }
+
+    private fun liveLoadTimingSurface(url: String): String? {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return null
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (isFacebookHost(host) || isYouTubeSurfaceHostForUnifiedCompat(host)) {
+            return null
+        }
+        return when {
+            host == "player.tegotv.com" || path.contains("/player.php") -> "tego-player"
+            host == "ttt.live" || host.endsWith(".ttt.live") -> "ttt-live"
+            host == "abstvradio.com" && path.contains("live-streaming") -> "abs-live"
+            host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> "caribvision-live"
+            host == "cbc.bb" && path.startsWith("/live") -> "cbc-live"
+            isLiveMediaSurfaceUrl(url) -> "live-media-surface"
+            else -> null
+        }
     }
 
     private fun isFacebookNativeScheme(uriValue: String): Boolean {
