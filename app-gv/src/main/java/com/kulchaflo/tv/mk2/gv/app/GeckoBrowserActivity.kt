@@ -98,7 +98,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var lastBackToHomeAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
     private var lastDpadDocumentScrollFallbackMs = 0L
-    private var lastKulchaFloRailScrollFallbackMs = 0L
 
     private val pointerIdleRunnable = Runnable {
         if (!pointerDirectionKeys.isEmpty()) {
@@ -125,14 +124,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 deltaX = delta.first * POINTER_MOVE_STEP_PX * multiplier,
                 deltaY = delta.second * POINTER_MOVE_STEP_PX * multiplier,
             )
-            maybeDispatchKulchaFloRailScrollFallback(
-                reason = "repeat",
-                scrollX = normalizedEdgeScrollAmount(move.overshootX),
-            )
+            maybeScrollContent(move.overshootX, move.overshootY, "repeat")
             maybeDispatchDpadDocumentScrollFallback(
                 keyCode = currentVerticalDpadKey(),
                 reason = "repeat",
-                scrollY = normalizedEdgeScrollAmount(move.overshootY),
+                scrollY = (move.overshootY * EDGE_SCROLL_MULTIPLIER).toInt(),
             )
             pointerHandler.postDelayed(this, POINTER_REPEAT_FRAME_MS)
         }
@@ -4910,7 +4906,7 @@ return changed>0;
         }
         val now = SystemClock.uptimeMillis()
         val lastDispatch = kulchaFloCookieConsentLastDispatchMsBySession[session] ?: 0L
-        if (now - lastDispatch < 1600L) {
+        if (now - lastDispatch < 1800L) {
             return
         }
         kulchaFloCookieConsentLastDispatchMsBySession[session] = now
@@ -4919,7 +4915,6 @@ return changed>0;
             scheduleKulchaFloCookieConsentFollowUp(session, 1200L)
             scheduleKulchaFloCookieConsentFollowUp(session, 3200L)
             scheduleKulchaFloCookieConsentFollowUp(session, 6500L)
-            scheduleKulchaFloCookieConsentFollowUp(session, 10000L)
         }
     }
 
@@ -4952,6 +4947,12 @@ return changed>0;
         if (!isKulchaFloPage(normalizedUrl)) {
             return
         }
+        val uri = runCatching { android.net.Uri.parse(normalizedUrl) }.getOrNull() ?: return
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().ifBlank { "/" }
+        if (path == "/watch" || path.startsWith("/watch/") || isAdminOrBackendRoute(host, path)) {
+            return
+        }
         val pageUrlJson = JSONObject.quote(normalizedUrl)
         val reasonJson = JSONObject.quote(reason)
         val script = """
@@ -4962,38 +4963,143 @@ return changed>0;
                 var phase=$reasonJson;
                 var lower=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().toLowerCase();};
                 var clean=function(v){return ((v||'')+'').replace(/\s+/g,' ').trim().slice(0,160);};
-                var rect=function(node){try{var r=node.getBoundingClientRect();return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);}catch(_){return '';}};
-                var visible=function(node){try{if(!node){return false;}var style=window.getComputedStyle(node);if(style&&(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)){return false;}var r=node.getBoundingClientRect();return r.width>24&&r.height>18&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;}catch(_){return false;}};
-                var textOf=function(node){try{return lower((node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||''));}catch(_){return '';}};
-                var labelOf=function(node){try{return clean((node.value||'')+' '+((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+((node.getAttribute&&node.getAttribute('title'))||'')+' '+(node.innerText||node.textContent||''));}catch(_){return '';}};
-                var emit=function(clicked,resultReason,panel,button){try{window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-cookie-consent-autoclick',phase:phase,pageUrl:pageUrl,clicked:!!clicked,reason:resultReason||'',panelRect:panel?rect(panel):'',buttonRect:button?rect(button):'',buttonText:button?labelOf(button):'',panelText:panel?clean(panel.innerText||panel.textContent||''):''}),'');}catch(_){}};
-                var panels=Array.from(document.querySelectorAll('[role="dialog"],[aria-modal="true"],div,section,aside')).slice(0,900);
-                var bestPanel=null;
-                for(var i=0;i<panels.length;i++){
-                  var panel=panels[i];
-                  if(!visible(panel)){continue;}
-                  if(panel.querySelector&&panel.querySelector('video,source,canvas,iframe')){continue;}
-                  var blob=textOf(panel);
-                  if(blob.indexOf('we respect your privacy')>=0&&blob.indexOf('accept all')>=0&&
-                    (blob.indexOf('cookies help us improve your experience')>=0||blob.indexOf('customize')>=0||blob.indexOf('reject all')>=0||blob.indexOf('cookieadmin')>=0)){
-                    bestPanel=panel;
-                    break;
+                var rect=function(node){
+                  try{
+                    var r=node.getBoundingClientRect();
+                    return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
+                  }catch(_){return '';}
+                };
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)){return false;}
+                    var r=node.getBoundingClientRect();
+                    return r.width>24&&r.height>18&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var textOf=function(node){
+                  try{
+                    return lower(
+                      (node.value||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('title'))||'')+' '+
+                      (node.innerText||node.textContent||'')
+                    );
+                  }catch(_){return '';}
+                };
+                var labelOf=function(node){
+                  try{
+                    return clean(
+                      (node.value||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('aria-label'))||'')+' '+
+                      ((node.getAttribute&&node.getAttribute('title'))||'')+' '+
+                      (node.innerText||node.textContent||'')
+                    );
+                  }catch(_){return '';}
+                };
+                var emit=function(clicked,resultReason,panel,button){
+                  try{
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'kulchaflo-cookie-consent-autoclick',
+                      phase:phase,
+                      pageUrl:pageUrl,
+                      clicked:!!clicked,
+                      reason:resultReason||'',
+                      panelRect:panel?rect(panel):'',
+                      buttonRect:button?rect(button):'',
+                      buttonText:button?labelOf(button):'',
+                      panelText:panel?clean(panel.innerText||panel.textContent||''):''
+                    }),'');
+                  }catch(_){}
+                };
+                var collectNodes=function(selector,limit){
+                  var out=[];
+                  var seen=new Set();
+                  var add=function(node){
+                    try{
+                      if(!node||seen.has(node)){return;}
+                      seen.add(node);
+                      if(!selector||node.matches&&node.matches(selector)){out.push(node);}
+                    }catch(_){}
+                  };
+                  var walk=function(root){
+                    if(!root||out.length>=limit){return;}
+                    var nodes=[];
+                    try{nodes=Array.from(root.querySelectorAll('*')).slice(0,1400);}catch(_){nodes=[];}
+                    for(var i=0;i<nodes.length&&out.length<limit;i++){
+                      var node=nodes[i];
+                      add(node);
+                      try{if(node.shadowRoot){walk(node.shadowRoot);}}catch(_){}
+                    }
+                  };
+                  walk(document);
+                  return out.slice(0,limit);
+                };
+                var parentOf=function(node){
+                  try{
+                    var parent=node&&node.parentElement;
+                    if(parent){return parent;}
+                    var raw=node&&node.parentNode;
+                    if(raw&&raw.host){return raw.host;}
+                  }catch(_){}
+                  return null;
+                };
+                var hasCookieContext=function(blob){
+                  return blob.indexOf('cookieadmin')>=0 ||
+                    blob.indexOf('powered by cookieadmin')>=0 ||
+                    (blob.indexOf('we respect your privacy')>=0&&blob.indexOf('cookies help us improve your experience')>=0) ||
+                    (blob.indexOf('accept all')>=0&&blob.indexOf('reject all')>=0&&
+                      (blob.indexOf('customize')>=0||blob.indexOf('customise')>=0||blob.indexOf('cookies')>=0));
+                };
+                var findPanelFor=function(button){
+                  var cur=button;
+                  for(var depth=0;cur&&depth<12;depth++){
+                    if(visible(cur)&&!(cur.querySelector&&cur.querySelector('video,source,canvas,iframe'))){
+                      var blob=textOf(cur);
+                      if(hasCookieContext(blob)){return cur;}
+                    }
+                    cur=parentOf(cur);
                   }
-                }
-                if(!bestPanel){emit(false,'no-cookie-panel-match',null,null);return;}
-                var buttons=Array.from(bestPanel.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a[role="button"]')).slice(0,80);
+                  return null;
+                };
+                var buttons=collectNodes('button,[role="button"],input[type="button"],input[type="submit"]',1200);
                 var bestButton=null;
+                var bestPanel=null;
                 for(var j=0;j<buttons.length;j++){
                   var button=buttons[j];
                   if(!visible(button)){continue;}
                   var label=textOf(button);
-                  if(label==='accept all'||label.indexOf('accept all')>=0){bestButton=button;break;}
+                  if(!(label==='accept all'||label.indexOf('accept all')>=0)){continue;}
+                  if(label.indexOf('reject')>=0||label.indexOf('customize')>=0||label.indexOf('customise')>=0){continue;}
+                  var panel=findPanelFor(button);
+                  if(panel){
+                    bestButton=button;
+                    bestPanel=panel;
+                    break;
+                  }
                 }
-                if(!bestButton){emit(false,'no-accept-all-button-match',bestPanel,null);return;}
+                if(!bestPanel){
+                  emit(false,'no-cookie-panel-match',null,bestButton);
+                  return;
+                }
+                emit(false,'scan',bestPanel,bestButton);
+                if(!bestButton){
+                  emit(false,'no-accept-all-button-match',bestPanel,null);
+                  return;
+                }
                 try{bestButton.click();}catch(_){}
                 emit(true,'clicked',bestPanel,bestButton);
               }catch(error){
-                try{window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'kulchaflo-cookie-consent-autoclick',phase:${JSONObject.quote(reason)},pageUrl:${JSONObject.quote(normalizedUrl)},clicked:false,reason:'exception'}),'');}catch(_){}
+                try{
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                    type:'kulchaflo-cookie-consent-autoclick',
+                    phase:${JSONObject.quote(reason)},
+                    pageUrl:${JSONObject.quote(normalizedUrl)},
+                    clicked:false,
+                    reason:'exception'
+                  }),'');
+                }catch(_){}
               }
             })();
         """.trimIndent()
@@ -5277,15 +5383,12 @@ return changed>0;
                                 deltaX = delta.first * POINTER_MOVE_STEP_PX,
                                 deltaY = delta.second * POINTER_MOVE_STEP_PX,
                             )
-                            maybeDispatchKulchaFloRailScrollFallback(
-                                reason = "initial-edge",
-                                scrollX = normalizedEdgeScrollAmount(move.overshootX),
-                            )
+                            maybeScrollContent(move.overshootX, move.overshootY, "initial")
                             startPointerRepeater()
                             maybeDispatchDpadDocumentScrollFallback(
                                 keyCode = event.keyCode,
                                 reason = "initial-edge",
-                                scrollY = normalizedEdgeScrollAmount(move.overshootY),
+                                scrollY = (move.overshootY * EDGE_SCROLL_MULTIPLIER).toInt(),
                             )
                         }
                         return true
@@ -5332,12 +5435,17 @@ return changed>0;
         val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
         val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
         val inset = pointerBoundsInsetPx()
-        pointerX = (maxWidth * 0.5f).coerceIn(inset, maxWidth - inset)
-        pointerY = (maxHeight * 0.5f).coerceIn(inset, maxHeight - inset)
+        val minX = inset
+        val maxX = maxWidth - inset
+        val minY = inset
+        val maxY = maxHeight - inset
+        val hasStoredPosition = pointerX in minX..maxX && pointerY in minY..maxY
+        pointerX = if (hasStoredPosition) pointerX.coerceIn(minX, maxX) else (maxWidth * 0.5f).coerceIn(minX, maxX)
+        pointerY = if (hasStoredPosition) pointerY.coerceIn(minY, maxY) else (maxHeight * 0.5f).coerceIn(minY, maxY)
         pointerOverlay.showAt(pointerX, pointerY)
         pointerVisible = true
         schedulePointerIdleTimeout()
-        GvLogger.i("GvInput", "pointer visible=true reason=ensure-visible x=${pointerX.toInt()} y=${pointerY.toInt()}")
+        GvLogger.i("GvInput", "pointer visible=true reason=ensure-visible restored=$hasStoredPosition x=${pointerX.toInt()} y=${pointerY.toInt()}")
     }
 
     private fun movePointerBy(deltaX: Float, deltaY: Float): PointerMoveResult {
@@ -5389,15 +5497,13 @@ return changed>0;
         pointerRepeatTicks = 0
     }
 
-    private fun normalizedEdgeScrollAmount(overshoot: Float): Int {
-        if (overshoot == 0f) {
-            return 0
+    private fun maybeScrollContent(overshootX: Float, overshootY: Float, reason: String) {
+        val scrollX = (overshootX * EDGE_SCROLL_MULTIPLIER).toInt()
+        val scrollY = (overshootY * EDGE_SCROLL_MULTIPLIER).toInt()
+        if (scrollX == 0 && scrollY == 0) {
+            return
         }
-        val raw = (overshoot * EDGE_SCROLL_MULTIPLIER).toInt()
-        if (raw == 0) {
-            return if (overshoot > 0f) EDGE_SCROLL_MIN_STEP_PX else -EDGE_SCROLL_MIN_STEP_PX
-        }
-        return raw.coerceIn(-EDGE_SCROLL_MAX_STEP_PX, EDGE_SCROLL_MAX_STEP_PX)
+        scrollActivePageBy(scrollX, scrollY, reason)
     }
 
     private fun currentPointerDelta(): Pair<Float, Float>? {
@@ -5683,133 +5789,6 @@ return changed>0;
         GvLogger.d("GvInput", "content scroll x=$scrollX y=$scrollY reason=$reason")
     }
 
-    private fun maybeDispatchKulchaFloRailScrollFallback(reason: String, scrollX: Int): Boolean {
-        if (!ENABLE_KULCHAFLO_RAIL_EDGE_SCROLL_FALLBACK) {
-            return false
-        }
-        if (scrollX == 0 || tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
-            return false
-        }
-        val activeTab = tabController.getActiveTab() ?: return false
-        val activeUrl = activeTab.url
-        if (!isKulchaFloPage(activeUrl)) {
-            return false
-        }
-        val uri = runCatching { android.net.Uri.parse(activeUrl) }.getOrNull() ?: return false
-        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
-        val path = uri.encodedPath.orEmpty().lowercase().ifBlank { "/" }
-        if (path == "/watch" || path.startsWith("/watch/") || isAdminOrBackendRoute(host, path)) {
-            return false
-        }
-        val now = SystemClock.uptimeMillis()
-        if (now - lastKulchaFloRailScrollFallbackMs < KULCHAFLO_RAIL_SCROLL_FALLBACK_MIN_INTERVAL_MS) {
-            return false
-        }
-        lastKulchaFloRailScrollFallbackMs = now
-        val pointerXValue = pointerX.toInt().coerceAtLeast(0)
-        val pointerYValue = pointerY.toInt().coerceAtLeast(0)
-        val pageUrlJson = JSONObject.quote(activeUrl)
-        val script = """
-            javascript:(function(){
-              try{
-                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
-                var pageUrl=$pageUrlJson;
-                var amount=$scrollX;
-                var px=$pointerXValue;
-                var py=$pointerYValue;
-                var selector='.kf-rail,.kf-chiprail,.kf-search-rail';
-                var clip=function(value,limit){
-                  value=String(value||'').replace(/\s+/g,' ').trim();
-                  return value.length>limit?value.slice(0,limit):value;
-                };
-                var rectText=function(node){
-                  try{
-                    var r=node.getBoundingClientRect();
-                    return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
-                  }catch(_){return '';}
-                };
-                var summary=function(node){
-                  try{
-                    if(!node){return 'none';}
-                    return clip((node.tagName||'').toLowerCase()+'.'+String(node.className||'').replace(/\s+/g,'.')+' rect='+rectText(node),160);
-                  }catch(_){return 'unknown';}
-                };
-                var visible=function(node){
-                  try{
-                    if(!node){return false;}
-                    var style=window.getComputedStyle(node);
-                    if(style&&(style.display==='none'||style.visibility==='hidden'||style.opacity==='0')){return false;}
-                    var r=node.getBoundingClientRect();
-                    return r.width>24&&r.height>16&&r.bottom>0&&r.right>0&&r.top<(window.innerHeight||720)&&r.left<(window.innerWidth||1280);
-                  }catch(_){return false;}
-                };
-                var scrollableRail=function(node){
-                  return !!(node&&visible(node)&&node.scrollWidth>node.clientWidth+4);
-                };
-                var pointNode=null;
-                try{
-                  var w=Math.max(1,window.innerWidth||0);
-                  var h=Math.max(1,window.innerHeight||0);
-                  pointNode=document.elementFromPoint(Math.min(Math.max(0,px),w-1),Math.min(Math.max(0,py),h-1));
-                }catch(_){}
-                var rail=null;
-                try{
-                  rail=pointNode&&pointNode.closest&&pointNode.closest(selector);
-                }catch(_){}
-                if(!scrollableRail(rail)){
-                  rail=null;
-                  var rails=Array.from(document.querySelectorAll(selector)).slice(0,80);
-                  var best=null,bestScore=-1;
-                  rails.forEach(function(candidate){
-                    if(!scrollableRail(candidate)){return;}
-                    var r=candidate.getBoundingClientRect();
-                    var withinY=py>=r.top-36&&py<=r.bottom+36;
-                    if(!withinY){return;}
-                    var centerPenalty=Math.abs(((r.top+r.bottom)/2)-py);
-                    var score=candidate.scrollWidth-candidate.clientWidth-centerPenalty;
-                    if(score>bestScore){best=candidate;bestScore=score;}
-                  });
-                  rail=best;
-                }
-                var skippedReason='';
-                var beforeX=0,afterX=0;
-                if(!rail){
-                  skippedReason='no-rail-near-pointer';
-                }else{
-                  beforeX=Number(rail.scrollLeft||0);
-                  try{rail.scrollBy({left:amount,top:0,behavior:'auto'});}catch(_){rail.scrollLeft=beforeX+amount;}
-                  afterX=Number(rail.scrollLeft||0);
-                }
-                setTimeout(function(){
-                  try{
-                    var finalX=rail?Number(rail.scrollLeft||0):afterX;
-                    window.prompt(promptPrefix+JSON.stringify({
-                      type:'kulchaflo-rail-scroll-fallback',
-                      phase:'kulchaflo-rail-scroll-fallback',
-                      pageUrl:pageUrl,
-                      pointerX:px,
-                      pointerY:py,
-                      direction:amount>0?'right':'left',
-                      amount:amount,
-                      skippedReason:skippedReason,
-                      beforeX:beforeX,
-                      afterX:finalX,
-                      deltaX:finalX-beforeX,
-                      railSummary:summary(rail)
-                    }),'');
-                  }catch(_){}
-                },60);
-              }catch(_){}
-            })();
-        """.trimIndent()
-        activeTab.session.loadUri(script)
-        GvLogger.i(
-            "GvInput",
-            "kulchaflo rail scroll fallback attempted=true reason=$reason url=$activeUrl pointer=$pointerXValue,$pointerYValue scrollX=$scrollX"
-        )
-        return true
-    }
-
     private fun maybeDispatchDpadDocumentScrollFallback(keyCode: Int?, reason: String, scrollY: Int): Boolean {
         if (!ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK) {
             return false
@@ -5947,25 +5926,11 @@ return changed>0;
         if (isFacebookHost(host)) {
             return "facebook"
         }
-        if (host == "googlevideo.com" || host.endsWith(".googlevideo.com")) {
-            return "youtube-media"
-        }
-        if (host == "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com")) {
-            return "youtube-embed"
-        }
-        if ((host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be") &&
-            isProtectedYouTubeScrollRoute(host, path)
-        ) {
-            return "youtube-player-route"
+        if (isProtectedYouTubeDocumentScrollRoute(host, path)) {
+            return "youtube"
         }
         if (host == "kulchaflo.com" && (path == "/watch" || path.startsWith("/watch/"))) {
             return "internal-watch-route"
-        }
-        if (host == "cvmtv.com" && path.contains("cvm-live-stream")) {
-            return "cvm-vimeo-player"
-        }
-        if (host == "vimeo.com" && path.contains("/event/") && path.contains("embed")) {
-            return "cvm-vimeo-player"
         }
         if (isAdminOrBackendRoute(host, path)) {
             return "admin-backend"
@@ -5973,16 +5938,25 @@ return changed>0;
         return null
     }
 
-    private fun isProtectedYouTubeScrollRoute(host: String, path: String): Boolean {
+    private fun isProtectedYouTubeDocumentScrollRoute(host: String, path: String): Boolean {
+        if (host == "googlevideo.com" || host.endsWith(".googlevideo.com")) {
+            return true
+        }
+        if (host == "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com")) {
+            return true
+        }
         if (host == "youtu.be") {
             return true
         }
+        if (host != "youtube.com" && !host.endsWith(".youtube.com")) {
+            return false
+        }
         return path == "/watch" ||
             path.startsWith("/watch/") ||
-            path == "/shorts" ||
-            path.startsWith("/shorts/") ||
             path == "/embed" ||
             path.startsWith("/embed/") ||
+            path == "/shorts" ||
+            path.startsWith("/shorts/") ||
             path == "/live" ||
             path.startsWith("/live/")
     }
@@ -6310,16 +6284,6 @@ return changed>0;
             )
             return
         }
-        if (type == "kulchaflo-rail-scroll-fallback") {
-            GvLogger.i(
-                "GvInput",
-                "kulchaflo rail scroll fallback result direction=${payload.optString("direction")} pageUrl=$pageUrl " +
-                    "pointer=${payload.optInt("pointerX")},${payload.optInt("pointerY")} amount=${payload.optInt("amount")} " +
-                    "skippedReason=${payload.optString("skippedReason").ifBlank { "none" }} beforeX=${payload.optDouble("beforeX")} " +
-                    "afterX=${payload.optDouble("afterX")} deltaX=${payload.optDouble("deltaX")} rail=${payload.optString("railSummary")}"
-            )
-            return
-        }
         if (type == "ttt-consent-autoclick") {
             GvLogger.i(
                 "GvLayout",
@@ -6617,12 +6581,8 @@ return changed>0;
         private const val POINTER_MOVE_STEP_PX = 18f
         private const val EDGE_PADDING_PX = 8f
         private const val EDGE_SCROLL_MULTIPLIER = 2.0f
-        private const val EDGE_SCROLL_MIN_STEP_PX = 8
-        private const val EDGE_SCROLL_MAX_STEP_PX = 56
         private const val ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK = true
         private const val DPAD_DOCUMENT_SCROLL_FALLBACK_MIN_INTERVAL_MS = 120L
-        private const val ENABLE_KULCHAFLO_RAIL_EDGE_SCROLL_FALLBACK = true
-        private const val KULCHAFLO_RAIL_SCROLL_FALLBACK_MIN_INTERVAL_MS = 120L
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
         private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
         private const val POINTER_IDLE_HIDE_MS = 3500L
