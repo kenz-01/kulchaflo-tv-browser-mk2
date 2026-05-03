@@ -6845,7 +6845,7 @@ return changed>0;
         private const val FACEBOOK_BOTTOM_LOGIN_BAR_COSMETIC_HIDE_ENABLED = 1
         private const val KULCHAFLO_COOKIE_CONSENT_ACCEPT_ALL_AUTOCLICK_ENABLED = true
         private const val TTT_CONSENT_AUTOCLICK_ENABLED = true
-        private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = true
+        private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = false
         private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
