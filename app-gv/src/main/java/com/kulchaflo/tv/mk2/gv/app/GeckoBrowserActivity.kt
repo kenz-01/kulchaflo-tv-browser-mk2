@@ -85,6 +85,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val liveLoadTimingBySession = LinkedHashMap<GeckoSession, LiveLoadTimingState>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pointerDirectionKeys = LinkedHashSet<Int>()
@@ -253,6 +254,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
         if (handleTabsOverlayInput(event)) {
             return true
         }
@@ -323,6 +325,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             tabController.updateLoading(session, false)
             GvLogger.i("GvNav", "page stop tabId=${tab?.id ?: "unknown"} success=$success url=$pageUrl")
             logLiveLoadTimingPageStop(session, pageUrl, success)
+            maybeDispatchCvmVimeoDiagnostic(session, pageUrl, reason = "page-stop")
             if (isFacebookUrl(pageUrl)) {
                 GvLogger.i(
                     "GvMedia",
@@ -387,6 +390,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             maybeDispatchKulchaFloCookieConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchAmazonConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchTttConsentCompat(session, url.orEmpty(), reason = "location-change")
+            maybeDispatchCvmVimeoDiagnostic(session, url.orEmpty(), reason = "location-change")
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
@@ -4890,6 +4894,202 @@ return changed>0;
         session.loadUri(script)
     }
 
+    private fun maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event: KeyEvent) {
+        if (!ENABLE_CVM_VIMEO_DIAGNOSTIC) {
+            return
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return
+        }
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return
+        }
+        val activeTab = tabController.getActiveTab() ?: return
+        if (!isCvmVimeoDiagnosticUrl(activeTab.url)) {
+            return
+        }
+        val session = activeTab.session
+        scheduleCvmVimeoDiagnosticFollowUp(session, 250L, "key-attempt-250")
+        scheduleCvmVimeoDiagnosticFollowUp(session, 1200L, "key-attempt-1200")
+    }
+
+    private fun scheduleCvmVimeoDiagnosticFollowUp(session: GeckoSession, delayMs: Long, reason: String) {
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                maybeDispatchCvmVimeoDiagnostic(session, tab.url, reason = reason)
+            },
+            delayMs,
+        )
+    }
+
+    private fun maybeDispatchCvmVimeoDiagnostic(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!ENABLE_CVM_VIMEO_DIAGNOSTIC) {
+            return
+        }
+        if (!isCvmVimeoDiagnosticUrl(pageUrl)) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastDispatch = cvmVimeoDiagnosticLastDispatchMsBySession[session] ?: 0L
+        if (now - lastDispatch < CVM_VIMEO_DIAGNOSTIC_MIN_INTERVAL_MS) {
+            return
+        }
+        cvmVimeoDiagnosticLastDispatchMsBySession[session] = now
+        triggerCvmVimeoDiagnostic(session, pageUrl, reason)
+    }
+
+    private fun triggerCvmVimeoDiagnostic(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        val normalizedUrl = pageUrl.ifBlank { return }
+        if (!isCvmVimeoDiagnosticUrl(normalizedUrl)) {
+            return
+        }
+        val pointerXValue = pointerX.toInt().coerceAtLeast(0)
+        val pointerYValue = pointerY.toInt().coerceAtLeast(0)
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=${JSONObject.quote(normalizedUrl)};
+                var reason=${JSONObject.quote(reason)};
+                var px=$pointerXValue;
+                var py=$pointerYValue;
+                var truncate=function(v,n){
+                  var s=((v||'')+'').replace(/\s+/g,' ').trim();
+                  return s.length>n?s.slice(0,n):s;
+                };
+                var rect=function(node){
+                  try{
+                    var r=node.getBoundingClientRect();
+                    return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
+                  }catch(_){return '';}
+                };
+                var visible=function(node){
+                  try{
+                    if(!node){return false;}
+                    var style=window.getComputedStyle(node);
+                    if(style&&(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)){return false;}
+                    var r=node.getBoundingClientRect();
+                    return r.width>2&&r.height>2&&r.right>0&&r.bottom>0&&r.left<window.innerWidth&&r.top<window.innerHeight;
+                  }catch(_){return false;}
+                };
+                var nodeSummary=function(node){
+                  try{
+                    if(!node){return 'none';}
+                    var tag=(node.tagName||'').toLowerCase();
+                    var role=((node.getAttribute&&node.getAttribute('role'))||'').toLowerCase();
+                    var id=(node.id||'');
+                    var cls=((typeof node.className==='string')?node.className:'');
+                    return truncate(tag+(role?('[role='+role+']'):'')+(id?('#'+id):'')+(cls?('.'+cls.replace(/\s+/g,'.')):''),180);
+                  }catch(_){return 'unknown';}
+                };
+                var w=Math.max(1,window.innerWidth||0);
+                var h=Math.max(1,window.innerHeight||0);
+                var pointElement=null;
+                try{
+                  pointElement=document.elementFromPoint(Math.min(Math.max(0,px),w-1),Math.min(Math.max(0,py),h-1));
+                }catch(_){}
+                var iframes=Array.from(document.querySelectorAll('iframe')).slice(0,12).map(function(frame){
+                  var src='';
+                  var sameOrigin=false;
+                  try{src=frame.src||frame.getAttribute('src')||'';}catch(_){}
+                  try{sameOrigin=!!frame.contentDocument;}catch(_){sameOrigin=false;}
+                  return {
+                    src:truncate(src,220),
+                    rect:rect(frame),
+                    visible:visible(frame),
+                    sameOriginAccessible:sameOrigin
+                  };
+                });
+                var vimeoFrame=(function(){
+                  for(var i=0;i<iframes.length;i++){
+                    var src=(iframes[i].src||'').toLowerCase();
+                    if(src.indexOf('vimeo.com/event/')>=0||src.indexOf('player.vimeo.com')>=0){return iframes[i];}
+                  }
+                  return null;
+                })();
+                var videos=Array.from(document.querySelectorAll('video')).slice(0,6).map(function(video){
+                  return {
+                    paused:!!video.paused,
+                    readyState:Number(video.readyState||0),
+                    currentTime:Number(video.currentTime||0),
+                    videoWidth:Number(video.videoWidth||0),
+                    videoHeight:Number(video.videoHeight||0),
+                    muted:!!video.muted,
+                    controls:!!video.controls
+                  };
+                });
+                var playCandidates=Array.from(document.querySelectorAll('button,[role="button"],a[role="button"],input[type="button"],input[type="submit"]')).slice(0,220).map(function(node){
+                  var text=truncate((node.innerText||node.textContent||node.value||node.getAttribute('aria-label')||node.getAttribute('title')||''),120);
+                  return {text:text,node:node};
+                }).filter(function(item){
+                  var t=(item.text||'').toLowerCase();
+                  if(!t){return false;}
+                  if(t.indexOf('play')<0&&t.indexOf('watch')<0&&t.indexOf('live')<0){return false;}
+                  return visible(item.node);
+                }).slice(0,8).map(function(item){
+                  return {text:item.text,rect:rect(item.node)};
+                });
+                var userActivation={
+                  isActive:false,
+                  hasBeenActive:false
+                };
+                try{
+                  if(navigator&&navigator.userActivation){
+                    userActivation.isActive=!!navigator.userActivation.isActive;
+                    userActivation.hasBeenActive=!!navigator.userActivation.hasBeenActive;
+                  }
+                }catch(_){}
+                var activeElement=document.activeElement;
+                window.prompt(promptPrefix+JSON.stringify({
+                  type:'cvm-vimeo-diagnostic',
+                  phase:reason,
+                  pageUrl:pageUrl,
+                  documentHasFocus:!!document.hasFocus(),
+                  activeElement:nodeSummary(activeElement),
+                  userActivation:userActivation,
+                  pointerX:px,
+                  pointerY:py,
+                  elementFromPoint:nodeSummary(pointElement),
+                  elementFromPointIsIframe:!!(pointElement&&String(pointElement.tagName||'').toLowerCase()==='iframe'),
+                  iframeCount:iframes.length,
+                  iframes:iframes,
+                  vimeoIframeRect:vimeoFrame?vimeoFrame.rect:'',
+                  vimeoIframeVisible:!!(vimeoFrame&&vimeoFrame.visible),
+                  videoCount:videos.length,
+                  videos:videos,
+                  playButtonCandidates:playCandidates
+                }),'');
+              }catch(error){
+                try{
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                    type:'cvm-vimeo-diagnostic',
+                    phase:${JSONObject.quote(reason)},
+                    pageUrl:${JSONObject.quote(normalizedUrl)},
+                    error:String(error&&error.message||error||'unknown')
+                  }),'');
+                }catch(_){}
+              }
+            })();
+        """.trimIndent()
+        GvLogger.i(
+            "GvMedia",
+            "cvm vimeo diagnostic dispatched reason=$reason pageUrl=$normalizedUrl pointer=${pointerXValue},${pointerYValue}"
+        )
+        session.loadUri(script)
+    }
+
     private fun maybeDispatchKulchaFloCookieConsentCompat(
         session: GeckoSession,
         pageUrl: String,
@@ -5338,7 +5538,23 @@ return changed>0;
             val thirdPartyHost = runCatching { android.net.Uri.parse(permission.thirdPartyOrigin).host }.getOrNull()
             val facebookScoped = isFacebookHost(uriHost) || isFacebookHost(thirdPartyHost)
             val googleVideoScoped = isGoogleVideoSurfaceHost(uriHost) || isGoogleVideoSurfaceHost(thirdPartyHost)
+            val activeSessionUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            val currentRootUrl = currentUrl
+            val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
+            val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
+            val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
+            val cvmAutoplayScoped = ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    cvmTopContext ||
+                        cvmPermissionUri ||
+                        (cvmThirdPartyVimeo && cvmTopContext)
+                    )
             val decision = when {
+                cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -5353,6 +5569,20 @@ return changed>0;
                 "GvNav",
                 "content permission tabId=$tabId uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision facebookScoped=$facebookScoped googleVideoScoped=$googleVideoScoped"
             )
+            if (cvmAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cvm vimeo autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
+                (isCvmVimeoDiagnosticUrl(permission.uri.orEmpty()) || isCvmVimeoDiagnosticUrl(permission.thirdPartyOrigin.orEmpty()))
+            ) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cvm vimeo diagnostic permission uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision"
+                )
+            }
             return GeckoResult.fromValue(decision)
         }
     }
@@ -6284,6 +6514,59 @@ return changed>0;
             )
             return
         }
+        if (type == "cvm-vimeo-diagnostic") {
+            val iframes = payload.optJSONArray("iframes") ?: JSONArray()
+            val iframeSummary = buildString {
+                val limit = minOf(iframes.length(), 6)
+                for (index in 0 until limit) {
+                    val frame = iframes.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append("#").append(index + 1)
+                    append(":src=").append(frame.optString("src"))
+                    append(" rect=").append(frame.optString("rect"))
+                    append(" visible=").append(frame.optBoolean("visible"))
+                    append(" sameOrigin=").append(frame.optBoolean("sameOriginAccessible"))
+                }
+            }.ifBlank { "none" }
+            val videos = payload.optJSONArray("videos") ?: JSONArray()
+            val videoSummary = buildString {
+                val limit = minOf(videos.length(), 4)
+                for (index in 0 until limit) {
+                    val video = videos.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append("#").append(index + 1)
+                    append(":paused=").append(video.optBoolean("paused"))
+                    append(":ready=").append(video.optInt("readyState"))
+                    append(":time=").append(video.optDouble("currentTime"))
+                    append(":size=").append(video.optInt("videoWidth")).append("x").append(video.optInt("videoHeight"))
+                    append(":muted=").append(video.optBoolean("muted"))
+                    append(":controls=").append(video.optBoolean("controls"))
+                }
+            }.ifBlank { "none" }
+            val playCandidates = payload.optJSONArray("playButtonCandidates") ?: JSONArray()
+            val playSummary = buildString {
+                val limit = minOf(playCandidates.length(), 6)
+                for (index in 0 until limit) {
+                    val candidate = playCandidates.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append("#").append(index + 1)
+                    append(":").append(candidate.optString("text"))
+                    append("@").append(candidate.optString("rect"))
+                }
+            }.ifBlank { "none" }
+            val userActivation = payload.optJSONObject("userActivation")
+            GvLogger.i(
+                "GvMedia",
+                "cvm vimeo diagnostic phase=${payload.optString("phase")} pageUrl=$pageUrl pointer=${payload.optInt("pointerX")},${payload.optInt("pointerY")} " +
+                    "hasFocus=${payload.optBoolean("documentHasFocus")} active=${payload.optString("activeElement")} " +
+                    "userActivationActive=${userActivation?.optBoolean("isActive") ?: false} userActivationEver=${userActivation?.optBoolean("hasBeenActive") ?: false} " +
+                    "point=${payload.optString("elementFromPoint")} pointIsIframe=${payload.optBoolean("elementFromPointIsIframe")} " +
+                    "iframeCount=${payload.optInt("iframeCount")} vimeoRect=${payload.optString("vimeoIframeRect")} vimeoVisible=${payload.optBoolean("vimeoIframeVisible")} " +
+                    "videoCount=${payload.optInt("videoCount")} videos=$videoSummary playCandidates=$playSummary " +
+                    "iframes=$iframeSummary mediaSession=${browserMediaController.describeSessionState(session)} error=${payload.optString("error")}"
+            )
+            return
+        }
         if (type == "ttt-consent-autoclick") {
             GvLogger.i(
                 "GvLayout",
@@ -6562,6 +6845,8 @@ return changed>0;
         private const val FACEBOOK_BOTTOM_LOGIN_BAR_COSMETIC_HIDE_ENABLED = 1
         private const val KULCHAFLO_COOKIE_CONSENT_ACCEPT_ALL_AUTOCLICK_ENABLED = true
         private const val TTT_CONSENT_AUTOCLICK_ENABLED = true
+        private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = false
+        private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -6583,6 +6868,7 @@ return changed>0;
         private const val EDGE_SCROLL_MULTIPLIER = 2.0f
         private const val ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK = true
         private const val DPAD_DOCUMENT_SCROLL_FALLBACK_MIN_INTERVAL_MS = 120L
+        private const val CVM_VIMEO_DIAGNOSTIC_MIN_INTERVAL_MS = 150L
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
         private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
         private const val POINTER_IDLE_HIDE_MS = 3500L
@@ -6761,6 +7047,42 @@ return changed>0;
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return host == "player.tegotv.com" || path.contains("/player.php")
+    }
+
+    private fun isCvmVimeoDiagnosticUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "cvmtv.com" && path.startsWith("/more-pages/cvm-live-stream")) {
+            return true
+        }
+        if (host == "vimeo.com" && path.startsWith("/event/") && path.endsWith("/embed")) {
+            return true
+        }
+        if (host == "player.vimeo.com" && path == "/static/proxy.html") {
+            return true
+        }
+        return false
+    }
+
+    private fun isCvmLiveStreamUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "cvmtv.com" && path.startsWith("/more-pages/cvm-live-stream")
+    }
+
+    private fun isVimeoHostForCvm(hostValue: String?): Boolean {
+        val host = hostValue?.lowercase().orEmpty().removePrefix("www.")
+        return host == "vimeo.com" || host.endsWith(".vimeo.com")
     }
 
     private fun liveLoadTimingSurface(url: String): String? {
