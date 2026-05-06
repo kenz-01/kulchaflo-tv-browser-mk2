@@ -51,6 +51,22 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var playableVideoLogged: Boolean = false,
     )
 
+    private data class AbsTegoStartupReprobeState(
+        val rootUrl: String,
+        val startedAtMs: Long,
+        var generation: Int = 0,
+        var completed: Boolean = false,
+        var completionReason: String = "",
+        var latestApplied: Boolean = false,
+        var latestPlayable: Boolean = false,
+        var latestPlaybackProgressed: Boolean = false,
+        var latestMissingHlsLevels: Boolean = true,
+        var latestReadyZeroPaused: Boolean = true,
+        var latestPageUrl: String = "",
+        var nativeFDispatched: Boolean = false,
+        var nativeFullscreenTapDispatched: Boolean = false,
+    )
+
     private lateinit var geckoView: GeckoView
     private lateinit var pointerOverlay: PointerOverlayView
     private lateinit var loadingOverlay: View
@@ -83,6 +99,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val tttConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val kulchaFloCookieConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val liveLoadTimingBySession = LinkedHashMap<GeckoSession, LiveLoadTimingState>()
+    private val absTegoStartupReprobeBySession = LinkedHashMap<GeckoSession, AbsTegoStartupReprobeState>()
+    private val absTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -179,6 +197,17 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         return
                     }
                     val activeTab = tabController.getActiveTab()
+                    val activeSession = activeTab?.session
+                    val absPlayerFirstReturnUrl = activeSession?.let { absTegoPlayerFirstReturnUrlBySession[it] }
+                    if (!absPlayerFirstReturnUrl.isNullOrBlank()) {
+                        absTegoPlayerFirstReturnUrlBySession.remove(activeSession)
+                        GvLogger.i(
+                            "GvNav",
+                            "abs tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$absPlayerFirstReturnUrl"
+                        )
+                        activeSession.loadUri(absPlayerFirstReturnUrl)
+                        return
+                    }
                     val tabs = tabController.getTabs()
                     val activeHost = runCatching { android.net.Uri.parse(activeTab?.url ?: "").host?.lowercase().orEmpty() }.getOrDefault("")
                     val externalHost = activeHost.isNotBlank() && !activeHost.contains("kulchaflo.com")
@@ -393,6 +422,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             maybeDispatchCvmVimeoDiagnostic(session, url.orEmpty(), reason = "location-change")
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
+            if (!isAbsTegoChannel10ContextUrl(url.orEmpty())) {
+                absTegoPlayerFirstReturnUrlBySession.remove(session)
+            }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
         }
@@ -572,6 +604,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun onTabClosed(tab: GvTab) {
         loadRetryAttemptsBySession.remove(tab.session)
+        absTegoPlayerFirstReturnUrlBySession.remove(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
         syncPointerToActivePage("tab-closed")
@@ -5540,6 +5573,18 @@ return changed>0;
             val googleVideoScoped = isGoogleVideoSurfaceHost(uriHost) || isGoogleVideoSurfaceHost(thirdPartyHost)
             val activeSessionUrl = tabController.findTabBySession(session)?.url.orEmpty()
             val currentRootUrl = currentUrl
+            val absTopContext = isAbsTegoAutoplayContextUrl(activeSessionUrl) || isAbsTegoAutoplayContextUrl(currentRootUrl)
+            val absPermissionUri = isAbsTegoAutoplayContextUrl(permission.uri.orEmpty())
+            val absThirdPartyTego = isAbsTegoPlayerUrl(permission.thirdPartyOrigin.orEmpty())
+            val absAutoplayScoped = ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    absPermissionUri ||
+                        (absTopContext && absThirdPartyTego)
+                    )
             val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
             val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
             val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
@@ -5554,6 +5599,7 @@ return changed>0;
                         (cvmThirdPartyVimeo && cvmTopContext)
                     )
             val decision = when {
+                absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -5573,6 +5619,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "cvm vimeo autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (absAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "abs tego autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -5676,6 +5728,18 @@ return changed>0;
         pointerVisible = true
         schedulePointerIdleTimeout()
         GvLogger.i("GvInput", "pointer visible=true reason=ensure-visible restored=$hasStoredPosition x=${pointerX.toInt()} y=${pointerY.toInt()}")
+    }
+
+    private fun showPointerAt(x: Float, y: Float, reason: String) {
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val inset = pointerBoundsInsetPx()
+        pointerX = x.coerceIn(inset, maxWidth - inset)
+        pointerY = y.coerceIn(inset, maxHeight - inset)
+        pointerOverlay.showAt(pointerX, pointerY)
+        pointerVisible = true
+        schedulePointerIdleTimeout()
+        GvLogger.i("GvInput", "pointer visible=true reason=$reason x=${pointerX.toInt()} y=${pointerY.toInt()}")
     }
 
     private fun movePointerBy(deltaX: Float, deltaY: Float): PointerMoveResult {
@@ -5806,6 +5870,47 @@ return changed>0;
             reason = reason,
         )
         return handledDown || handledUp
+    }
+
+    private fun dispatchNativeMouseHoverAt(x: Float, y: Float, reason: String): Boolean {
+        val eventTime = SystemClock.uptimeMillis()
+        val properties = arrayOf(
+            MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_MOUSE
+            },
+        )
+        val coords = arrayOf(
+            MotionEvent.PointerCoords().apply {
+                this.x = x
+                this.y = y
+                pressure = 0f
+                size = 1f
+            },
+        )
+        val event = MotionEvent.obtain(
+            eventTime,
+            eventTime,
+            MotionEvent.ACTION_HOVER_MOVE,
+            1,
+            properties,
+            coords,
+            0,
+            0,
+            1f,
+            1f,
+            0,
+            0,
+            InputDevice.SOURCE_MOUSE,
+            0,
+        )
+        val handled = geckoView.dispatchGenericMotionEvent(event)
+        event.recycle()
+        GvLogger.i(
+            "GvInput",
+            "native pointer hover source=mouse reason=$reason x=${x.toInt()} y=${y.toInt()} handled=$handled"
+        )
+        return handled
     }
 
     private fun dispatchPointerMotionAt(
@@ -6228,6 +6333,8 @@ return changed>0;
                     "live load timing event=state-clear reason=non-live-url tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
                 )
             }
+            absTegoStartupReprobeBySession.remove(session)
+            absTegoPlayerFirstReturnUrlBySession.remove(session)
             return
         }
         val nowMs = SystemClock.elapsedRealtime()
@@ -6255,6 +6362,7 @@ return changed>0;
         }
         if (surface == null) {
             liveLoadTimingBySession.remove(session)
+            absTegoStartupReprobeBySession.remove(session)
             GvLogger.i(
                 "GvNav",
                 "live load timing event=state-clear reason=left-live-surface surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
@@ -6266,6 +6374,7 @@ return changed>0;
             state.tegoIframeLogged = true
             logLiveLoadTimingEvent(session, state, event = "tego-player-location", url = url)
         }
+        maybeStartAbsTegoStartupReprobe(session, state, url, trigger = "location-change")
     }
 
     private fun logLiveLoadTimingPageStop(session: GeckoSession, url: String, success: Boolean) {
@@ -6311,6 +6420,12 @@ return changed>0;
             state = liveLoadTimingBySession[session]
         }
         state ?: return
+        // Some ABS/Tego navigations show player.tegotv.com only via payload traces
+        // without a corresponding top-level onLocationChange callback in the active tab.
+        // Start the bounded startup reprobe from payload evidence only if absent to avoid churn.
+        if (absTegoStartupReprobeBySession[session] == null) {
+            maybeStartAbsTegoStartupReprobe(session, state, pageUrl, trigger = "payload")
+        }
         val type = payload.optString("type")
         if (isTegoPlayerUrl(pageUrl) && !state.tegoIframeLogged) {
             state.tegoIframeLogged = true
@@ -6355,7 +6470,529 @@ return changed>0;
                     extra = " source=tego-quality videos=${summarizeTegoVideosForTiming(videos)}"
                 )
             }
+            maybeUpdateAbsTegoStartupReprobeFromTegoQuality(session, state, payload, videos)
         }
+    }
+
+    private fun maybeStartAbsTegoStartupReprobe(
+        session: GeckoSession,
+        liveState: LiveLoadTimingState,
+        pageUrl: String,
+        trigger: String,
+    ) {
+        if (liveState.surface != "abs-live") {
+            return
+        }
+        if (!isAbsTegoChannel10PlayerUrl(pageUrl)) {
+            return
+        }
+        val nowMs = SystemClock.elapsedRealtime()
+        val current = absTegoStartupReprobeBySession[session]
+        if (current != null && current.rootUrl == liveState.rootUrl && !current.completed) {
+            return
+        }
+        val generation = (current?.generation ?: 0) + 1
+        val next = AbsTegoStartupReprobeState(
+            rootUrl = liveState.rootUrl,
+            startedAtMs = nowMs,
+            generation = generation,
+            latestPageUrl = pageUrl,
+        )
+        absTegoStartupReprobeBySession[session] = next
+        GvLogger.i(
+            "GvMedia",
+            "abs tego startup reprobe start generation=${next.generation} trigger=$trigger rootUrl=${next.rootUrl} pageUrl=$pageUrl"
+        )
+        ABS_TEGO_STARTUP_REPROBE_DELAYS_MS.forEach { delayMs ->
+            pointerHandler.postDelayed(
+                {
+                    if (isFinishing || isDestroyed) {
+                        return@postDelayed
+                    }
+                    val state = absTegoStartupReprobeBySession[session] ?: return@postDelayed
+                    if (state.generation != generation || state.completed) {
+                        return@postDelayed
+                    }
+                    val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+                    val onTarget = isAbsTegoChannel10PlayerUrl(activeUrl) || isAbsTegoChannel10ContextUrl(activeUrl)
+                    if (!onTarget) {
+                        state.completed = true
+                        state.completionReason = "url-left-abs-tego"
+                        GvLogger.i(
+                            "GvMedia",
+                            "abs tego startup reprobe stop generation=${state.generation} reason=${state.completionReason} activeUrl=$activeUrl"
+                        )
+                        return@postDelayed
+                    }
+                    if (!shouldContinueAbsTegoStartupReprobe(session, liveState, state)) {
+                        if (state.completionReason.isBlank()) {
+                            state.completionReason = resolveAbsTegoStartupReprobeCompletionReason(session, liveState, state)
+                        }
+                        state.completed = true
+                        GvLogger.i(
+                            "GvMedia",
+                            "abs tego startup reprobe stop generation=${state.generation} reason=${state.completionReason} " +
+                                "applied=${state.latestApplied} playable=${state.latestPlayable} missingHls=${state.latestMissingHlsLevels} " +
+                                "readyZeroPaused=${state.latestReadyZeroPaused} mediaSession=${browserMediaController.describeSessionState(session)} activeUrl=$activeUrl"
+                        )
+                        return@postDelayed
+                    }
+                    dispatchAbsTegoStartupReprobe(session, state, delayMs)
+                },
+                delayMs,
+            )
+        }
+    }
+
+    private fun shouldContinueAbsTegoStartupReprobe(
+        session: GeckoSession,
+        liveState: LiveLoadTimingState,
+        state: AbsTegoStartupReprobeState,
+    ): Boolean {
+        if (liveState.playableVideoLogged || state.latestPlaybackProgressed) {
+            return false
+        }
+        if (browserMediaController.describeSessionState(session).contains("active=true")) {
+            return false
+        }
+        return true
+    }
+
+    private fun resolveAbsTegoStartupReprobeCompletionReason(
+        session: GeckoSession,
+        liveState: LiveLoadTimingState,
+        state: AbsTegoStartupReprobeState,
+    ): String {
+        return when {
+            state.latestPlaybackProgressed -> "playback-progressed"
+            liveState.playableVideoLogged || state.latestPlayable -> "playable-video-detected"
+            browserMediaController.describeSessionState(session).contains("active=true") -> "media-session-active"
+            state.latestApplied && !state.latestMissingHlsLevels -> "quality-applied-waiting-playback"
+            !state.latestReadyZeroPaused -> "video-state-transition"
+            state.latestApplied -> "tego-quality-applied-pending-playback"
+            else -> "conditions-no-longer-match"
+        }
+    }
+
+    private fun maybeUpdateAbsTegoStartupReprobeFromTegoQuality(
+        session: GeckoSession,
+        liveState: LiveLoadTimingState,
+        payload: JSONObject,
+        videos: JSONArray,
+    ) {
+        if (liveState.surface != "abs-live") {
+            return
+        }
+        val pageUrl = payload.optString("pageUrl")
+        if (!isAbsTegoChannel10PlayerUrl(pageUrl)) {
+            return
+        }
+        val state = absTegoStartupReprobeBySession[session] ?: return
+        state.latestPageUrl = pageUrl
+        state.latestApplied = payload.optBoolean("applied")
+        state.latestPlayable = liveState.playableVideoLogged || hasPlayableTegoVideo(videos)
+        state.latestPlaybackProgressed = hasPlaybackProgressedTegoVideo(videos)
+        state.latestReadyZeroPaused = isReadyZeroPausedTegoVideos(videos)
+        state.latestMissingHlsLevels = isMissingTegoHlsLevels(payload.optJSONArray("results"))
+        if (!state.completed && !shouldContinueAbsTegoStartupReprobe(session, liveState, state)) {
+            state.completionReason = resolveAbsTegoStartupReprobeCompletionReason(session, liveState, state)
+            state.completed = true
+            GvLogger.i(
+                "GvMedia",
+                "abs tego startup reprobe stop generation=${state.generation} reason=${state.completionReason} " +
+                    "applied=${state.latestApplied} playable=${state.latestPlayable} playbackProgressed=${state.latestPlaybackProgressed} missingHls=${state.latestMissingHlsLevels} " +
+                    "readyZeroPaused=${state.latestReadyZeroPaused} mediaSession=${browserMediaController.describeSessionState(session)} pageUrl=$pageUrl"
+            )
+            maybeDispatchAbsTegoNativeFKey(session, state, trigger = "tego-quality-playback-progressed")
+        }
+    }
+
+    private fun maybeDispatchAbsTegoNativeFKey(
+        session: GeckoSession,
+        state: AbsTegoStartupReprobeState,
+        trigger: String,
+    ) {
+        if (!ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN) {
+            return
+        }
+        if (state.nativeFDispatched) {
+            return
+        }
+        if (!state.latestPlaybackProgressed) {
+            return
+        }
+        if (!isAbsTegoChannel10PlayerUrl(state.latestPageUrl)) {
+            return
+        }
+        val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+        if (activeUrl.isNotBlank() && !isAbsTegoChannel10ContextUrl(activeUrl)) {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego native f fullscreen skipped trigger=$trigger reason=active-url-mismatch activeUrl=$activeUrl playerUrl=${state.latestPageUrl}"
+            )
+            return
+        }
+        state.nativeFDispatched = true
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val eventTime = SystemClock.uptimeMillis()
+                val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F, 0)
+                val up = KeyEvent(eventTime, eventTime + 40L, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F, 0)
+                val downHandled = geckoView.dispatchKeyEvent(down)
+                val upHandled = geckoView.dispatchKeyEvent(up)
+                GvLogger.i(
+                    "GvMedia",
+                    "abs tego native f fullscreen dispatched trigger=$trigger downHandled=$downHandled upHandled=$upHandled activeUrl=$activeUrl playerUrl=${state.latestPageUrl}"
+                )
+            },
+            450L,
+        )
+    }
+
+    private fun maybeDispatchAbsTegoFullscreenControlNativeTap(
+        session: GeckoSession,
+        payload: JSONObject,
+    ) {
+        if (!ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK) {
+            return
+        }
+        val playerUrl = payload.optString("playerUrl").ifBlank { payload.optString("pageUrl") }
+        if (!isAbsTegoChannel10PlayerUrl(playerUrl)) {
+            return
+        }
+        if (!payload.optBoolean("translated", true)) {
+            return
+        }
+        val centerX = payload.optDouble("centerX", -1.0).toFloat()
+        val centerY = payload.optDouble("centerY", -1.0).toFloat()
+        if (centerX <= 0f || centerY <= 0f) {
+            return
+        }
+        val viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat()
+        val viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat()
+        val scaleX = if (viewportWidth > 0f && geckoView.width > 0) {
+            geckoView.width.toFloat() / viewportWidth
+        } else {
+            1f
+        }
+        val scaleY = if (viewportHeight > 0f && geckoView.height > 0) {
+            geckoView.height.toFloat() / viewportHeight
+        } else {
+            1f
+        }
+        val viewCenterX = centerX * scaleX
+        val viewCenterY = centerY * scaleY
+        val state = absTegoStartupReprobeBySession[session] ?: return
+        if (state.nativeFullscreenTapDispatched) {
+            return
+        }
+        if (!state.latestPlaybackProgressed) {
+            return
+        }
+        state.nativeFullscreenTapDispatched = true
+        val clampedX = viewCenterX.coerceIn(1f, (geckoView.width - 1).coerceAtLeast(1).toFloat())
+        val clampedY = viewCenterY.coerceIn(1f, (geckoView.height - 1).coerceAtLeast(1).toFloat())
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+                if (!isAbsTegoChannel10ContextUrl(activeUrl) && !isAbsTegoChannel10PlayerUrl(activeUrl)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "abs tego fullscreen native tap skipped reason=active-url-mismatch activeUrl=$activeUrl playerUrl=$playerUrl"
+                    )
+                    return@postDelayed
+                }
+                val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "abs-tego-fullscreen-control")
+                GvLogger.i(
+                    "GvMedia",
+                    "abs tego fullscreen native tap dispatched x=${clampedX.toInt()} y=${clampedY.toInt()} rawCenter=${centerX.toInt()},${centerY.toInt()} " +
+                        "viewport=${viewportWidth.toInt()}x${viewportHeight.toInt()} view=${geckoView.width}x${geckoView.height} scale=$scaleX,$scaleY " +
+                        "handled=$handled activeUrl=$activeUrl playerUrl=$playerUrl"
+                )
+            },
+            140L,
+        )
+    }
+
+    private fun maybeDispatchAbsTegoFullscreenControlNativeHover(
+        session: GeckoSession,
+        payload: JSONObject,
+    ) {
+        val playerUrl = payload.optString("playerUrl").ifBlank { payload.optString("pageUrl") }
+        if (!isAbsTegoChannel10PlayerUrl(playerUrl)) {
+            return
+        }
+        if (!payload.optBoolean("translated", true)) {
+            return
+        }
+        val centerX = payload.optDouble("centerX", -1.0).toFloat()
+        val centerY = payload.optDouble("centerY", -1.0).toFloat()
+        if (centerX <= 0f || centerY <= 0f) {
+            return
+        }
+        val state = absTegoStartupReprobeBySession[session] ?: return
+        if (!state.latestPlaybackProgressed) {
+            return
+        }
+        val viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat()
+        val viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat()
+        val scaleX = if (viewportWidth > 0f && geckoView.width > 0) {
+            geckoView.width.toFloat() / viewportWidth
+        } else {
+            1f
+        }
+        val scaleY = if (viewportHeight > 0f && geckoView.height > 0) {
+            geckoView.height.toFloat() / viewportHeight
+        } else {
+            1f
+        }
+        val clampedX = (centerX * scaleX).coerceIn(1f, (geckoView.width - 1).coerceAtLeast(1).toFloat())
+        val clampedY = (centerY * scaleY).coerceIn(1f, (geckoView.height - 1).coerceAtLeast(1).toFloat())
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+                if (!isAbsTegoChannel10ContextUrl(activeUrl) && !isAbsTegoChannel10PlayerUrl(activeUrl)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "abs tego fullscreen native hover skipped reason=active-url-mismatch activeUrl=$activeUrl playerUrl=$playerUrl"
+                    )
+                    return@postDelayed
+                }
+                showPointerAt(clampedX, clampedY, "abs-tego-fullscreen-reveal")
+                val handled = dispatchNativeMouseHoverAt(clampedX, clampedY, "abs-tego-fullscreen-reveal")
+                GvLogger.i(
+                    "GvMedia",
+                    "abs tego fullscreen native hover dispatched x=${clampedX.toInt()} y=${clampedY.toInt()} rawCenter=${centerX.toInt()},${centerY.toInt()} " +
+                        "viewport=${viewportWidth.toInt()}x${viewportHeight.toInt()} view=${geckoView.width}x${geckoView.height} scale=$scaleX,$scaleY " +
+                        "handled=$handled activeUrl=$activeUrl playerUrl=$playerUrl reason=${payload.optString("reason")}"
+                )
+            },
+            80L,
+        )
+    }
+
+    private fun dispatchAbsTegoStartupReprobe(
+        session: GeckoSession,
+        state: AbsTegoStartupReprobeState,
+        delayMs: Long,
+    ) {
+        val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+        val script = """
+            javascript:(function(){
+              try{
+                var href=(window.location&&window.location.href)||'';
+                var host=(window.location&&window.location.hostname||'').toLowerCase();
+                var path=(window.location&&window.location.pathname||'').toLowerCase();
+                if(host!=='player.tegotv.com'||path.indexOf('/player.php')!==0){return;}
+                var q=new URLSearchParams((window.location&&window.location.search)||'');
+                var channel=(q.get('channel')||'').trim();
+                if(channel && channel!=='10'){return;}
+                var num=function(v){var n=Number(v);return Number.isFinite(n)?n:0;};
+                var results=[];
+                try{
+                  var pageWindow=window.wrappedJSObject||window;
+                  var player=pageWindow.rmp;
+                  if(player&&typeof player.getHlsJSInstance==='function'){
+                    var hls=player.getHlsJSInstance();
+                    if(hls&&Array.isArray(hls.levels)&&hls.levels.length){
+                      var levels=hls.levels.map(function(level,index){
+                        return {index:index,height:num(level&&level.height),width:num(level&&level.width),bitrate:num(level&&(level.bitrate||level.maxBitrate||level.averageBitrate))};
+                      }).filter(function(level){return level.height>0||level.bitrate>0;});
+                      if(levels.length){
+                        var underCap=levels.filter(function(level){return level.height>0&&level.height<=720;});
+                        var pool=(underCap.length?underCap:levels).sort(function(a,b){
+                          if(b.height!==a.height){return b.height-a.height;}
+                          return b.bitrate-a.bitrate;
+                        });
+                        var best=pool[0];
+                        if(typeof hls.autoLevelCapping==='number'){hls.autoLevelCapping=best.index;}
+                        hls.startLevel=best.index;
+                        hls.nextLevel=best.index;
+                        hls.loadLevel=best.index;
+                        if(hls.currentLevel!==best.index){hls.currentLevel=best.index;}
+                        results.push({source:'radiant-hlsjs',applied:true,selectedHeight:best.height,selectedBitrate:best.bitrate,currentLevel:num(hls.currentLevel),loadLevel:num(hls.loadLevel),nextLevel:num(hls.nextLevel)});
+                      }else{
+                        results.push({source:'radiant-hlsjs',applied:false,reason:'no-selectable-hls-levels'});
+                      }
+                    }else{
+                      results.push({source:'radiant-hlsjs',applied:false,reason:'no-hls-levels'});
+                    }
+                  }
+                }catch(error){
+                  results.push({source:'radiant-hlsjs',applied:false,reason:(error&&error.message)||'error'});
+                }
+                var videos=Array.from(document.querySelectorAll('video')).slice(0,4).map(function(video,index){
+                  return {
+                    index:index,
+                    videoWidth:num(video.videoWidth),
+                    videoHeight:num(video.videoHeight),
+                    readyState:num(video.readyState),
+                    paused:!!video.paused,
+                    currentTime:num(video.currentTime)
+                  };
+                });
+                var hasPlayable=videos.some(function(video){
+                  return video.videoWidth>0&&video.videoHeight>0&&(video.readyState>=4||(video.readyState>=1&&!video.paused)||video.currentTime>0);
+                });
+                var readyZeroPaused=videos.length===0||videos.every(function(video){return video.readyState===0&&video.paused;});
+                var missingHls=results.some(function(result){return result&&result.source==='radiant-hlsjs'&&!result.applied&&String(result.reason||'').indexOf('no-hls-levels')>=0;});
+                var applied=results.some(function(result){return result&&!!result.applied;});
+                window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                  type:'tego-startup-reprobe',
+                  phase:'activity-tego-startup-reprobe',
+                  pageUrl:href,
+                  attemptAtMs:${delayMs},
+                  applied:applied,
+                  playable:hasPlayable,
+                  missingHlsLevels:missingHls,
+                  readyZeroPaused:readyZeroPaused,
+                  results:results,
+                  videos:videos
+                }),'');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+        GvLogger.i(
+            "GvMedia",
+            "abs tego startup reprobe dispatched generation=${state.generation} attemptAtMs=$delayMs activeUrl=$activeUrl"
+        )
+    }
+
+    private fun maybeDispatchAbsTegoGestureFullscreen(session: GeckoSession?, trigger: String): Boolean {
+        if (!ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY) {
+            return false
+        }
+        if (session == null) {
+            return false
+        }
+        val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+        if (!isAbsTegoGestureFullscreenContextUrl(activeUrl)) {
+            return false
+        }
+        val probeState = absTegoStartupReprobeBySession[session]
+        val playbackReady = probeState?.let { it.latestPlaybackProgressed || it.latestPlayable } ?: false
+        if (!playbackReady) {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego gesture fullscreen skipped trigger=$trigger reason=playback-not-ready activeUrl=$activeUrl"
+            )
+            return false
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var href=(window.location&&window.location.href)||'';
+                var host=(window.location&&window.location.hostname||'').toLowerCase();
+                var path=(window.location&&window.location.pathname||'').toLowerCase();
+                if(host!=='player.tegotv.com'||path.indexOf('/player.php')!==0){return;}
+                var q=new URLSearchParams((window.location&&window.location.search)||'');
+                var channel=(q.get('channel')||'').trim();
+                if(channel && channel!=='10'){return;}
+                var methods=[];
+                var requestedFullscreen=false;
+                var clickedFullscreen=false;
+                var errors=0;
+                var call=function(target,name,args){
+                  try{
+                    if(!target||typeof target[name]!=='function'){return false;}
+                    target[name].apply(target,args||[]);
+                    methods.push(name);
+                    return true;
+                  }catch(_){return false;}
+                };
+                var req=function(target,name){
+                  try{
+                    if(!target||typeof target[name]!=='function'){return false;}
+                    target[name]();
+                    methods.push(name);
+                    return true;
+                  }catch(_){return false;}
+                };
+                var isFullscreen=function(){
+                  try{
+                    return !!(document.fullscreenElement||document.webkitFullscreenElement||document.mozFullScreenElement||document.msFullscreenElement);
+                  }catch(_){return false;}
+                };
+                var summarize=function(node){
+                  try{
+                    if(!node){return 'none';}
+                    var tag=(node.tagName||'').toLowerCase();
+                    var id=node.id?('#'+node.id):'';
+                    var cls=(typeof node.className==='string'&&node.className.trim())?('.'+node.className.trim().replace(/\s+/g,'.')):'';
+                    return (tag+id+cls).slice(0,180);
+                  }catch(_){return 'none';}
+                };
+                try{
+                  var pageWindow=window.wrappedJSObject||window;
+                  var rmp=pageWindow&&pageWindow.rmp;
+                  if(rmp){
+                    if(call(rmp,'setFullscreen',[true])){requestedFullscreen=true;}
+                    if(call(rmp,'enterFullscreen',[])){requestedFullscreen=true;}
+                    if(call(rmp,'requestFullscreen',[])){requestedFullscreen=true;}
+                  }
+                  var fullscreenButton=Array.from(document.querySelectorAll("button,[role='button'],.rmp-fullscreen-button,.vjs-fullscreen-control,.jw-icon-fullscreen")).find(function(node){
+                    try{
+                      if(!node){return false;}
+                      var style=window.getComputedStyle(node);
+                      if(style&&(style.display==='none'||style.visibility==='hidden'||style.pointerEvents==='none'||style.opacity==='0')){return false;}
+                      var rect=node.getBoundingClientRect();
+                      if(rect.width<18||rect.height<18){return false;}
+                      var text=((node.innerText||node.textContent||'')+' '+(node.getAttribute('aria-label')||'')+' '+(node.getAttribute('title')||'')).toLowerCase();
+                      return text.indexOf('fullscreen')>=0||text.indexOf('full screen')>=0||text.indexOf('expand')>=0;
+                    }catch(_){return false;}
+                  });
+                  if(fullscreenButton){
+                    try{fullscreenButton.click();clickedFullscreen=true;methods.push('click-fullscreen-button');}catch(_){errors+=1;}
+                  }
+                  if(!requestedFullscreen){
+                    var video=document.querySelector('video');
+                    if(video){
+                      requestedFullscreen=req(video,'requestFullscreen')||req(video,'webkitRequestFullscreen')||req(video,'mozRequestFullScreen')||req(video,'msRequestFullscreen')||requestedFullscreen;
+                    }
+                  }
+                  if(!requestedFullscreen){
+                    var root=document.querySelector('.rmp-container,.rmp-content,.video-js,.jwplayer,#player,.player')||document.documentElement;
+                    if(root){
+                      requestedFullscreen=req(root,'requestFullscreen')||req(root,'webkitRequestFullscreen')||req(root,'mozRequestFullScreen')||req(root,'msRequestFullscreen')||requestedFullscreen;
+                    }
+                  }
+                }catch(_){errors+=1;}
+                window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                  type:'tego-startup-fullscreen',
+                  phase:'activity-tego-gesture-fullscreen',
+                  pageUrl:href,
+                  attemptAtMs:-1,
+                  playable:true,
+                  playbackProgressed:true,
+                  applied:true,
+                  clickedFullscreen:clickedFullscreen,
+                  requestedFullscreen:requestedFullscreen,
+                  fullscreenActive:isFullscreen(),
+                  fullscreenElement:summarize(document.fullscreenElement||document.webkitFullscreenElement||document.mozFullScreenElement||document.msFullscreenElement),
+                  fullscreenLikeApplied:false,
+                  fullscreenLikeTarget:'none',
+                  methods:methods,
+                  errors:errors
+                }),'');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+        GvLogger.i(
+            "GvMedia",
+            "abs tego gesture fullscreen dispatched trigger=$trigger activeUrl=$activeUrl"
+        )
+        return true
     }
 
     private fun logLiveLoadTimingEvent(
@@ -6405,6 +7042,24 @@ return changed>0;
         return false
     }
 
+    private fun hasPlaybackProgressedTegoVideo(videos: JSONArray): Boolean {
+        for (index in 0 until videos.length()) {
+            val video = videos.optJSONObject(index) ?: continue
+            val currentTime = video.optDouble("currentTime")
+            if (currentTime >= 1.0) {
+                return true
+            }
+            val readyState = video.optInt("readyState")
+            val videoWidth = video.optInt("videoWidth")
+            val videoHeight = video.optInt("videoHeight")
+            val paused = video.optBoolean("paused")
+            if (videoWidth > 0 && videoHeight > 0 && readyState >= 4 && !paused) {
+                return true
+            }
+        }
+        return false
+    }
+
     private fun summarizeTegoVideosForTiming(videos: JSONArray): String {
         return buildString {
             val limit = minOf(videos.length(), 3)
@@ -6418,6 +7073,44 @@ return changed>0;
                 append(":paused=").append(video.optBoolean("paused"))
             }
         }.ifBlank { "none" }
+    }
+
+    private fun isMissingTegoHlsLevels(results: JSONArray?): Boolean {
+        if (results == null || results.length() == 0) {
+            return true
+        }
+        var sawRadiant = false
+        for (index in 0 until results.length()) {
+            val result = results.optJSONObject(index) ?: continue
+            if (result.optString("source") != "radiant-hlsjs") {
+                continue
+            }
+            sawRadiant = true
+            if (result.optBoolean("applied")) {
+                return false
+            }
+            val reason = result.optString("reason")
+            if (reason.contains("no-hls-levels")) {
+                return true
+            }
+            if (reason.contains("no-selectable-hls-levels")) {
+                return true
+            }
+        }
+        return !sawRadiant
+    }
+
+    private fun isReadyZeroPausedTegoVideos(videos: JSONArray): Boolean {
+        if (videos.length() == 0) {
+            return true
+        }
+        for (index in 0 until videos.length()) {
+            val video = videos.optJSONObject(index) ?: continue
+            if (video.optInt("readyState") != 0 || !video.optBoolean("paused")) {
+                return false
+            }
+        }
+        return true
     }
 
     private fun handleExtensionPayload(
@@ -6615,6 +7308,395 @@ return changed>0;
                 "GvMedia",
                 "tego quality pageUrl=$pageUrl applied=${payload.optBoolean("applied")} playerCount=${payload.optInt("playerCount")} results=${resultSummary.ifBlank { "none" }} videos=${videoSummary.ifBlank { "none" }}"
             )
+            return
+        }
+        if (type == "tego-startup-reprobe") {
+            val results = payload.optJSONArray("results") ?: JSONArray()
+            val resultSummary = buildString {
+                val limit = minOf(results.length(), 3)
+                for (index in 0 until limit) {
+                    val result = results.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" | ")
+                    append(result.optString("source"))
+                    append(":applied=").append(result.optBoolean("applied"))
+                    val selected = result.optInt("selectedHeight")
+                    if (selected > 0) append(":selected=").append(selected)
+                    val reasonValue = result.optString("reason")
+                    if (reasonValue.isNotBlank()) append(":reason=").append(reasonValue)
+                }
+            }.ifBlank { "none" }
+            val videos = payload.optJSONArray("videos") ?: JSONArray()
+            val videoSummary = summarizeTegoVideosForTiming(videos)
+            GvLogger.i(
+                "GvMedia",
+                "abs tego startup reprobe result pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "applied=${payload.optBoolean("applied")} playable=${payload.optBoolean("playable")} playbackProgressed=${payload.optBoolean("playbackProgressed")} " +
+                    "missingHlsLevels=${payload.optBoolean("missingHlsLevels")} readyZeroPaused=${payload.optBoolean("readyZeroPaused")} " +
+                    "results=$resultSummary videos=$videoSummary"
+            )
+            val liveState = liveLoadTimingBySession[session]
+            val probeState = absTegoStartupReprobeBySession[session]
+            if (liveState != null && probeState != null && liveState.surface == "abs-live" && isAbsTegoChannel10PlayerUrl(pageUrl)) {
+                probeState.latestPageUrl = pageUrl
+                probeState.latestApplied = payload.optBoolean("applied")
+                probeState.latestPlayable = payload.optBoolean("playable") || liveState.playableVideoLogged
+                probeState.latestPlaybackProgressed = payload.optBoolean("playbackProgressed")
+                probeState.latestMissingHlsLevels = payload.optBoolean("missingHlsLevels")
+                probeState.latestReadyZeroPaused = payload.optBoolean("readyZeroPaused")
+                if (!probeState.completed && !shouldContinueAbsTegoStartupReprobe(session, liveState, probeState)) {
+                    probeState.completionReason = resolveAbsTegoStartupReprobeCompletionReason(session, liveState, probeState)
+                    probeState.completed = true
+                    GvLogger.i(
+                        "GvMedia",
+                        "abs tego startup reprobe stop generation=${probeState.generation} reason=${probeState.completionReason} " +
+                            "applied=${probeState.latestApplied} playable=${probeState.latestPlayable} playbackProgressed=${probeState.latestPlaybackProgressed} missingHls=${probeState.latestMissingHlsLevels} " +
+                            "readyZeroPaused=${probeState.latestReadyZeroPaused} mediaSession=${browserMediaController.describeSessionState(session)} pageUrl=$pageUrl"
+                    )
+                    maybeDispatchAbsTegoNativeFKey(session, probeState, trigger = "startup-reprobe-stop")
+                }
+            }
+            return
+        }
+        if (type == "tego-startup-wake") {
+            val methods = payload.optJSONArray("methods") ?: JSONArray()
+            val methodSummary = buildString {
+                val limit = minOf(methods.length(), 8)
+                for (index in 0 until limit) {
+                    if (isNotEmpty()) append("|")
+                    append(methods.optString(index))
+                }
+            }.ifBlank { "none" }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego startup wake pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "playCalls=${payload.optInt("playCalls")} clickedPlay=${payload.optBoolean("clickedPlay")} " +
+                    "wakeErrors=${payload.optInt("wakeErrors")} methods=$methodSummary"
+            )
+            return
+        }
+        if (type == "tego-startup-fullscreen") {
+            val methods = payload.optJSONArray("methods") ?: JSONArray()
+            val methodSummary = buildString {
+                val limit = minOf(methods.length(), 8)
+                for (index in 0 until limit) {
+                    if (isNotEmpty()) append("|")
+                    append(methods.optString(index))
+                }
+            }.ifBlank { "none" }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego startup fullscreen phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "playable=${payload.optBoolean("playable")} playbackProgressed=${payload.optBoolean("playbackProgressed")} applied=${payload.optBoolean("applied")} " +
+                    "clickedFullscreen=${payload.optBoolean("clickedFullscreen")} requestedFullscreen=${payload.optBoolean("requestedFullscreen")} " +
+                    "fullscreenActive=${payload.optBoolean("fullscreenActive")} fullscreenElement=${payload.optString("fullscreenElement")} " +
+                    "fullscreenLikeApplied=${payload.optBoolean("fullscreenLikeApplied")} fullscreenLikeTarget=${payload.optString("fullscreenLikeTarget")} " +
+                    "errors=${payload.optInt("errors")} methods=$methodSummary"
+            )
+            return
+        }
+        if (type == "abs-tego-fullscreen-control-click") {
+            val methods = payload.optJSONArray("methods") ?: JSONArray()
+            val methodSummary = buildString {
+                val limit = minOf(methods.length(), 10)
+                for (index in 0 until limit) {
+                    if (isNotEmpty()) append("|")
+                    append(methods.optString(index))
+                }
+            }.ifBlank { "none" }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego fullscreen control click phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "found=${payload.optBoolean("found")} controlSummary=${payload.optString("controlSummary")} rect=${payload.optString("rect")} " +
+                    "center=${payload.optInt("centerX")},${payload.optInt("centerY")} " +
+                    "clicked=${payload.optBoolean("clicked")} fullscreenBefore=${payload.optBoolean("fullscreenActiveBefore")} " +
+                    "fullscreenAfter=${payload.optBoolean("fullscreenActiveAfter")} fullscreenElementAfter=${payload.optString("fullscreenElementAfter")} " +
+                    "errors=${payload.optInt("errors")} methods=$methodSummary"
+            )
+            return
+        }
+        if (type == "abs-tego-fullscreen-preflight") {
+            val style = payload.optJSONObject("buttonStyle")
+            val userActivation = payload.optJSONObject("userActivation")
+            GvLogger.i(
+                "GvMedia",
+                "abs tego fullscreen preflight path=${payload.optString("path")} phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "focus=${payload.optBoolean("documentHasFocus")} active=${payload.optString("activeElement")} " +
+                    "button=${payload.optString("buttonSummary")} rect=${payload.optString("buttonRect")} " +
+                    "style=display:${style?.optString("display")} visibility:${style?.optString("visibility")} opacity:${style?.optString("opacity")} pointer:${style?.optString("pointerEvents")} z:${style?.optString("zIndex")} " +
+                    "point=${payload.optString("elementFromPoint")} pointMatches=${payload.optBoolean("elementFromPointMatchesButton")} " +
+                    "containerClass=${payload.optString("containerClassList")} controlBarVisible=${payload.optBoolean("controlBarVisible")} " +
+                    "fullscreen=${payload.optBoolean("fullscreenActive")} fullscreenElement=${payload.optString("fullscreenElement")} " +
+                    "userActivation=isActive:${userActivation?.optBoolean("isActive")} hasBeenActive:${userActivation?.optBoolean("hasBeenActive")} available:${userActivation?.optBoolean("available")}"
+            )
+            return
+        }
+        if (type == "abs-tego-fullscreen-button-event") {
+            val userActivation = payload.optJSONObject("userActivation")
+            GvLogger.i(
+                "GvMedia",
+                "abs tego fullscreen button event path=${payload.optString("path")} event=${payload.optString("eventType")} trusted=${payload.optBoolean("isTrusted")} pageUrl=$pageUrl " +
+                    "target=${payload.optString("target")} currentTarget=${payload.optString("currentTarget")} active=${payload.optString("activeElement")} " +
+                    "button=${payload.optString("buttonSummary")} rect=${payload.optString("buttonRect")} center=${payload.optInt("buttonCenterX")},${payload.optInt("buttonCenterY")} " +
+                    "fullscreen=${payload.optBoolean("fullscreenActive")} fullscreenElement=${payload.optString("fullscreenElement")} " +
+                    "userActivation=isActive:${userActivation?.optBoolean("isActive")} hasBeenActive:${userActivation?.optBoolean("hasBeenActive")}"
+            )
+            return
+        }
+        if (type == "abs-tego-fullscreen-transition") {
+            val userActivation = payload.optJSONObject("userActivation")
+            val marker = if (payload.optString("path") == "manual") {
+                "abs tego fullscreen manual transition"
+            } else {
+                "abs tego fullscreen automated transition"
+            }
+            GvLogger.i(
+                "GvMedia",
+                "$marker trigger=${payload.optString("trigger")} phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "focus=${payload.optBoolean("documentHasFocus")} active=${payload.optString("activeElement")} " +
+                    "fullscreen=${payload.optBoolean("fullscreenActive")} fullscreenElement=${payload.optString("fullscreenElement")} " +
+                    "userActivation=isActive:${userActivation?.optBoolean("isActive")} hasBeenActive:${userActivation?.optBoolean("hasBeenActive")}"
+            )
+            return
+        }
+        if (type == "abs-tego-fullscreen-gate-skip") {
+            val style = payload.optJSONObject("buttonStyle")
+            GvLogger.i(
+                "GvMedia",
+                "abs tego fullscreen gate skip phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "reason=${payload.optString("reason")} controlSummary=${payload.optString("controlSummary")} rect=${payload.optString("rect")} " +
+                    "center=${payload.optInt("centerX")},${payload.optInt("centerY")} controlBarVisible=${payload.optBoolean("controlBarVisible")} " +
+                    "style=display:${style?.optString("display")} visibility:${style?.optString("visibility")} pointer:${style?.optString("pointerEvents")} opacity:${style?.optString("opacity")} z:${style?.optString("zIndex")} " +
+                    "point=${payload.optString("elementFromPoint")} pointMatches=${payload.optBoolean("pointMatches")} " +
+                    "playbackProgressed=${payload.optBoolean("playbackProgressed")} stableVideo=${payload.optBoolean("stableVideo")} containerClass=${payload.optString("containerClassList")}"
+            )
+            return
+        }
+        if (type == "abs-tego-fullscreen-native-request") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego fullscreen native request phase=${payload.optString("phase")} pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} " +
+                    "attemptAtMs=${payload.optLong("attemptAtMs")} translated=${payload.optBoolean("translated")} reason=${payload.optString("reason")} " +
+                    "iframeRect=${payload.optString("iframeRect")} controlRect=${payload.optString("controlRect")} " +
+                    "frameCenter=${payload.optInt("frameCenterX")},${payload.optInt("frameCenterY")} center=${payload.optInt("centerX")},${payload.optInt("centerY")} " +
+                    "viewport=${payload.optInt("viewportWidth")}x${payload.optInt("viewportHeight")} dpr=${payload.optDouble("devicePixelRatio")} " +
+                    "controlSummary=${payload.optString("controlSummary")}"
+            )
+            maybeDispatchAbsTegoFullscreenControlNativeTap(session, payload)
+            return
+        }
+        if (type == "abs-tego-fullscreen-native-hover") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego fullscreen native hover request phase=${payload.optString("phase")} pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} " +
+                    "attemptAtMs=${payload.optLong("attemptAtMs")} translated=${payload.optBoolean("translated")} reason=${payload.optString("reason")} " +
+                    "iframeRect=${payload.optString("iframeRect")} controlRect=${payload.optString("controlRect")} " +
+                    "frameCenter=${payload.optInt("frameCenterX")},${payload.optInt("frameCenterY")} center=${payload.optInt("centerX")},${payload.optInt("centerY")} " +
+                    "viewport=${payload.optInt("viewportWidth")}x${payload.optInt("viewportHeight")} dpr=${payload.optDouble("devicePixelRatio")} " +
+                    "controlSummary=${payload.optString("controlSummary")}"
+            )
+            maybeDispatchAbsTegoFullscreenControlNativeHover(session, payload)
+            return
+        }
+        if (type == "abs-tego-control-candidates") {
+            val items = payload.optJSONArray("items") ?: JSONArray()
+            val summary = buildString {
+                val limit = minOf(items.length(), 18)
+                for (index in 0 until limit) {
+                    val item = items.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" || ")
+                    append("#").append(index + 1)
+                    append(" tag=").append(item.optString("tag"))
+                    val className = item.optString("className").replace(Regex("\\s+"), ".")
+                    if (className.isNotBlank()) append(" class=").append(className.take(80))
+                    val aria = item.optString("ariaLabel")
+                    if (aria.isNotBlank()) append(" aria=").append(aria.take(60))
+                    val title = item.optString("title")
+                    if (title.isNotBlank()) append(" title=").append(title.take(60))
+                    val text = item.optString("text")
+                    if (text.isNotBlank()) append(" text=").append(text.take(80))
+                    val rect = item.optJSONObject("rect")
+                    val rectText = if (rect != null) {
+                        "${rect.optInt("left")},${rect.optInt("top")} ${rect.optInt("width")}x${rect.optInt("height")}"
+                    } else {
+                        "0,0 0x0"
+                    }
+                    append(" rect=").append(rectText)
+                    append(" visible=").append(item.optBoolean("visible"))
+                    val pointer = item.optString("pointerEvents")
+                    if (pointer.isNotBlank()) append(" pointerEvents=").append(pointer)
+                }
+            }.ifBlank { "none" }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego control candidates count=${payload.optInt("count", items.length())} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} items=$summary"
+            )
+            return
+        }
+        if (type == "abs-tego-page-fullscreen-like") {
+            if (payload.optBoolean("applied") && isAbsTegoChannel10ContextUrl(pageUrl)) {
+                absTegoPlayerFirstReturnUrlBySession[session] = ABS_TEGO_RETURN_URL
+                GvLogger.i(
+                    "GvMedia",
+                    "abs tego player-first active pageUrl=$pageUrl reason=abs-top-iframe-promoted returnUrl=$ABS_TEGO_RETURN_URL"
+                )
+            }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego page fullscreen-like phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "applied=${payload.optBoolean("applied")} reason=${payload.optString("reason")} " +
+                    "iframeRect=${payload.optString("iframeRect")} iframe=${payload.optString("iframeSummary")}"
+            )
+            return
+        }
+        if (type == "abs-tego-url-sanitized") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego url sanitized context=${payload.optString("context")} pageUrl=$pageUrl before=${payload.optString("beforeUrl")} after=${payload.optString("afterUrl")}"
+            )
+            return
+        }
+        if (type == "abs-tego-page-overlay-cleanup") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego page overlay cleanup phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "hiddenCount=${payload.optInt("hiddenCount")} iframeRect=${payload.optString("iframeRect")} " +
+                    "hiddenSummary=${payload.optString("hiddenSummary")} hiddenRects=${payload.optString("hiddenRects")} hiddenZ=${payload.optString("hiddenZ")}"
+            )
+            return
+        }
+        if (type == "abs-tego-page-content-cleanup") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego page content cleanup phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "hiddenCount=${payload.optInt("hiddenCount")} shellApplied=${payload.optBoolean("shellApplied")} " +
+                    "iframeRect=${payload.optString("iframeRect")} finalIframeRect=${payload.optString("finalIframeRect")} " +
+                    "pathSummary=${payload.optString("pathSummary")} prunedChildrenSummary=${payload.optString("prunedChildrenSummary")} " +
+                    "hiddenSummary=${payload.optString("hiddenSummary")}"
+            )
+            return
+        }
+        if (type == "abs-tego-frame-overlay-cleanup") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego frame overlay cleanup phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "hiddenCount=${payload.optInt("hiddenCount")} stableVideo=${payload.optBoolean("stableVideo")} videoRect=${payload.optString("videoRect")} " +
+                    "hiddenSummary=${payload.optString("hiddenSummary")} hiddenRects=${payload.optString("hiddenRects")}"
+            )
+            return
+        }
+        if (type == "abs-tego-frame-overlay-snapshot") {
+            val items = payload.optJSONArray("items") ?: JSONArray()
+            val summary = buildString {
+                val limit = minOf(items.length(), 14)
+                for (index in 0 until limit) {
+                    val item = items.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" || ")
+                    append("#").append(index + 1)
+                    append(" node=").append(item.optString("node"))
+                    append(" rect=").append(item.optString("rect"))
+                    val z = item.optString("z")
+                    if (z.isNotBlank()) append(" z=").append(z)
+                    val pointer = item.optString("pointer")
+                    if (pointer.isNotBlank()) append(" pointer=").append(pointer)
+                    val opacity = item.optString("opacity")
+                    if (opacity.isNotBlank()) append(" opacity=").append(opacity)
+                }
+            }.ifBlank { "none" }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego frame overlay snapshot phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "videoRect=${payload.optString("videoRect")} itemCount=${payload.optInt("itemCount", items.length())} items=$summary"
+            )
+            return
+        }
+        if (type == "abs-tego-post-stable-layer-dump") {
+            val viewport = payload.optJSONObject("viewport")
+            val samples = payload.optJSONArray("samples") ?: JSONArray()
+            val overlaps = payload.optJSONArray("overlaps") ?: JSONArray()
+            val sampleSummary = buildString {
+                val limit = minOf(samples.length(), 7)
+                for (index in 0 until limit) {
+                    val item = samples.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" || ")
+                    val element = item.optJSONObject("element")
+                    append(item.optString("label"))
+                    append("@").append(item.optInt("x")).append(",").append(item.optInt("y"))
+                    append(" node=").append(element?.optString("summary").orEmpty())
+                    append(" rect=")
+                    val rect = element?.optJSONObject("rect")
+                    if (rect != null) {
+                        append(rect.optInt("left")).append(",").append(rect.optInt("top"))
+                            .append(" ").append(rect.optInt("width")).append("x").append(rect.optInt("height"))
+                    } else {
+                        append("0,0 0x0")
+                    }
+                    val z = element?.optString("zIndex").orEmpty()
+                    if (z.isNotBlank()) append(" z=").append(z)
+                    val pointer = element?.optString("pointerEvents").orEmpty()
+                    if (pointer.isNotBlank()) append(" pointer=").append(pointer)
+                    val text = element?.optString("text").orEmpty()
+                    if (text.isNotBlank()) append(" text=").append(text.take(60))
+                    val chain = item.optJSONArray("parentChain") ?: JSONArray()
+                    if (chain.length() > 0) {
+                        append(" chain=")
+                        val chainLimit = minOf(chain.length(), 3)
+                        for (c in 0 until chainLimit) {
+                            val p = chain.optJSONObject(c) ?: continue
+                            if (c > 0) append(">")
+                            append(p.optString("summary"))
+                        }
+                    }
+                }
+            }.ifBlank { "none" }
+            val overlapSummary = buildString {
+                val limit = minOf(overlaps.length(), 12)
+                for (index in 0 until limit) {
+                    val item = overlaps.optJSONObject(index) ?: continue
+                    if (isNotEmpty()) append(" || ")
+                    append("#").append(index + 1)
+                    append(" ").append(item.optString("summary"))
+                    val rect = item.optJSONObject("rect")
+                    append(" rect=")
+                    if (rect != null) {
+                        append(rect.optInt("left")).append(",").append(rect.optInt("top"))
+                            .append(" ").append(rect.optInt("width")).append("x").append(rect.optInt("height"))
+                    } else {
+                        append("0,0 0x0")
+                    }
+                    val z = item.optString("zIndex")
+                    if (z.isNotBlank()) append(" z=").append(z)
+                    val pos = item.optString("position")
+                    if (pos.isNotBlank()) append(" pos=").append(pos)
+                    val pointer = item.optString("pointerEvents")
+                    if (pointer.isNotBlank()) append(" pointer=").append(pointer)
+                    val text = item.optString("text")
+                    if (text.isNotBlank()) append(" text=").append(text.take(56))
+                }
+            }.ifBlank { "none" }
+            GvLogger.i(
+                "GvMedia",
+                "abs tego post stable layer dump phase=${payload.optString("phase")} pageUrl=$pageUrl reason=${payload.optString("reason")} " +
+                    "viewport=${viewport?.optInt("width")}x${viewport?.optInt("height")} videoRect=${payload.optJSONObject("videoRect")} " +
+                    "sampleCount=${payload.optInt("sampleCount", samples.length())} samples=$sampleSummary " +
+                    "overlapCount=${payload.optInt("overlapCount", overlaps.length())} overlaps=$overlapSummary"
+            )
+            return
+        }
+        if (type == "abs-tego-chrome-autohide") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego chrome autohide phase=${payload.optString("phase")} pageUrl=$pageUrl event=${payload.optString("event")} hidden=${payload.optBoolean("hidden")} reason=${payload.optString("reason")}"
+            )
+            return
+        }
+        if (type == "abs-tego-player-first-active") {
+            if (payload.optBoolean("applied") && isAbsTegoChannel10ContextUrl(pageUrl)) {
+                absTegoPlayerFirstReturnUrlBySession[session] = ABS_TEGO_RETURN_URL
+                GvLogger.i(
+                    "GvMedia",
+                    "abs tego player-first active pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} reason=${payload.optString("reason")} returnUrl=$ABS_TEGO_RETURN_URL"
+                )
+            }
             return
         }
         if (type == "facebook-overlay-diagnostics") {
@@ -6847,6 +7929,12 @@ return changed>0;
         private const val TTT_CONSENT_AUTOCLICK_ENABLED = true
         private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = false
         private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
+        private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
+        private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
+        private val ABS_TEGO_STARTUP_REPROBE_DELAYS_MS = longArrayOf(2_000L, 5_000L, 9_000L, 14_000L)
+        private const val ABS_TEGO_RETURN_URL = "https://kulchaflo.com/channels/abs-tv-antigua/"
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -7047,6 +8135,88 @@ return changed>0;
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return host == "player.tegotv.com" || path.contains("/player.php")
+    }
+
+    private fun isAbsTegoAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "kulchaflo.com" && path.startsWith("/channels/abs-tv-antigua")) {
+            return true
+        }
+        if (host == "abstvradio.com" && path.contains("/live-streaming")) {
+            return true
+        }
+        if (host == "player.tegotv.com" && path.contains("/player.php")) {
+            val channel = uri.getQueryParameter("channel")?.trim().orEmpty()
+            if (channel.isBlank() || channel == "10") {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isAbsTegoPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "player.tegotv.com"
+    }
+
+    private fun isAbsTegoChannel10ContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "kulchaflo.com" && path.startsWith("/channels/abs-tv-antigua")) {
+            return true
+        }
+        if (host == "abstvradio.com" && path.contains("/live-streaming")) {
+            return true
+        }
+        return isAbsTegoChannel10PlayerUrl(url)
+    }
+
+    private fun isAbsTegoGestureFullscreenContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "abstvradio.com" && path.contains("/live-streaming")) {
+            return true
+        }
+        return isAbsTegoChannel10PlayerUrl(url)
+    }
+
+    private fun isAbsTegoChannel10PlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "player.tegotv.com") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (!path.contains("/player.php")) {
+            return false
+        }
+        val channel = uri.getQueryParameter("channel")?.trim().orEmpty()
+        return channel.isBlank() || channel == "10"
     }
 
     private fun isCvmVimeoDiagnosticUrl(url: String): Boolean {
