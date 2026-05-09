@@ -67,6 +67,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var nativeFullscreenTapDispatched: Boolean = false,
     )
 
+    private data class TttTegoPlayAssistState(
+        var active: Boolean = false,
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var reason: String = "",
+    )
+
     private lateinit var geckoView: GeckoView
     private lateinit var pointerOverlay: PointerOverlayView
     private lateinit var loadingOverlay: View
@@ -101,6 +108,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val liveLoadTimingBySession = LinkedHashMap<GeckoSession, LiveLoadTimingState>()
     private val absTegoStartupReprobeBySession = LinkedHashMap<GeckoSession, AbsTegoStartupReprobeState>()
     private val absTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val tttTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val tttTegoPlayAssistBySession = LinkedHashMap<GeckoSession, TttTegoPlayAssistState>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -117,6 +126,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var lastBackToHomeAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
     private var lastDpadDocumentScrollFallbackMs = 0L
+    private var lastKulchaFloRailHoverScrollMs = 0L
 
     private val pointerIdleRunnable = Runnable {
         if (!pointerDirectionKeys.isEmpty()) {
@@ -143,6 +153,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 deltaX = delta.first * POINTER_MOVE_STEP_PX * multiplier,
                 deltaY = delta.second * POINTER_MOVE_STEP_PX * multiplier,
             )
+            if (maybeDispatchKulchaFloHomepageRailHoverScroll(currentHorizontalDpadKey(), move.overshootX, reason = "repeat")) {
+                pointerHandler.postDelayed(this, POINTER_REPEAT_FRAME_MS)
+                return
+            }
             maybeScrollContent(move.overshootX, move.overshootY, "repeat")
             maybeDispatchDpadDocumentScrollFallback(
                 keyCode = currentVerticalDpadKey(),
@@ -199,13 +213,25 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     val activeTab = tabController.getActiveTab()
                     val activeSession = activeTab?.session
                     val absPlayerFirstReturnUrl = activeSession?.let { absTegoPlayerFirstReturnUrlBySession[it] }
+                    val tttPlayerFirstReturnUrl = activeSession?.let { tttTegoPlayerFirstReturnUrlBySession[it] }
                     if (!absPlayerFirstReturnUrl.isNullOrBlank()) {
                         absTegoPlayerFirstReturnUrlBySession.remove(activeSession)
+                        tttTegoPlayAssistBySession.remove(activeSession)
                         GvLogger.i(
                             "GvNav",
                             "abs tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$absPlayerFirstReturnUrl"
                         )
                         activeSession.loadUri(absPlayerFirstReturnUrl)
+                        return
+                    }
+                    if (!tttPlayerFirstReturnUrl.isNullOrBlank()) {
+                        tttTegoPlayerFirstReturnUrlBySession.remove(activeSession)
+                        tttTegoPlayAssistBySession.remove(activeSession)
+                        GvLogger.i(
+                            "GvNav",
+                            "ttt tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$tttPlayerFirstReturnUrl"
+                        )
+                        activeSession.loadUri(tttPlayerFirstReturnUrl)
                         return
                     }
                     val tabs = tabController.getTabs()
@@ -284,6 +310,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
+        if (maybeHandleTttTegoPlayAssistOk(event)) {
+            return true
+        }
         if (handleTabsOverlayInput(event)) {
             return true
         }
@@ -298,6 +327,30 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun maybeHandleTttTegoPlayAssistOk(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val session = activeTab.session
+        val state = tttTegoPlayAssistBySession[session] ?: return false
+        if (!state.active) return false
+        if (!isTttTegoContextUrl(activeTab.url)) return false
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        val x = state.centerX.takeIf { it >= 0f } ?: (geckoView.width * 0.5f)
+        val y = state.centerY.takeIf { it >= 0f } ?: (geckoView.height * 0.5f)
+        showPointerAt(x, y, reason = "ttt-play-assist")
+        val handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
+        GvLogger.i(
+            "GvMedia",
+            "ttt tego play assist ok dispatched handled=$handled x=${x.toInt()} y=${y.toInt()} reason=${state.reason} pageUrl=${activeTab.url}"
+        )
+        return true
     }
 
     override fun onDestroy() {
@@ -424,6 +477,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
             if (!isAbsTegoChannel10ContextUrl(url.orEmpty())) {
                 absTegoPlayerFirstReturnUrlBySession.remove(session)
+                tttTegoPlayerFirstReturnUrlBySession.remove(session)
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -605,6 +659,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     override fun onTabClosed(tab: GvTab) {
         loadRetryAttemptsBySession.remove(tab.session)
         absTegoPlayerFirstReturnUrlBySession.remove(tab.session)
+        tttTegoPlayerFirstReturnUrlBySession.remove(tab.session)
+        tttTegoPlayAssistBySession.remove(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
         syncPointerToActivePage("tab-closed")
@@ -5278,38 +5334,188 @@ return changed>0;
                   }catch(_){}
                   return null;
                 };
+                var classIdOf=function(node){
+                  try{
+                    return lower(((node.id||'')+' '+(node.className||'')+' '+((node.getAttribute&&node.getAttribute('data-cookiebanner'))||'')));
+                  }catch(_){return '';}
+                };
                 var hasCookieContext=function(blob){
                   return blob.indexOf('cookieadmin')>=0 ||
+                    blob.indexOf('cookie admin')>=0 ||
                     blob.indexOf('powered by cookieadmin')>=0 ||
-                    (blob.indexOf('we respect your privacy')>=0&&blob.indexOf('cookies help us improve your experience')>=0) ||
-                    (blob.indexOf('accept all')>=0&&blob.indexOf('reject all')>=0&&
-                      (blob.indexOf('customize')>=0||blob.indexOf('customise')>=0||blob.indexOf('cookies')>=0));
+                    blob.indexOf('cookie consent')>=0 ||
+                    blob.indexOf('cookie notice')>=0 ||
+                    blob.indexOf('cookie policy')>=0 ||
+                    blob.indexOf('privacy policy')>=0 ||
+                    blob.indexOf('we value your privacy')>=0 ||
+                    blob.indexOf('we respect your privacy')>=0 ||
+                    blob.indexOf('cookies help us')>=0 ||
+                    blob.indexOf('uses cookies')>=0 ||
+                    blob.indexOf('use cookies')>=0 ||
+                    blob.indexOf('our cookies')>=0 ||
+                    blob.indexOf('cookies on this')>=0 ||
+                    (blob.indexOf('accept')>=0&&blob.indexOf('cookie')>=0) ||
+                    (blob.indexOf('consent')>=0&&blob.indexOf('privacy')>=0);
                 };
-                var findPanelFor=function(button){
-                  var cur=button;
-                  for(var depth=0;cur&&depth<12;depth++){
-                    if(visible(cur)&&!(cur.querySelector&&cur.querySelector('video,source,canvas,iframe'))){
-                      var blob=textOf(cur);
-                      if(hasCookieContext(blob)){return cur;}
+                var isBadAction=function(label){
+                  return label.indexOf('reject')>=0 ||
+                    label.indexOf('decline')>=0 ||
+                    label.indexOf('deny')>=0 ||
+                    label.indexOf('customize')>=0 ||
+                    label.indexOf('customise')>=0 ||
+                    label.indexOf('manage')>=0 ||
+                    label.indexOf('settings')>=0 ||
+                    label.indexOf('preference')>=0 ||
+                    label.indexOf('essential')>=0 ||
+                    label.indexOf('necessary')>=0 ||
+                    label.indexOf('login')>=0 ||
+                    label.indexOf('log in')>=0 ||
+                    label.indexOf('sign up')>=0;
+                };
+                var actionScore=function(button){
+                  var label=textOf(button);
+                  if(!label||isBadAction(label)){return -1;}
+                  if(label==='accept all cookies'||label==='allow all cookies'){return 100;}
+                  if(label==='accept all'||label==='allow all'){return 95;}
+                  if(label.indexOf('accept all')>=0||label.indexOf('allow all')>=0){return 90;}
+                  if(label==='i agree'||label==='agree'){return 82;}
+                  if(label==='consent'||label.indexOf('give consent')>=0){return 80;}
+                  if(label==='accept'||label.indexOf('accept cookies')>=0){return 78;}
+                  if(label==='got it'||label==='ok'||label==='okay'){return 60;}
+                  if(label.indexOf('continue')>=0&&label.indexOf('cookie')>=0){return 45;}
+                  return -1;
+                };
+                var buttonSelector='button,[role="button"],input[type="button"],input[type="submit"],a[href],[tabindex]';
+                var findBestButtonInside=function(panel){
+                  var best=null;
+                  var bestScore=-1;
+                  var nodes=[];
+                  try{nodes=Array.from(panel.querySelectorAll(buttonSelector)).slice(0,160);}catch(_){nodes=[];}
+                  for(var i=0;i<nodes.length;i++){
+                    var node=nodes[i];
+                    if(!visible(node)){continue;}
+                    var score=actionScore(node);
+                    if(score>bestScore){
+                      best=node;
+                      bestScore=score;
                     }
-                    cur=parentOf(cur);
                   }
-                  return null;
+                  return bestScore>=0?best:null;
                 };
-                var buttons=collectNodes('button,[role="button"],input[type="button"],input[type="submit"]',1200);
+                var panelScore=function(node){
+                  if(!visible(node)){return -1;}
+                  if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return -1;}
+                  var blob=textOf(node);
+                  var meta=classIdOf(node);
+                  var context=hasCookieContext(blob)||hasCookieContext(meta)||meta.indexOf('cookie')>=0||meta.indexOf('consent')>=0||meta.indexOf('privacy')>=0||meta.indexOf('gdpr')>=0;
+                  if(!context){return -1;}
+                  var button=findBestButtonInside(node);
+                  if(!button){return -1;}
+                  var r=node.getBoundingClientRect();
+                  var style=window.getComputedStyle(node);
+                  var score=actionScore(button);
+                  if(style&&(style.position==='fixed'||style.position==='sticky')){score+=20;}
+                  if(r.width>Math.min(420,window.innerWidth*0.35)&&r.height>80){score+=8;}
+                  if(r.bottom>window.innerHeight*0.45){score+=4;}
+                  if(meta.indexOf('cookieadmin')>=0||meta.indexOf('cookie')>=0||meta.indexOf('consent')>=0){score+=10;}
+                  return score;
+                };
+                var panels=collectNodes('[role="dialog"],[aria-modal="true"],section,aside,form,div,[class*="cookie"],[id*="cookie"],[class*="consent"],[id*="consent"],[class*="privacy"],[id*="privacy"],[class*="gdpr"],[id*="gdpr"],[class*="notice"],[id*="notice"],[class*="banner"],[id*="banner"]',1200);
                 var bestButton=null;
                 var bestPanel=null;
-                for(var j=0;j<buttons.length;j++){
-                  var button=buttons[j];
-                  if(!visible(button)){continue;}
-                  var label=textOf(button);
-                  if(!(label==='accept all'||label.indexOf('accept all')>=0)){continue;}
-                  if(label.indexOf('reject')>=0||label.indexOf('customize')>=0||label.indexOf('customise')>=0){continue;}
-                  var panel=findPanelFor(button);
-                  if(panel){
-                    bestButton=button;
+                var bestScore=-1;
+                for(var p=0;p<panels.length;p++){
+                  var panel=panels[p];
+                  var score=panelScore(panel);
+                  if(score>bestScore){
+                    bestScore=score;
                     bestPanel=panel;
-                    break;
+                    bestButton=findBestButtonInside(panel);
+                  }
+                }
+                if(!bestPanel){
+                  var buttons=collectNodes(buttonSelector,1200);
+                  for(var j=0;j<buttons.length;j++){
+                    var button=buttons[j];
+                    if(!visible(button)||actionScore(button)<0){continue;}
+                    var cur=button;
+                    for(var depth=0;cur&&depth<12;depth++){
+                      if(visible(cur)&&!(cur.querySelector&&cur.querySelector('video,source,canvas,iframe'))){
+                        var blob=textOf(cur)+' '+classIdOf(cur);
+                        if(hasCookieContext(blob)||blob.indexOf('cookie')>=0||blob.indexOf('consent')>=0||blob.indexOf('privacy')>=0||blob.indexOf('gdpr')>=0){
+                          bestButton=button;
+                          bestPanel=cur;
+                          break;
+                        }
+                      }
+                      cur=parentOf(cur);
+                    }
+                    if(bestPanel){break;}
+                  }
+                }
+                if(!bestPanel){
+                  var pageCookieBlob=textOf(document.body||document.documentElement);
+                  var pageLooksLikeCookieAdmin=hasCookieContext(pageCookieBlob)&&
+                    pageCookieBlob.indexOf('customize')>=0&&
+                    pageCookieBlob.indexOf('reject all')>=0&&
+                    pageCookieBlob.indexOf('accept all')>=0;
+                  if(pageLooksLikeCookieAdmin){
+                    var fallbackButtons=collectNodes(buttonSelector,1600);
+                    var fallbackButton=null;
+                    for(var f=0;f<fallbackButtons.length;f++){
+                      var candidate=fallbackButtons[f];
+                      if(!visible(candidate)){continue;}
+                      var candidateLabel=textOf(candidate);
+                      if(candidateLabel==='accept all'||candidateLabel==='accept all cookies'||candidateLabel==='allow all'||candidateLabel==='allow all cookies'){
+                        fallbackButton=candidate;
+                        break;
+                      }
+                    }
+                    if(fallbackButton){
+                      var fallbackPanel=fallbackButton;
+                      for(var fd=0;fallbackPanel&&fd<10;fd++){
+                        if(visible(fallbackPanel)){
+                          var fpText=textOf(fallbackPanel);
+                          if((fpText.indexOf('we respect your privacy')>=0||fpText.indexOf('cookies help us')>=0||fpText.indexOf('powered by cookieadmin')>=0)&&
+                              fpText.indexOf('reject all')>=0&&fpText.indexOf('customize')>=0){
+                            break;
+                          }
+                        }
+                        fallbackPanel=parentOf(fallbackPanel);
+                      }
+                      bestButton=fallbackButton;
+                      bestPanel=fallbackPanel||fallbackButton;
+                    }
+                  }
+                }
+                if(!bestPanel){
+                  var pointX=Math.round((window.innerWidth||1280)*0.162);
+                  var pointY=Math.round((window.innerHeight||720)*0.885);
+                  var pointNode=null;
+                  try{pointNode=document.elementFromPoint(pointX,pointY);}catch(_){pointNode=null;}
+                  var pointButton=pointNode;
+                  for(var pd=0;pointButton&&pd<6;pd++){
+                    try{
+                      if(pointButton.matches&&pointButton.matches(buttonSelector)){break;}
+                    }catch(_){}
+                    pointButton=parentOf(pointButton);
+                  }
+                  if(pointButton&&visible(pointButton)){
+                    var pointLabel=textOf(pointButton);
+                    var pointPage=textOf(document.body||document.documentElement);
+                    if((pointLabel==='accept all'||pointLabel==='accept all cookies'||pointLabel==='allow all'||pointLabel==='allow all cookies')&&
+                        pointPage.indexOf('we respect your privacy')>=0&&
+                        pointPage.indexOf('reject all')>=0&&
+                        pointPage.indexOf('customize')>=0){
+                      bestButton=pointButton;
+                      bestPanel=pointButton;
+                      for(var pp=0;bestPanel&&pp<10;pp++){
+                        var pText=textOf(bestPanel);
+                        if(pText.indexOf('we respect your privacy')>=0&&pText.indexOf('reject all')>=0&&pText.indexOf('customize')>=0){break;}
+                        bestPanel=parentOf(bestPanel);
+                      }
+                      bestPanel=bestPanel||pointButton;
+                    }
                   }
                 }
                 if(!bestPanel){
@@ -5665,6 +5871,7 @@ return changed>0;
                                 deltaX = delta.first * POINTER_MOVE_STEP_PX,
                                 deltaY = delta.second * POINTER_MOVE_STEP_PX,
                             )
+                            maybeDispatchKulchaFloHomepageRailHoverScroll(event.keyCode, move.overshootX, reason = "initial-edge")
                             maybeScrollContent(move.overshootX, move.overshootY, "initial")
                             startPointerRepeater()
                             maybeDispatchDpadDocumentScrollFallback(
@@ -5814,6 +6021,14 @@ return changed>0;
         return when {
             pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) -> KeyEvent.KEYCODE_DPAD_DOWN
             pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_UP) -> KeyEvent.KEYCODE_DPAD_UP
+            else -> null
+        }
+    }
+
+    private fun currentHorizontalDpadKey(): Int? {
+        return when {
+            pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT) -> KeyEvent.KEYCODE_DPAD_RIGHT
+            pointerDirectionKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT) -> KeyEvent.KEYCODE_DPAD_LEFT
             else -> null
         }
     }
@@ -6250,6 +6465,109 @@ return changed>0;
         return true
     }
 
+    private fun maybeDispatchKulchaFloHomepageRailHoverScroll(keyCode: Int?, overshootX: Float, reason: String): Boolean {
+        if (!ENABLE_KULCHAFLO_HOMEPAGE_RAIL_HOVER_SCROLL) return false
+        if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) return false
+        if (overshootX == 0f) return false
+        if ((keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && overshootX <= 0f) || (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && overshootX >= 0f)) return false
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) return false
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        if (!isKulchaFloHomepage(activeUrl)) return false
+        val now = SystemClock.uptimeMillis()
+        if (now - lastKulchaFloRailHoverScrollMs < KULCHAFLO_RAIL_HOVER_SCROLL_MIN_INTERVAL_MS) return false
+        lastKulchaFloRailHoverScrollMs = now
+        val direction = if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
+        val amount = (overshootX * KULCHAFLO_RAIL_HOVER_SCROLL_MULTIPLIER).toInt().let {
+            if (it == 0) direction * KULCHAFLO_RAIL_HOVER_SCROLL_MIN_STEP_PX else it
+        }
+        val pointerXValue = pointerX.toInt().coerceAtLeast(0)
+        val pointerYValue = pointerY.toInt().coerceAtLeast(0)
+        val viewWidth = geckoView.width.coerceAtLeast(1)
+        val viewHeight = geckoView.height.coerceAtLeast(1)
+        val pageUrlJson = JSONObject.quote(activeUrl)
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=$pageUrlJson;
+                var rawPx=$pointerXValue;
+                var rawPy=$pointerYValue;
+                var viewWidth=$viewWidth;
+                var viewHeight=$viewHeight;
+                var amount=$amount;
+                var nodeSummary=function(node){
+                  try{
+                    if(!node){return 'none';}
+                    var tag=(node.tagName||'').toLowerCase();
+                    var id=(node.id||'').trim();
+                    var cls=(typeof node.className==='string'?node.className:'').trim().replace(/\s+/g,'.');
+                    return tag+(id?('#'+id):'')+(cls?('.'+cls):'');
+                  }catch(_){return 'unknown';}
+                };
+                var rectText=function(node){
+                  try{
+                    var r=node.getBoundingClientRect();
+                    return Math.round(r.left)+","+Math.round(r.top)+" "+Math.round(r.width)+"x"+Math.round(r.height);
+                  }catch(_){return '0,0 0x0';}
+                };
+                var w=Math.max(1,window.innerWidth||0),h=Math.max(1,window.innerHeight||0);
+                var px=Math.round(rawPx*(w/Math.max(1,viewWidth)));
+                var py=Math.round(rawPy*(h/Math.max(1,viewHeight)));
+                var point=document.elementFromPoint(Math.min(Math.max(0,px),w-1),Math.min(Math.max(0,py),h-1));
+                var isRail=function(node){
+                  if(!node||node.nodeType!==1){return false;}
+                  try{return node.matches('.kf-rail,.kf-chiprail,.kf-search-rail');}catch(_){return false;}
+                };
+                var rail=null,cur=point;
+                while(cur&&cur!==document.body&&cur!==document.documentElement){
+                  if(isRail(cur)){rail=cur;break;}
+                  cur=cur.parentElement;
+                }
+                if(!rail){
+                  var all=Array.from(document.querySelectorAll('.kf-rail,.kf-chiprail,.kf-search-rail')).filter(function(el){
+                    try{
+                      var r=el.getBoundingClientRect();
+                      return r.width>100&&r.height>20&&py>=r.top&&py<=r.bottom;
+                    }catch(_){return false;}
+                  });
+                  if(all.length>0){rail=all[0];}
+                }
+                var before=0,after=0,handled=false;
+                if(rail){
+                  before=Number(rail.scrollLeft||0);
+                  try{rail.scrollBy({left:amount,top:0,behavior:'auto'});}catch(_){rail.scrollLeft=before+amount;}
+                  after=Number(rail.scrollLeft||0);
+                  handled=(after!==before);
+                }
+                window.prompt(promptPrefix+JSON.stringify({
+                  type:'kulchaflo-rail-hover-scroll',
+                  phase:'kulchaflo-rail-hover-scroll',
+                  pageUrl:pageUrl,
+                  pointerX:px,pointerY:py,
+                  rawPointerX:rawPx,rawPointerY:rawPy,
+                  overshootX:$overshootX,
+                  viewportWidth:w,viewportHeight:h,
+                  viewWidth:viewWidth,viewHeight:viewHeight,
+                  amount:amount,
+                  handled:handled,
+                  rail:nodeSummary(rail),
+                  railRect:rail?rectText(rail):'none',
+                  before:before,
+                  after:after,
+                  point:nodeSummary(point)
+                }),'');
+              }catch(_){}
+            })();
+        """.trimIndent()
+        activeTab.session.loadUri(script)
+        GvLogger.i(
+            "GvInput",
+            "kulchaflo rail hover scroll attempted=true reason=$reason keyCode=$keyCode amount=$amount overshootX=$overshootX url=$activeUrl pointer=$pointerXValue,$pointerYValue"
+        )
+        return true
+    }
+
     private fun dpadDocumentScrollFallbackSkipReason(url: String): String? {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return "unsupported-scheme"
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -6335,6 +6653,7 @@ return changed>0;
             }
             absTegoStartupReprobeBySession.remove(session)
             absTegoPlayerFirstReturnUrlBySession.remove(session)
+            tttTegoPlayerFirstReturnUrlBySession.remove(session)
             return
         }
         val nowMs = SystemClock.elapsedRealtime()
@@ -7060,6 +7379,16 @@ return changed>0;
         return false
     }
 
+    private fun hasPlayingTegoVideo(videos: JSONArray): Boolean {
+        for (index in 0 until videos.length()) {
+            val video = videos.optJSONObject(index) ?: continue
+            if (!video.optBoolean("paused") && video.optInt("readyState") >= 1 && video.optInt("videoWidth") > 0 && video.optInt("videoHeight") > 0) {
+                return true
+            }
+        }
+        return false
+    }
+
     private fun summarizeTegoVideosForTiming(videos: JSONArray): String {
         return buildString {
             val limit = minOf(videos.length(), 3)
@@ -7196,6 +7525,17 @@ return changed>0;
             }
             return
         }
+        if (type == "kulchaflo-rail-hover-scroll") {
+            GvLogger.i(
+                "GvInput",
+                "kulchaflo rail hover scroll result pageUrl=$pageUrl handled=${payload.optBoolean("handled")} amount=${payload.optInt("amount")} " +
+                    "pointer=${payload.optInt("pointerX")},${payload.optInt("pointerY")} rawPointer=${payload.optInt("rawPointerX")},${payload.optInt("rawPointerY")} overshootX=${payload.optDouble("overshootX")} " +
+                    "viewport=${payload.optInt("viewportWidth")}x${payload.optInt("viewportHeight")} view=${payload.optInt("viewWidth")}x${payload.optInt("viewHeight")} " +
+                    "rail=${payload.optString("rail")} rect=${payload.optString("railRect")} " +
+                    "before=${payload.optDouble("before")} after=${payload.optDouble("after")} point=${payload.optString("point")}"
+            )
+            return
+        }
         if (type == "dpad-document-scroll-fallback") {
             GvLogger.i(
                 "GvInput",
@@ -7267,10 +7607,32 @@ return changed>0;
             )
             return
         }
+        if (type == "ttt-tego-play-assist") {
+            val active = payload.optBoolean("active")
+            if (active) {
+                tttTegoPlayAssistBySession[session] = TttTegoPlayAssistState(
+                    active = true,
+                    centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                    centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                    reason = payload.optString("reason"),
+                )
+            } else {
+                tttTegoPlayAssistBySession.remove(session)
+            }
+            GvLogger.i(
+                "GvMedia",
+                "ttt tego play assist active=$active reason=${payload.optString("reason")} pageUrl=$pageUrl rect=${payload.optString("rect")} " +
+                    "center=${payload.optInt("centerX")},${payload.optInt("centerY")} ready=${payload.optInt("readyState")} paused=${payload.optBoolean("paused")} " +
+                    "size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")}"
+            )
+            return
+        }
         if (type == "kulchaflo-cookie-consent-autoclick") {
+            val clicked = payload.optBoolean("clicked")
+            val resultReason = payload.optString("reason")
             GvLogger.i(
                 "GvLayout",
-                "kulchaflo cookie consent autoclick result clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} phase=${payload.optString("phase")} pageUrl=$pageUrl panelRect=${payload.optString("panelRect")} buttonRect=${payload.optString("buttonRect")} buttonText=${payload.optString("buttonText")} panelText=${payload.optString("panelText").take(180)}"
+                "kulchaflo cookie consent autoclick result clicked=$clicked reason=$resultReason phase=${payload.optString("phase")} pageUrl=$pageUrl panelRect=${payload.optString("panelRect")} buttonRect=${payload.optString("buttonRect")} buttonText=${payload.optString("buttonText")} panelText=${payload.optString("panelText").take(180)}"
             )
             return
         }
@@ -7308,6 +7670,11 @@ return changed>0;
                 "GvMedia",
                 "tego quality pageUrl=$pageUrl applied=${payload.optBoolean("applied")} playerCount=${payload.optInt("playerCount")} results=${resultSummary.ifBlank { "none" }} videos=${videoSummary.ifBlank { "none" }}"
             )
+            if (isTttTegoContextUrl(pageUrl) && hasPlayingTegoVideo(videos)) {
+                if (tttTegoPlayAssistBySession.remove(session) != null) {
+                    GvLogger.i("GvMedia", "ttt tego play assist active=false reason=playback-started pageUrl=$pageUrl")
+                }
+            }
             return
         }
         if (type == "tego-startup-reprobe") {
@@ -7334,6 +7701,11 @@ return changed>0;
                     "missingHlsLevels=${payload.optBoolean("missingHlsLevels")} readyZeroPaused=${payload.optBoolean("readyZeroPaused")} " +
                     "results=$resultSummary videos=$videoSummary"
             )
+            if (isTttTegoContextUrl(pageUrl) && hasPlayingTegoVideo(videos)) {
+                if (tttTegoPlayAssistBySession.remove(session) != null) {
+                    GvLogger.i("GvMedia", "ttt tego play assist active=false reason=playback-started pageUrl=$pageUrl")
+                }
+            }
             val liveState = liveLoadTimingBySession[session]
             val probeState = absTegoStartupReprobeBySession[session]
             if (liveState != null && probeState != null && liveState.surface == "abs-live" && isAbsTegoChannel10PlayerUrl(pageUrl)) {
@@ -7484,6 +7856,19 @@ return changed>0;
             maybeDispatchAbsTegoFullscreenControlNativeTap(session, payload)
             return
         }
+        if (type == "abs-tego-startup-native-play-request") {
+            GvLogger.i(
+                "GvMedia",
+                "abs tego startup native play request phase=${payload.optString("phase")} pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} " +
+                    "attemptAtMs=${payload.optLong("attemptAtMs")} translated=${payload.optBoolean("translated")} reason=${payload.optString("reason")} " +
+                    "iframeRect=${payload.optString("iframeRect")} controlRect=${payload.optString("controlRect")} " +
+                    "frameCenter=${payload.optInt("frameCenterX")},${payload.optInt("frameCenterY")} center=${payload.optInt("centerX")},${payload.optInt("centerY")} " +
+                    "viewport=${payload.optInt("viewportWidth")}x${payload.optInt("viewportHeight")} dpr=${payload.optDouble("devicePixelRatio")} " +
+                    "controlSummary=${payload.optString("controlSummary")}"
+            )
+            maybeDispatchAbsTegoFullscreenControlNativeTap(session, payload)
+            return
+        }
         if (type == "abs-tego-fullscreen-native-hover") {
             GvLogger.i(
                 "GvMedia",
@@ -7534,16 +7919,28 @@ return changed>0;
         }
         if (type == "abs-tego-page-fullscreen-like") {
             if (payload.optBoolean("applied") && isAbsTegoChannel10ContextUrl(pageUrl)) {
-                absTegoPlayerFirstReturnUrlBySession[session] = ABS_TEGO_RETURN_URL
-                GvLogger.i(
-                    "GvMedia",
-                    "abs tego player-first active pageUrl=$pageUrl reason=abs-top-iframe-promoted returnUrl=$ABS_TEGO_RETURN_URL"
-                )
+                val profile = payload.optString("profile")
+                val returnUrl = resolveTegoPlayerFirstReturnUrl(profile, pageUrl)
+                if (!returnUrl.isNullOrBlank()) {
+                    if (returnUrl == TTT_TEGO_RETURN_URL) {
+                        tttTegoPlayerFirstReturnUrlBySession[session] = returnUrl
+                        GvLogger.i(
+                            "GvMedia",
+                            "ttt tego player-first active pageUrl=$pageUrl reason=${payload.optString("reason")} returnUrl=$returnUrl"
+                        )
+                    } else {
+                        absTegoPlayerFirstReturnUrlBySession[session] = returnUrl
+                        GvLogger.i(
+                            "GvMedia",
+                            "abs tego player-first active pageUrl=$pageUrl reason=${payload.optString("reason")} returnUrl=$returnUrl"
+                        )
+                    }
+                }
             }
             GvLogger.i(
                 "GvMedia",
                 "abs tego page fullscreen-like phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
-                    "applied=${payload.optBoolean("applied")} reason=${payload.optString("reason")} " +
+                    "profile=${payload.optString("profile")} applied=${payload.optBoolean("applied")} reason=${payload.optString("reason")} " +
                     "iframeRect=${payload.optString("iframeRect")} iframe=${payload.optString("iframeSummary")}"
             )
             return
@@ -7551,7 +7948,7 @@ return changed>0;
         if (type == "abs-tego-url-sanitized") {
             GvLogger.i(
                 "GvMedia",
-                "abs tego url sanitized context=${payload.optString("context")} pageUrl=$pageUrl before=${payload.optString("beforeUrl")} after=${payload.optString("afterUrl")}"
+                "abs tego url sanitized profile=${payload.optString("profile")} context=${payload.optString("context")} pageUrl=$pageUrl before=${payload.optString("beforeUrl")} after=${payload.optString("afterUrl")}"
             )
             return
         }
@@ -7691,11 +8088,23 @@ return changed>0;
         }
         if (type == "abs-tego-player-first-active") {
             if (payload.optBoolean("applied") && isAbsTegoChannel10ContextUrl(pageUrl)) {
-                absTegoPlayerFirstReturnUrlBySession[session] = ABS_TEGO_RETURN_URL
-                GvLogger.i(
-                    "GvMedia",
-                    "abs tego player-first active pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} reason=${payload.optString("reason")} returnUrl=$ABS_TEGO_RETURN_URL"
-                )
+                val profile = payload.optString("profile")
+                val returnUrl = resolveTegoPlayerFirstReturnUrl(profile, pageUrl)
+                if (!returnUrl.isNullOrBlank()) {
+                    if (returnUrl == TTT_TEGO_RETURN_URL) {
+                        tttTegoPlayerFirstReturnUrlBySession[session] = returnUrl
+                        GvLogger.i(
+                            "GvMedia",
+                            "ttt tego player-first active pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} reason=${payload.optString("reason")} returnUrl=$returnUrl"
+                        )
+                    } else {
+                        absTegoPlayerFirstReturnUrlBySession[session] = returnUrl
+                        GvLogger.i(
+                            "GvMedia",
+                            "abs tego player-first active pageUrl=$pageUrl playerUrl=${payload.optString("playerUrl")} reason=${payload.optString("reason")} returnUrl=$returnUrl"
+                        )
+                    }
+                }
             }
             return
         }
@@ -7935,6 +8344,7 @@ return changed>0;
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
         private val ABS_TEGO_STARTUP_REPROBE_DELAYS_MS = longArrayOf(2_000L, 5_000L, 9_000L, 14_000L)
         private const val ABS_TEGO_RETURN_URL = "https://kulchaflo.com/channels/abs-tv-antigua/"
+        private const val TTT_TEGO_RETURN_URL = "https://kulchaflo.com/channels/ttt-live-official-24-7-stream/"
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -7956,6 +8366,10 @@ return changed>0;
         private const val EDGE_SCROLL_MULTIPLIER = 2.0f
         private const val ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK = true
         private const val DPAD_DOCUMENT_SCROLL_FALLBACK_MIN_INTERVAL_MS = 120L
+        private const val ENABLE_KULCHAFLO_HOMEPAGE_RAIL_HOVER_SCROLL = true
+        private const val KULCHAFLO_RAIL_HOVER_SCROLL_MULTIPLIER = 2.2f
+        private const val KULCHAFLO_RAIL_HOVER_SCROLL_MIN_STEP_PX = 24
+        private const val KULCHAFLO_RAIL_HOVER_SCROLL_MIN_INTERVAL_MS = 70L
         private const val CVM_VIMEO_DIAGNOSTIC_MIN_INTERVAL_MS = 150L
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
         private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
@@ -8184,6 +8598,12 @@ return changed>0;
         if (host == "abstvradio.com" && path.contains("/live-streaming")) {
             return true
         }
+        if (host == "kulchaflo.com" && path.startsWith("/channels/ttt-live-official-24-7-stream")) {
+            return true
+        }
+        if (host == "ttt.live" && path.startsWith("/stream")) {
+            return true
+        }
         return isAbsTegoChannel10PlayerUrl(url)
     }
 
@@ -8216,7 +8636,36 @@ return changed>0;
             return false
         }
         val channel = uri.getQueryParameter("channel")?.trim().orEmpty()
-        return channel.isBlank() || channel == "10"
+        return channel.isBlank() || channel == "10" || channel == "1"
+    }
+
+    private fun resolveTegoPlayerFirstReturnUrl(profile: String, pageUrl: String): String? {
+        return when {
+            profile.equals("abs", ignoreCase = true) || isAbsTegoAutoplayContextUrl(pageUrl) -> ABS_TEGO_RETURN_URL
+            profile.equals("ttt", ignoreCase = true) || isTttTegoContextUrl(pageUrl) -> TTT_TEGO_RETURN_URL
+            else -> null
+        }
+    }
+
+    private fun isTttTegoContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "kulchaflo.com" && path.startsWith("/channels/ttt-live-official-24-7-stream")) {
+            return true
+        }
+        if (host == "ttt.live" && path.startsWith("/stream")) {
+            return true
+        }
+        if (host == "player.tegotv.com" && path.contains("/player.php")) {
+            val channel = uri.getQueryParameter("channel")?.trim().orEmpty()
+            return channel == "1"
+        }
+        return false
     }
 
     private fun isCvmVimeoDiagnosticUrl(url: String): Boolean {
