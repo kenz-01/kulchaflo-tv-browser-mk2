@@ -69,6 +69,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     private data class TttTegoPlayAssistState(
         var active: Boolean = false,
+        var requiresUserAction: Boolean = false,
         var centerX: Float = -1f,
         var centerY: Float = -1f,
         var reason: String = "",
@@ -221,7 +222,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                             "GvNav",
                             "abs tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$absPlayerFirstReturnUrl"
                         )
-                        activeSession.loadUri(absPlayerFirstReturnUrl)
+                        val targetTab = tabController.getTabs().firstOrNull { tab ->
+                            tab.id != activeTab?.id && tab.url.startsWith(absPlayerFirstReturnUrl)
+                        }
+                        if (targetTab != null && activeTab != null) {
+                            tabController.activateTab(targetTab.id)
+                            tabController.closeTab(activeTab.id)
+                        } else {
+                            activeSession.loadUri(absPlayerFirstReturnUrl)
+                        }
                         return
                     }
                     if (!tttPlayerFirstReturnUrl.isNullOrBlank()) {
@@ -231,7 +240,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                             "GvNav",
                             "ttt tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$tttPlayerFirstReturnUrl"
                         )
-                        activeSession.loadUri(tttPlayerFirstReturnUrl)
+                        val targetTab = tabController.getTabs().firstOrNull { tab ->
+                            tab.id != activeTab?.id && tab.url.startsWith(tttPlayerFirstReturnUrl)
+                        }
+                        if (targetTab != null && activeTab != null) {
+                            tabController.activateTab(targetTab.id)
+                            tabController.closeTab(activeTab.id)
+                        } else {
+                            activeSession.loadUri(tttPlayerFirstReturnUrl)
+                        }
                         return
                     }
                     val tabs = tabController.getTabs()
@@ -337,18 +354,39 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val session = activeTab.session
         val state = tttTegoPlayAssistBySession[session] ?: return false
         if (!state.active) return false
+        if (!state.requiresUserAction) return false
         if (!isTttTegoContextUrl(activeTab.url)) return false
         if (event.action == KeyEvent.ACTION_UP) {
             return true
         }
         if (event.action != KeyEvent.ACTION_DOWN) return false
-        val x = state.centerX.takeIf { it >= 0f } ?: (geckoView.width * 0.5f)
-        val y = state.centerY.takeIf { it >= 0f } ?: (geckoView.height * 0.5f)
-        showPointerAt(x, y, reason = "ttt-play-assist")
-        val handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
+        val hasAssistTarget = state.centerX >= 0f && state.centerY >= 0f
+        val useCurrentPointer = !hasAssistTarget && pointerVisible && pointerOverlay.isPointerVisible()
+        val x: Float
+        val y: Float
+        val handled: Boolean
+        val mode: String
+        if (hasAssistTarget) {
+            x = state.centerX.takeIf { it >= 0f } ?: (geckoView.width * 0.5f)
+            y = state.centerY.takeIf { it >= 0f } ?: (geckoView.height * 0.5f)
+            showPointerAt(x, y, reason = "ttt-play-assist")
+            handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
+            mode = "assist-target"
+        } else if (useCurrentPointer) {
+            x = pointerX
+            y = pointerY
+            handled = dispatchPointerClick()
+            mode = "current-pointer"
+        } else {
+            x = geckoView.width * 0.5f
+            y = geckoView.height * 0.5f
+            showPointerAt(x, y, reason = "ttt-play-assist")
+            handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
+            mode = "viewport-center"
+        }
         GvLogger.i(
             "GvMedia",
-            "ttt tego play assist ok dispatched handled=$handled x=${x.toInt()} y=${y.toInt()} reason=${state.reason} pageUrl=${activeTab.url}"
+            "ttt tego play assist ok dispatched handled=$handled mode=$mode x=${x.toInt()} y=${y.toInt()} reason=${state.reason} pageUrl=${activeTab.url}"
         )
         return true
     }
@@ -5791,6 +5829,18 @@ return changed>0;
                     absPermissionUri ||
                         (absTopContext && absThirdPartyTego)
                     )
+            val tttTopContext = isTttTegoContextUrl(activeSessionUrl) || isTttTegoContextUrl(currentRootUrl)
+            val tttPermissionUri = isTttTegoContextUrl(permission.uri.orEmpty())
+            val tttThirdPartyTego = isAbsTegoPlayerUrl(permission.thirdPartyOrigin.orEmpty())
+            val tttAutoplayScoped = ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    tttPermissionUri ||
+                        (tttTopContext && tttThirdPartyTego)
+                    )
             val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
             val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
             val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
@@ -5806,6 +5856,7 @@ return changed>0;
                     )
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -5831,6 +5882,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "abs tego autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (tttAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "ttt tego autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -7609,9 +7666,11 @@ return changed>0;
         }
         if (type == "ttt-tego-play-assist") {
             val active = payload.optBoolean("active")
+            val requiresUserAction = payload.optBoolean("requiresUserAction", false)
             if (active) {
                 tttTegoPlayAssistBySession[session] = TttTegoPlayAssistState(
                     active = true,
+                    requiresUserAction = requiresUserAction,
                     centerX = payload.optDouble("centerX", -1.0).toFloat(),
                     centerY = payload.optDouble("centerY", -1.0).toFloat(),
                     reason = payload.optString("reason"),
@@ -7621,9 +7680,21 @@ return changed>0;
             }
             GvLogger.i(
                 "GvMedia",
-                "ttt tego play assist active=$active reason=${payload.optString("reason")} pageUrl=$pageUrl rect=${payload.optString("rect")} " +
+                "ttt tego play assist active=$active requiresUserAction=$requiresUserAction reason=${payload.optString("reason")} pageUrl=$pageUrl rect=${payload.optString("rect")} " +
+                    "targetKind=${payload.optString("targetKind")} target=${payload.optString("targetSummary")} " +
                     "center=${payload.optInt("centerX")},${payload.optInt("centerY")} ready=${payload.optInt("readyState")} paused=${payload.optBoolean("paused")} " +
                     "size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")}"
+            )
+            return
+        }
+        if (type == "ttt-tego-startup-state") {
+            GvLogger.i(
+                "GvMedia",
+                "ttt tego startup state phase=${payload.optString("phase")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "state=${payload.optString("state")} applied=${payload.optBoolean("applied")} playable=${payload.optBoolean("playable")} " +
+                    "playbackProgressed=${payload.optBoolean("playbackProgressed")} missingHlsLevels=${payload.optBoolean("missingHlsLevels")} " +
+                    "readyZeroPaused=${payload.optBoolean("readyZeroPaused")} wakeAttempted=${payload.optBoolean("wakeAttempted")} " +
+                    "wakeSkippedReason=${payload.optString("wakeSkippedReason")} videos=${payload.optString("videoSummary").ifBlank { "none" }}"
             )
             return
         }
@@ -8339,6 +8410,7 @@ return changed>0;
         private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = false
         private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
