@@ -5,6 +5,9 @@
   const TTT_TEGO_STARTUP_EXTRA_REPROBE_DELAYS_MS = [18000, 23000, 30000];
   const TTT_TEGO_STARTUP_WAKE_MAX_DELAY_MS = 5000;
   const ABS_TEGO_FULLSCREEN_SEQUENCE_DELAYS_MS = [0, 700, 1600, 2600, 4200, 6500, 9000, 12500, 16000];
+  const NOVUS_CHANNEL_SELECT_DELAYS_MS = [350, 1200, 2600, 4500];
+  const NOVUS_PLAYABLE_CHECK_DELAYS_MS = [1200, 2600, 5000, 8000, 12000, 16000, 22000, 30000];
+  const NOVUS_AUTOPLAY_MAX_ATTEMPTS = 6;
   const ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE = true;
   const ENABLE_ABS_TEGO_PLAYER_FULLSCREEN_LIKE = true;
   const ENABLE_ABS_TEGO_F_KEY_AFTER_FULLSCREEN_LIKE = false;
@@ -47,6 +50,17 @@
   let tttTegoPlayAssistLastActive = false;
   let tttTegoPlayAssistLastReason = "";
   let tttTegoStartupStateLastKey = "";
+  let novusProfileActiveEmitted = false;
+  let novusChannelSelectionStarted = false;
+  let novusChannelSelectionCompleted = false;
+  let novusPlayerFirstActiveEmitted = false;
+  let novusCleanupApplied = false;
+  let novusPlayableLogged = false;
+  let novusAutoplayAttemptCount = 0;
+  let novusLastCurrentTime = 0;
+  let novusAutoplayBlockedByPolicy = false;
+  let novusPlayAssistLastActive = false;
+  let novusPlayAssistLastReason = "";
 
   function isVisible(element) {
     if (!element) return false;
@@ -103,6 +117,605 @@
     if (isAbsLiveTopPage()) return "abs";
     if (isTttLiveTopPage()) return "ttt";
     return "";
+  }
+
+  function isNovusTelearubaTopPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    return host === "novus.telearuba.aw" || host === "www.novus.telearuba.aw";
+  }
+
+  function readNovusIntent() {
+    try {
+      const url = new URL(window.location.href);
+      const desiredChannel = String(url.searchParams.get("kf_channel") || "").trim();
+      const returnUrl = String(url.searchParams.get("kf_return") || "").trim();
+      const validDesiredChannel = desiredChannel === "13" || desiredChannel === "23" || desiredChannel === "49";
+      return { desiredChannel, returnUrl, validDesiredChannel };
+    } catch (_) {
+      return { desiredChannel: "", returnUrl: "", validDesiredChannel: false };
+    }
+  }
+
+  function emitNovusProfileActive(intent, reason) {
+    if (!isNovusTelearubaTopPage() || !intent || !intent.validDesiredChannel) return;
+    if (novusProfileActiveEmitted) return;
+    novusProfileActiveEmitted = true;
+    promptPayload({
+      type: "novus-telearuba-profile-active",
+      phase: "content-novus-telearuba-profile-active",
+      pageUrl: window.location.href,
+      desiredChannel: intent.desiredChannel,
+      returnUrl: intent.returnUrl || "",
+      reason: String(reason || "novus-profile-detected")
+    });
+  }
+
+  function nodeTextFingerprint(node) {
+    try {
+      const text = [
+        node && node.innerText,
+        node && node.textContent,
+        node && node.getAttribute && node.getAttribute("aria-label"),
+        node && node.getAttribute && node.getAttribute("title"),
+        node && node.getAttribute && node.getAttribute("data-title"),
+        node && node.getAttribute && node.getAttribute("data-tooltip"),
+        node && node.value
+      ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+      return text.slice(0, 200);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function findNovusChannelControl(desiredChannel) {
+    const selectors = [
+      "button",
+      "a",
+      "[role='button']",
+      "input[type='button']",
+      "input[type='submit']",
+      "[aria-label]",
+      "[title]"
+    ];
+    const all = [];
+    selectors.forEach((selector) => {
+      try {
+        all.push(...Array.from(document.querySelectorAll(selector)));
+      } catch (_) {}
+    });
+    const seen = new Set();
+    let best = null;
+    let bestScore = -1;
+    all.forEach((node) => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 26 || rect.height < 20) return;
+      const text = nodeTextFingerprint(node);
+      if (!text) return;
+      const hasChannelWord = text.indexOf("channel") >= 0;
+      const exactPhrase = text.indexOf(`channel ${desiredChannel}`) >= 0;
+      const channelToken = new RegExp(`\\b${desiredChannel}\\b`).test(text);
+      if (!exactPhrase && !(hasChannelWord && channelToken)) return;
+      const visible = isVisible(node);
+      const score = (visible ? 1000 : 0) + (exactPhrase ? 200 : 0) + Math.round(rect.width + rect.height);
+      if (score > bestScore) {
+        best = node;
+        bestScore = score;
+      }
+    });
+    return best;
+  }
+
+  function clickNodeIfPossible(node) {
+    if (!node) return false;
+    try {
+      if (typeof node.click === "function") {
+        node.click();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function collectNovusPrimaryVideoState() {
+    let bestVideo = null;
+    let bestArea = -1;
+    const videos = Array.from(document.querySelectorAll("video"));
+    videos.forEach((video) => {
+      if (!video) return;
+      const rect = video.getBoundingClientRect();
+      const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+      if (area <= 0) return;
+      if (area > bestArea) {
+        bestArea = area;
+        bestVideo = video;
+      }
+    });
+    if (!bestVideo) {
+      return {
+        hasVideo: false,
+        mediaPresent: false,
+        playable: false,
+        playing: false,
+        paused: true,
+        readyState: 0,
+        currentTime: 0,
+        videoWidth: 0,
+        videoHeight: 0,
+        muted: false,
+        volume: 1,
+        rect: "0,0 0x0",
+        node: null
+      };
+    }
+    const rect = bestVideo.getBoundingClientRect();
+    const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+    const hasLargeVisibleVideo = isVisible(bestVideo) && area >= 90000;
+    const paused = !!bestVideo.paused;
+    const readyState = Number(bestVideo.readyState || 0);
+    const currentTime = Number(bestVideo.currentTime || 0);
+    const videoWidth = Number(bestVideo.videoWidth || 0);
+    const videoHeight = Number(bestVideo.videoHeight || 0);
+    const muted = !!bestVideo.muted;
+    const volume = typeof bestVideo.volume === "number" ? Number(bestVideo.volume) : 1;
+    const mediaPresent = hasLargeVisibleVideo && readyState >= 1;
+    const playable = readyState >= 2 || (videoWidth > 0 && videoHeight > 0) || currentTime > 0.1;
+    const playing = !paused && (currentTime > 0.1 || readyState >= 2);
+    return {
+      hasVideo: true,
+      mediaPresent,
+      playable,
+      playing,
+      paused,
+      readyState,
+      currentTime,
+      videoWidth,
+      videoHeight,
+      muted,
+      volume,
+      rect: `${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)}`,
+      node: bestVideo
+    };
+  }
+
+  function classifyNovusStartupState(state, hasVisualTarget) {
+    if (!state || !state.hasVideo) {
+      return hasVisualTarget ? "loading-no-video" : "loading-no-video";
+    }
+    if (state.playing) return "playing";
+    if (state.playable && state.paused) return "playable-paused";
+    if (state.mediaPresent && state.paused) return "media-present-paused";
+    if (state.readyState <= 0) return "loading-ready0";
+    return "loading-ready1plus";
+  }
+
+  function emitNovusStartupState(intent, state, attemptAtMs, extras) {
+    if (!isNovusTelearubaTopPage() || !intent || !intent.validDesiredChannel) return;
+    const visualTarget = chooseNovusVisualTarget();
+    const startupState = classifyNovusStartupState(state, !!visualTarget);
+    const payload = {
+      type: "novus-telearuba-startup-state",
+      phase: "content-novus-telearuba-startup-state",
+      pageUrl: window.location.href,
+      desiredChannel: intent.desiredChannel,
+      returnUrl: intent.returnUrl || "",
+      state: startupState,
+      hasVideo: !!(state && state.hasVideo),
+      hasVisualTarget: !!visualTarget,
+      visualTargetSummary: visualTarget ? summarizeNode(visualTarget) : "none",
+      visualTargetRect: visualTarget ? rectSummary(visualTarget) : "0,0 0x0",
+      mediaPresent: !!(state && state.mediaPresent),
+      playable: !!(state && state.playable),
+      playing: !!(state && state.playing),
+      paused: !!(state && state.paused),
+      muted: !!(state && state.muted),
+      volume: Number((state && typeof state.volume === "number") ? state.volume : 1),
+      readyState: Number((state && state.readyState) || 0),
+      currentTime: Number((state && state.currentTime) || 0),
+      currentTimeDelta: Number((state && state.currentTime) || 0) - Number(novusLastCurrentTime || 0),
+      videoWidth: Number((state && state.videoWidth) || 0),
+      videoHeight: Number((state && state.videoHeight) || 0),
+      videoRect: (state && state.rect) || "0,0 0x0",
+      attemptAtMs: numberOrZero(attemptAtMs),
+      autoplayAttemptCount: novusAutoplayAttemptCount
+    };
+    if (extras && typeof extras === "object") {
+      Object.keys(extras).forEach((key) => {
+        payload[key] = extras[key];
+      });
+    }
+    promptPayload(payload);
+    novusLastCurrentTime = Number((state && state.currentTime) || novusLastCurrentTime || 0);
+  }
+
+  function maybeAttemptNovusAutoplayUnmute(intent, state, attemptAtMs) {
+    const result = {
+      playAttempted: false,
+      playResolved: false,
+      playRejected: false,
+      playError: "",
+      mutedBefore: !!(state && state.muted),
+      mutedAfter: !!(state && state.muted),
+      volumeBefore: Number((state && typeof state.volume === "number") ? state.volume : 1),
+      volumeAfter: Number((state && typeof state.volume === "number") ? state.volume : 1),
+      reason: "not-attempted"
+    };
+    if (!state || !state.node) {
+      result.reason = "no-video-node";
+      return result;
+    }
+    if (!(state.mediaPresent || state.playable)) {
+      result.reason = "media-not-present";
+      return result;
+    }
+    const video = state.node;
+    try {
+      if (video.muted) video.muted = false;
+      if (typeof video.volume === "number" && video.volume < 0.95) video.volume = 1.0;
+    } catch (_) {}
+    result.mutedAfter = !!video.muted;
+    result.volumeAfter = typeof video.volume === "number" ? Number(video.volume) : result.volumeBefore;
+    const shouldPlayAttempt = !!video.paused;
+    if (!shouldPlayAttempt) {
+      result.reason = "already-playing";
+      return result;
+    }
+    if (novusAutoplayBlockedByPolicy) {
+      result.reason = "blocked-by-policy";
+      return result;
+    }
+    if (novusAutoplayAttemptCount >= NOVUS_AUTOPLAY_MAX_ATTEMPTS) {
+      result.reason = "attempt-limit";
+      return result;
+    }
+    novusAutoplayAttemptCount += 1;
+    result.playAttempted = true;
+    result.reason = "play-attempted";
+    try {
+      const playResult = video.play();
+      if (playResult && typeof playResult.then === "function") {
+        playResult.then(() => {
+          novusAutoplayBlockedByPolicy = false;
+          emitNovusStartupState(intent, collectNovusPrimaryVideoState(), attemptAtMs + 1, {
+            playAttempted: true,
+            playResolved: true,
+            playRejected: false,
+            playError: "",
+            mutedBefore: result.mutedBefore,
+            mutedAfter: !!video.muted,
+            volumeBefore: result.volumeBefore,
+            volumeAfter: typeof video.volume === "number" ? Number(video.volume) : result.volumeBefore
+          });
+        }).catch((error) => {
+          const playError = String((error && error.name) || (error && error.message) || "play-rejected");
+          if (playError.toLowerCase().indexOf("notallowed") >= 0) {
+            novusAutoplayBlockedByPolicy = true;
+          }
+          emitNovusStartupState(intent, collectNovusPrimaryVideoState(), attemptAtMs + 1, {
+            playAttempted: true,
+            playResolved: false,
+            playRejected: true,
+            playError,
+            mutedBefore: result.mutedBefore,
+            mutedAfter: !!video.muted,
+            volumeBefore: result.volumeBefore,
+            volumeAfter: typeof video.volume === "number" ? Number(video.volume) : result.volumeBefore
+          });
+          if (playError.toLowerCase().indexOf("notallowed") >= 0) {
+            emitNovusPlayAssist(intent, true, "play-not-allowed", attemptAtMs + 2, collectNovusPrimaryVideoState(), playError);
+          }
+        });
+      } else {
+        result.playResolved = true;
+      }
+    } catch (error) {
+      result.playRejected = true;
+      result.playError = String((error && error.name) || (error && error.message) || "play-throw");
+      if (result.playError.toLowerCase().indexOf("notallowed") >= 0) {
+        novusAutoplayBlockedByPolicy = true;
+      }
+      result.reason = "play-throw";
+    }
+    return result;
+  }
+
+  function chooseNovusVisualTarget() {
+    const videoState = collectNovusPrimaryVideoState();
+    if (videoState.node) return videoState.node;
+    const candidates = Array.from(document.querySelectorAll("iframe, [class*='player' i], [id*='player' i]"));
+    let best = null;
+    let bestArea = -1;
+    candidates.forEach((node) => {
+      if (!node || !isVisible(node)) return;
+      const rect = node.getBoundingClientRect();
+      const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+      if (area < 64000) return;
+      if (area > bestArea) {
+        bestArea = area;
+        best = node;
+      }
+    });
+    return best;
+  }
+
+  function emitNovusPlayAssist(intent, active, reason, attemptAtMs, state, playError) {
+    if (!isNovusTelearubaTopPage() || !intent || !intent.validDesiredChannel) return;
+    const reasonText = String(reason || (active ? "playable-paused" : "playing"));
+    if (!active && !novusPlayAssistLastActive) return;
+    if (active === novusPlayAssistLastActive && active && reasonText === novusPlayAssistLastReason) return;
+    novusPlayAssistLastActive = !!active;
+    novusPlayAssistLastReason = active ? reasonText : "";
+    let centerX = -1;
+    let centerY = -1;
+    let rect = "none";
+    let targetKind = "none";
+    let targetSummary = "none";
+    try {
+      const playControl = Array.from(
+        document.querySelectorAll("button,[role='button'],a,[class*='play' i],[aria-label*='play' i],[title*='play' i]")
+      ).find((node) => {
+        if (!isVisible(node)) return false;
+        const cls = String(node.className || "").toLowerCase();
+        const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+        const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const blob = `${cls} ${aria} ${title} ${text}`;
+        if (blob.indexOf("pause") >= 0) return false;
+        if (blob.indexOf("fullscreen") >= 0 || blob.indexOf("full screen") >= 0) return false;
+        if (blob.indexOf("volume") >= 0 || blob.indexOf("mute") >= 0) return false;
+        if (blob.indexOf("channel") >= 0) return false;
+        return blob.indexOf("play") >= 0 || blob.indexOf("start") >= 0;
+      });
+      if (playControl) {
+        const r = playControl.getBoundingClientRect();
+        if (r.width >= 20 && r.height >= 20) {
+          centerX = Math.round(r.left + Math.max(1, Math.floor(r.width / 2)));
+          centerY = Math.round(r.top + Math.max(1, Math.floor(r.height / 2)));
+          rect = `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+          targetKind = "play-control";
+          targetSummary = summarizeNode(playControl);
+        }
+      }
+      if (centerX < 0 || centerY < 0) {
+        const target = chooseNovusVisualTarget();
+        if (target) {
+          const r = target.getBoundingClientRect();
+          centerX = Math.round(r.left + Math.max(1, Math.floor(r.width / 2)));
+          centerY = Math.round(r.top + Math.max(1, Math.floor(r.height / 2)));
+          rect = `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+          targetKind = target.tagName && target.tagName.toLowerCase() === "video" ? "video" : "player-container";
+          targetSummary = summarizeNode(target);
+        }
+      }
+    } catch (_) {}
+    if (active && (centerX < 0 || centerY < 0)) {
+      centerX = Math.round(Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280) / 2);
+      centerY = Math.round(Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720) / 2);
+      rect = "viewport-center";
+      targetKind = "viewport-center";
+      targetSummary = "viewport";
+    }
+    promptPayload({
+      type: "novus-telearuba-play-assist",
+      phase: "content-novus-telearuba-play-assist",
+      pageUrl: window.location.href,
+      desiredChannel: intent.desiredChannel,
+      returnUrl: intent.returnUrl || "",
+      active: !!active,
+      requiresUserAction: !!active,
+      reason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      rect,
+      targetKind,
+      targetSummary,
+      readyState: Number((state && state.readyState) || 0),
+      paused: !!(state && state.paused),
+      muted: !!(state && state.muted),
+      volume: Number((state && typeof state.volume === "number") ? state.volume : 1),
+      playError: String(playError || "")
+    });
+  }
+
+  function applyNovusPlayerFirstShell(intent, reason, attemptAtMs) {
+    if (!isNovusTelearubaTopPage() || !intent || !intent.validDesiredChannel) return null;
+    const target = chooseNovusVisualTarget();
+    if (!target) {
+      promptPayload({
+        type: "novus-telearuba-page-cleanup",
+        phase: "content-novus-telearuba-page-cleanup",
+        pageUrl: window.location.href,
+        desiredChannel: intent.desiredChannel,
+        hiddenCount: 0,
+        reason: "no-target",
+        targetSummary: "none",
+        targetRect: "0,0 0x0"
+      });
+      return null;
+    }
+    const preserved = new Set();
+    let cursor = target;
+    while (cursor && cursor.nodeType === 1) {
+      preserved.add(cursor);
+      if (cursor === document.body || cursor === document.documentElement) break;
+      cursor = cursor.parentElement;
+    }
+    preserved.add(document.body);
+    preserved.add(document.documentElement);
+    let hiddenCount = 0;
+    const hideNode = (node) => {
+      if (!node || preserved.has(node)) return;
+      if (target.contains(node) || node.contains(target)) return;
+      try {
+        node.style.setProperty("display", "none", "important");
+        node.setAttribute("data-kf-novus-page-content-hidden", "1");
+        hiddenCount += 1;
+      } catch (_) {}
+    };
+    try {
+      Array.from(document.body.children).forEach((child) => hideNode(child));
+    } catch (_) {}
+    try {
+      document.documentElement.style.setProperty("margin", "0", "important");
+      document.documentElement.style.setProperty("padding", "0", "important");
+      document.documentElement.style.setProperty("width", "100vw", "important");
+      document.documentElement.style.setProperty("height", "100vh", "important");
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.documentElement.style.setProperty("background", "#000", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("padding", "0", "important");
+      document.body.style.setProperty("width", "100vw", "important");
+      document.body.style.setProperty("height", "100vh", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      target.style.setProperty("position", "fixed", "important");
+      target.style.setProperty("left", "0", "important");
+      target.style.setProperty("top", "0", "important");
+      target.style.setProperty("width", "100vw", "important");
+      target.style.setProperty("height", "100vh", "important");
+      target.style.setProperty("max-width", "100vw", "important");
+      target.style.setProperty("max-height", "100vh", "important");
+      target.style.setProperty("border", "0", "important");
+      target.style.setProperty("margin", "0", "important");
+      target.style.setProperty("padding", "0", "important");
+      target.style.setProperty("z-index", "2147483647", "important");
+      target.style.setProperty("background", "#000", "important");
+      target.setAttribute("data-kf-novus-player-first", "1");
+    } catch (_) {}
+    const targetRect = rectSummary(target);
+    promptPayload({
+      type: "novus-telearuba-page-cleanup",
+      phase: "content-novus-telearuba-page-cleanup",
+      pageUrl: window.location.href,
+      desiredChannel: intent.desiredChannel,
+      hiddenCount,
+      reason: String(reason || "player-first-cleanup"),
+      targetSummary: summarizeNode(target),
+      targetRect
+    });
+    if (!novusPlayerFirstActiveEmitted) {
+      novusPlayerFirstActiveEmitted = true;
+      promptPayload({
+        type: "novus-telearuba-player-first-active",
+        phase: "content-novus-telearuba-player-first-active",
+        pageUrl: window.location.href,
+        desiredChannel: intent.desiredChannel,
+        returnUrl: intent.returnUrl || "",
+        applied: true,
+        reason: String(reason || "novus-player-first-layout"),
+        attemptAtMs: numberOrZero(attemptAtMs)
+      });
+    }
+    return target;
+  }
+
+  function emitNovusPlayableState(intent, attemptAtMs) {
+    if (!isNovusTelearubaTopPage() || !intent || !intent.validDesiredChannel) return;
+    const state = collectNovusPrimaryVideoState();
+    const autoplay = maybeAttemptNovusAutoplayUnmute(intent, state, attemptAtMs);
+    emitNovusStartupState(intent, state, attemptAtMs, autoplay);
+    promptPayload({
+      type: "novus-telearuba-playable-video",
+      phase: "content-novus-telearuba-playable-video",
+      pageUrl: window.location.href,
+      desiredChannel: intent.desiredChannel,
+      mediaPresent: !!state.mediaPresent,
+      playable: !!state.playable,
+      playing: !!state.playing,
+      paused: !!state.paused,
+      muted: !!state.muted,
+      volume: Number(state.volume || 1),
+      readyState: Number(state.readyState || 0),
+      currentTime: Number(state.currentTime || 0),
+      videoWidth: Number(state.videoWidth || 0),
+      videoHeight: Number(state.videoHeight || 0),
+      videoRect: state.rect || "0,0 0x0",
+      playAttempted: !!autoplay.playAttempted,
+      playResolved: !!autoplay.playResolved,
+      playRejected: !!autoplay.playRejected,
+      playError: autoplay.playError || "",
+      mutedBefore: !!autoplay.mutedBefore,
+      mutedAfter: !!autoplay.mutedAfter,
+      volumeBefore: Number(autoplay.volumeBefore || 1),
+      volumeAfter: Number(autoplay.volumeAfter || 1),
+      attemptAtMs: numberOrZero(attemptAtMs)
+    });
+    if (state.playing) {
+      novusAutoplayBlockedByPolicy = false;
+      emitNovusPlayAssist(intent, false, "playing", attemptAtMs, state, "");
+    } else {
+      const playError = String(autoplay.playError || "");
+      if (autoplay.playRejected && playError.toLowerCase().indexOf("notallowed") >= 0) {
+        novusAutoplayBlockedByPolicy = true;
+        emitNovusPlayAssist(intent, true, "play-not-allowed", attemptAtMs, state, playError);
+      } else if (state.paused && (state.playable || (state.mediaPresent && novusCleanupApplied))) {
+        emitNovusPlayAssist(intent, true, state.playable ? "playable-paused" : "media-present-paused", attemptAtMs, state, playError);
+      }
+    }
+    if (state.playable || state.playing) {
+      novusPlayableLogged = true;
+    }
+    const shouldApplyPlayerFirst =
+      state.playing ||
+      ((state.playable || state.mediaPresent) && state.paused && attemptAtMs >= 12000);
+    if (shouldApplyPlayerFirst && !novusCleanupApplied) {
+      if (!novusCleanupApplied) {
+        novusCleanupApplied = true;
+        setTimeout(() => {
+          applyNovusPlayerFirstShell(
+            intent,
+            state.playing ? "novus-playing" : (state.playable ? "novus-playable-paused" : "novus-media-present-paused"),
+            attemptAtMs + 600
+          );
+        }, 600);
+      }
+    }
+  }
+
+  function attemptNovusChannelSelection(intent, attemptAtMs) {
+    if (!isNovusTelearubaTopPage() || !intent || !intent.validDesiredChannel) return;
+    const control = findNovusChannelControl(intent.desiredChannel);
+    const rect = control ? control.getBoundingClientRect() : null;
+    const clicked = clickNodeIfPossible(control);
+    if (clicked) {
+      novusChannelSelectionCompleted = true;
+    }
+    promptPayload({
+      type: "novus-telearuba-channel-select",
+      phase: "content-novus-telearuba-channel-select",
+      pageUrl: window.location.href,
+      desiredChannel: intent.desiredChannel,
+      returnUrl: intent.returnUrl || "",
+      clicked,
+      reason: control ? (clicked ? "clicked" : "click-failed") : "control-not-found",
+      controlSummary: control ? summarizeNode(control) : "none",
+      rect: rect ? `${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)}` : "0,0 0x0",
+      attemptAtMs: numberOrZero(attemptAtMs)
+    });
+  }
+
+  function scheduleNovusTelearubaFlow() {
+    if (!isNovusTelearubaTopPage() || novusChannelSelectionStarted) return;
+    const intent = readNovusIntent();
+    if (!intent.validDesiredChannel) return;
+    novusChannelSelectionStarted = true;
+    emitNovusProfileActive(intent, "intent-from-url");
+    NOVUS_CHANNEL_SELECT_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        if (!isNovusTelearubaTopPage()) return;
+        if (!novusChannelSelectionCompleted || delayMs === NOVUS_CHANNEL_SELECT_DELAYS_MS[NOVUS_CHANNEL_SELECT_DELAYS_MS.length - 1]) {
+          attemptNovusChannelSelection(intent, delayMs);
+        }
+      }, delayMs);
+    });
+    NOVUS_PLAYABLE_CHECK_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        if (!isNovusTelearubaTopPage()) return;
+        emitNovusPlayableState(intent, delayMs);
+      }, delayMs);
+    });
   }
 
   function isSupportedTegoFrame() {
@@ -2689,12 +3302,14 @@
   applyTegoQualityPolicy();
   scheduleAbsTegoStartupReprobe();
   scheduleAbsTegoPageFullscreenLike();
+  scheduleNovusTelearubaFlow();
   maybeAttachAbsTegoTopPlaybackListener();
   setupAbsTegoFullscreenNativeBridge();
   window.addEventListener("load", publish, { once: true });
   window.addEventListener("load", applyTegoQualityPolicy, { once: true });
   window.addEventListener("load", scheduleAbsTegoStartupReprobe, { once: true });
   window.addEventListener("load", scheduleAbsTegoPageFullscreenLike, { once: true });
+  window.addEventListener("load", scheduleNovusTelearubaFlow, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
   document.addEventListener("visibilitychange", publish);
   document.addEventListener("visibilitychange", applyTegoQualityPolicy);

@@ -75,6 +75,21 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var reason: String = "",
     )
 
+    private data class NovusTelearubaPlayAssistState(
+        var active: Boolean = false,
+        var requiresUserAction: Boolean = false,
+        var desiredChannel: String = "",
+        var returnUrl: String = "",
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var reason: String = "",
+    )
+
+    private data class NovusTelearubaProfileState(
+        val desiredChannel: String,
+        val returnUrl: String,
+    )
+
     private lateinit var geckoView: GeckoView
     private lateinit var pointerOverlay: PointerOverlayView
     private lateinit var loadingOverlay: View
@@ -111,6 +126,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val absTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val tttTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val tttTegoPlayAssistBySession = LinkedHashMap<GeckoSession, TttTegoPlayAssistState>()
+    private val novusTelearubaProfileBySession = LinkedHashMap<GeckoSession, NovusTelearubaProfileState>()
+    private val novusTelearubaPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val novusTelearubaPlayAssistBySession = LinkedHashMap<GeckoSession, NovusTelearubaPlayAssistState>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -215,6 +233,35 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     val activeSession = activeTab?.session
                     val absPlayerFirstReturnUrl = activeSession?.let { absTegoPlayerFirstReturnUrlBySession[it] }
                     val tttPlayerFirstReturnUrl = activeSession?.let { tttTegoPlayerFirstReturnUrlBySession[it] }
+                    val novusPlayerFirstReturnUrl = activeSession?.let { novusTelearubaPlayerFirstReturnUrlBySession[it] }
+                    val novusProfile = activeSession?.let { novusTelearubaProfileBySession[it] }
+                    if (!novusPlayerFirstReturnUrl.isNullOrBlank()) {
+                        novusTelearubaPlayerFirstReturnUrlBySession.remove(activeSession)
+                        activeSession?.let { novusTelearubaProfileBySession.remove(it) }
+                        activeSession?.let { novusTelearubaPlayAssistBySession.remove(it) }
+                        val activeTabId = activeTab?.id
+                        val targetTab = tabController.getTabs().firstOrNull { tab ->
+                            tab.id != activeTab?.id && tab.url.startsWith(novusPlayerFirstReturnUrl)
+                        }
+                        if (targetTab != null && activeTabId != null) {
+                            GvLogger.i(
+                                "GvNav",
+                                "novus telearuba back exit target existing-tab tabId=${targetTab.id} desiredChannel=${novusProfile?.desiredChannel.orEmpty()} returnUrl=$novusPlayerFirstReturnUrl"
+                            )
+                            tabController.activateTab(targetTab.id)
+                            tabController.closeTab(activeTabId)
+                        } else {
+                            GvLogger.i(
+                                "GvNav",
+                                "novus telearuba back exit target new-tab desiredChannel=${novusProfile?.desiredChannel.orEmpty()} returnUrl=$novusPlayerFirstReturnUrl"
+                            )
+                            tabController.createTab(novusPlayerFirstReturnUrl, activate = true)
+                            if (activeTabId != null) {
+                                tabController.closeTab(activeTabId)
+                            }
+                        }
+                        return
+                    }
                     if (!absPlayerFirstReturnUrl.isNullOrBlank()) {
                         absTegoPlayerFirstReturnUrlBySession.remove(activeSession)
                         tttTegoPlayAssistBySession.remove(activeSession)
@@ -327,6 +374,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
+        if (maybeHandleNovusTelearubaPlayAssistOk(event)) {
+            return true
+        }
         if (maybeHandleTttTegoPlayAssistOk(event)) {
             return true
         }
@@ -387,6 +437,33 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         GvLogger.i(
             "GvMedia",
             "ttt tego play assist ok dispatched handled=$handled mode=$mode x=${x.toInt()} y=${y.toInt()} reason=${state.reason} pageUrl=${activeTab.url}"
+        )
+        return true
+    }
+
+    private fun maybeHandleNovusTelearubaPlayAssistOk(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val session = activeTab.session
+        val state = novusTelearubaPlayAssistBySession[session] ?: return false
+        if (!state.active) return false
+        if (!state.requiresUserAction) return false
+        val activeUrl = activeTab.url
+        val activeUri = runCatching { android.net.Uri.parse(activeUrl) }.getOrNull()
+        if (!isNovusTelearubaHost(activeUri?.host)) return false
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        val x = state.centerX.takeIf { it >= 0f } ?: (geckoView.width * 0.5f)
+        val y = state.centerY.takeIf { it >= 0f } ?: (geckoView.height * 0.5f)
+        showPointerAt(x, y, reason = "novus-play-assist")
+        val handled = dispatchNativeMouseTapAt(x, y, reason = "novus-play-assist-ok")
+        GvLogger.i(
+            "GvMedia",
+            "novus telearuba play assist ok dispatched handled=$handled x=${x.toInt()} y=${y.toInt()} reason=${state.reason} desiredChannel=${state.desiredChannel} pageUrl=$activeUrl"
         )
         return true
     }
@@ -506,6 +583,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             if (isWebHttpUrl(url.orEmpty())) {
                 applyUserAgentPolicyForUrl(session, url.orEmpty(), reason = "location-change")
             }
+            captureNovusTelearubaProfileForSession(session, url.orEmpty(), reason = "location-change")
             updateFacebookPassiveReentryUrlState(session, url.orEmpty())
             maybeDispatchKulchaFloCookieConsentCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchAmazonConsentCompat(session, url.orEmpty(), reason = "location-change")
@@ -516,6 +594,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             if (!isAbsTegoChannel10ContextUrl(url.orEmpty())) {
                 absTegoPlayerFirstReturnUrlBySession.remove(session)
                 tttTegoPlayerFirstReturnUrlBySession.remove(session)
+            }
+            if (!isNovusTelearubaContextUrl(url.orEmpty())) {
+                novusTelearubaPlayerFirstReturnUrlBySession.remove(session)
+                novusTelearubaProfileBySession.remove(session)
+                novusTelearubaPlayAssistBySession.remove(session)
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -602,6 +685,17 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 )
                 return GeckoResult.fromValue(AllowOrDeny.ALLOW)
             }
+            captureNovusTelearubaProfileForSession(session, triggerUri, reason = "load-request-trigger")
+            captureNovusTelearubaProfileForSession(session, activeTabUrl, reason = "load-request-active-tab")
+            captureNovusTelearubaProfileForSession(session, currentUrl, reason = "load-request-current-url")
+            maybeRewriteNovusTelearubaRequestUrl(session, requestUri)?.let { rewrittenUrl ->
+                GvLogger.i(
+                    "GvNav",
+                    "novus telearuba request rewrite uri=$requestUri rewritten=$rewrittenUrl tabId=${tabController.findTabBySession(session)?.id ?: "unknown"}"
+                )
+                session.loadUri(rewrittenUrl)
+                return GeckoResult.fromValue(AllowOrDeny.DENY)
+            }
             if (isWebHttpUrl(requestUri)) {
                 applyUserAgentPolicyForUrl(session, requestUri, reason = "load-request")
             }
@@ -631,6 +725,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 }
             }
             val newTab = tabController.createUnopenedTab(uri, activate = true)
+            val novusProfile = novusTelearubaProfileBySession[session]
+            if (novusProfile != null && isNovusTelearubaHost(runCatching { android.net.Uri.parse(uri) }.getOrNull()?.host)) {
+                novusTelearubaProfileBySession[newTab.session] = novusProfile
+                GvLogger.i(
+                    "GvNav",
+                    "novus telearuba profile active desiredChannel=${novusProfile.desiredChannel} returnUrl=${novusProfile.returnUrl} reason=new-session"
+                )
+            }
             GvLogger.i(
                 "GvNav",
                 "new session sourceTabId=$sourceTabId uri=$uri newTabId=${newTab.id}"
@@ -699,6 +801,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         absTegoPlayerFirstReturnUrlBySession.remove(tab.session)
         tttTegoPlayerFirstReturnUrlBySession.remove(tab.session)
         tttTegoPlayAssistBySession.remove(tab.session)
+        novusTelearubaProfileBySession.remove(tab.session)
+        novusTelearubaPlayerFirstReturnUrlBySession.remove(tab.session)
+        novusTelearubaPlayAssistBySession.remove(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
         syncPointerToActivePage("tab-closed")
@@ -5841,6 +5946,19 @@ return changed>0;
                     tttPermissionUri ||
                         (tttTopContext && tttThirdPartyTego)
                     )
+            val novusProfileScoped = novusTelearubaProfileBySession[session] != null
+            val novusTopContext = isNovusTelearubaContextUrl(activeSessionUrl) || isNovusTelearubaContextUrl(currentRootUrl)
+            val novusPermissionUri = isNovusTelearubaContextUrl(permission.uri.orEmpty())
+            val novusThirdParty = isNovusTelearubaHost(thirdPartyHost)
+            val novusAutoplayScoped = ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    novusPermissionUri ||
+                        (novusTopContext && (novusThirdParty || novusProfileScoped))
+                    )
             val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
             val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
             val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
@@ -5857,6 +5975,7 @@ return changed>0;
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                novusAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -5888,6 +6007,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "ttt tego autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (novusAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "novus telearuba autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -6711,6 +6836,8 @@ return changed>0;
             absTegoStartupReprobeBySession.remove(session)
             absTegoPlayerFirstReturnUrlBySession.remove(session)
             tttTegoPlayerFirstReturnUrlBySession.remove(session)
+            novusTelearubaPlayerFirstReturnUrlBySession.remove(session)
+            novusTelearubaPlayAssistBySession.remove(session)
             return
         }
         val nowMs = SystemClock.elapsedRealtime()
@@ -8179,6 +8306,86 @@ return changed>0;
             }
             return
         }
+        if (type == "novus-telearuba-profile-active") {
+            GvLogger.i(
+                "GvMedia",
+                "novus telearuba profile active pageUrl=$pageUrl desiredChannel=${payload.optString("desiredChannel")} returnUrl=${payload.optString("returnUrl")} reason=${payload.optString("reason")}"
+            )
+            return
+        }
+        if (type == "novus-telearuba-channel-select") {
+            GvLogger.i(
+                "GvMedia",
+                "novus telearuba channel select pageUrl=$pageUrl desiredChannel=${payload.optString("desiredChannel")} clicked=${payload.optBoolean("clicked")} reason=${payload.optString("reason")} control=${payload.optString("controlSummary")} rect=${payload.optString("rect")} attemptAtMs=${payload.optLong("attemptAtMs")}"
+            )
+            return
+        }
+        if (type == "novus-telearuba-startup-state") {
+            GvLogger.i(
+                "GvMedia",
+                "novus telearuba startup state pageUrl=$pageUrl desiredChannel=${payload.optString("desiredChannel")} state=${payload.optString("state")} " +
+                    "hasVideo=${payload.optBoolean("hasVideo")} hasVisualTarget=${payload.optBoolean("hasVisualTarget")} " +
+                    "mediaPresent=${payload.optBoolean("mediaPresent")} playable=${payload.optBoolean("playable")} playing=${payload.optBoolean("playing")} paused=${payload.optBoolean("paused")} " +
+                    "readyState=${payload.optInt("readyState")} currentTime=${payload.optDouble("currentTime")} delta=${payload.optDouble("currentTimeDelta")} " +
+                    "size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")} rect=${payload.optString("videoRect")} " +
+                    "muted=${payload.optBoolean("muted")} volume=${payload.optDouble("volume")} " +
+                    "playAttempted=${payload.optBoolean("playAttempted")} playResolved=${payload.optBoolean("playResolved")} playRejected=${payload.optBoolean("playRejected")} playError=${payload.optString("playError")} " +
+                    "mutedBefore=${payload.optBoolean("mutedBefore")} mutedAfter=${payload.optBoolean("mutedAfter")} volumeBefore=${payload.optDouble("volumeBefore")} volumeAfter=${payload.optDouble("volumeAfter")} " +
+                    "attemptCount=${payload.optInt("autoplayAttemptCount")} attemptAtMs=${payload.optLong("attemptAtMs")} visualTarget=${payload.optString("visualTargetSummary")} visualTargetRect=${payload.optString("visualTargetRect")}"
+            )
+            return
+        }
+        if (type == "novus-telearuba-play-assist") {
+            val active = payload.optBoolean("active")
+            val requiresUserAction = payload.optBoolean("requiresUserAction", false)
+            if (active) {
+                novusTelearubaPlayAssistBySession[session] = NovusTelearubaPlayAssistState(
+                    active = true,
+                    requiresUserAction = requiresUserAction,
+                    desiredChannel = payload.optString("desiredChannel"),
+                    returnUrl = payload.optString("returnUrl"),
+                    centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                    centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                    reason = payload.optString("reason"),
+                )
+            } else {
+                novusTelearubaPlayAssistBySession.remove(session)
+            }
+            GvLogger.i(
+                "GvMedia",
+                "novus telearuba play assist active=$active requiresUserAction=$requiresUserAction desiredChannel=${payload.optString("desiredChannel")} " +
+                    "reason=${payload.optString("reason")} pageUrl=$pageUrl center=${payload.optInt("centerX")},${payload.optInt("centerY")} " +
+                    "rect=${payload.optString("rect")} targetKind=${payload.optString("targetKind")} target=${payload.optString("targetSummary")} " +
+                    "paused=${payload.optBoolean("paused")} readyState=${payload.optInt("readyState")} muted=${payload.optBoolean("muted")} volume=${payload.optDouble("volume")} playError=${payload.optString("playError")}"
+            )
+            return
+        }
+        if (type == "novus-telearuba-playable-video") {
+            GvLogger.i(
+                "GvMedia",
+                "novus telearuba playable-video pageUrl=$pageUrl desiredChannel=${payload.optString("desiredChannel")} mediaPresent=${payload.optBoolean("mediaPresent")} playable=${payload.optBoolean("playable")} playing=${payload.optBoolean("playing")} paused=${payload.optBoolean("paused")} muted=${payload.optBoolean("muted")} volume=${payload.optDouble("volume")} readyState=${payload.optInt("readyState")} currentTime=${payload.optDouble("currentTime")} rect=${payload.optString("videoRect")} size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")} playAttempted=${payload.optBoolean("playAttempted")} playResolved=${payload.optBoolean("playResolved")} playRejected=${payload.optBoolean("playRejected")} playError=${payload.optString("playError")} mutedBefore=${payload.optBoolean("mutedBefore")} mutedAfter=${payload.optBoolean("mutedAfter")} volumeBefore=${payload.optDouble("volumeBefore")} volumeAfter=${payload.optDouble("volumeAfter")} attemptAtMs=${payload.optLong("attemptAtMs")}"
+            )
+            return
+        }
+        if (type == "novus-telearuba-player-first-active") {
+            val desiredChannel = payload.optString("desiredChannel").ifBlank { "unknown" }
+            val returnUrl = payload.optString("returnUrl")
+            if (payload.optBoolean("applied") && !returnUrl.isNullOrBlank()) {
+                novusTelearubaPlayerFirstReturnUrlBySession[session] = returnUrl
+                GvLogger.i(
+                    "GvMedia",
+                    "novus telearuba player-first active pageUrl=$pageUrl desiredChannel=$desiredChannel returnUrl=$returnUrl reason=${payload.optString("reason")}"
+                )
+            }
+            return
+        }
+        if (type == "novus-telearuba-page-cleanup") {
+            GvLogger.i(
+                "GvMedia",
+                "novus telearuba page cleanup pageUrl=$pageUrl desiredChannel=${payload.optString("desiredChannel")} hiddenCount=${payload.optInt("hiddenCount")} reason=${payload.optString("reason")} target=${payload.optString("targetSummary")} targetRect=${payload.optString("targetRect")}"
+            )
+            return
+        }
         if (type == "facebook-overlay-diagnostics") {
             logFacebookOverlayDiagnostics(payload)
             return
@@ -8411,6 +8618,7 @@ return changed>0;
         private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
@@ -8740,6 +8948,112 @@ return changed>0;
         return false
     }
 
+    private fun isNovusTelearubaHost(hostValue: String?): Boolean {
+        val host = hostValue?.lowercase().orEmpty().removePrefix("www.")
+        return host == "novus.telearuba.aw"
+    }
+
+    private fun isNovusTelearubaContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        if (isNovusTelearubaHost(uri.host)) {
+            return true
+        }
+        return resolveNovusTelearubaIntentFromKulchaFloUrl(url) != null
+    }
+
+    private fun resolveNovusTelearubaIntentFromKulchaFloUrl(url: String): NovusTelearubaProfileState? {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return null
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "kulchaflo.com") {
+            return null
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (!path.startsWith("/channels/")) {
+            return null
+        }
+        val desiredChannel = when {
+            path.contains("telearuba") -> "13"
+            path.contains("nos-isla") || path.contains("nosisla") -> "23"
+            path.contains("aruba-tv") || path.contains("aruba.tv") -> "49"
+            else -> return null
+        }
+        return NovusTelearubaProfileState(
+            desiredChannel = desiredChannel,
+            returnUrl = url,
+        )
+    }
+
+    private fun captureNovusTelearubaProfileForSession(
+        session: GeckoSession,
+        url: String,
+        reason: String,
+    ) {
+        val profile = resolveNovusTelearubaIntentFromKulchaFloUrl(url) ?: run {
+            val uri = runCatching { android.net.Uri.parse(url) }.getOrNull()
+            if (uri != null && isNovusTelearubaHost(uri.host)) {
+                val channel = uri.getQueryParameter("kf_channel")?.trim().orEmpty()
+                val returnUrl = uri.getQueryParameter("kf_return")?.trim().orEmpty()
+                if ((channel == "13" || channel == "23" || channel == "49") && returnUrl.isNotBlank()) {
+                    NovusTelearubaProfileState(desiredChannel = channel, returnUrl = returnUrl)
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        } ?: return
+        novusTelearubaProfileBySession[session] = profile
+        GvLogger.i(
+            "GvNav",
+            "novus telearuba profile active desiredChannel=${profile.desiredChannel} returnUrl=${profile.returnUrl} reason=$reason"
+        )
+    }
+
+    private fun maybeRewriteNovusTelearubaRequestUrl(
+        session: GeckoSession,
+        requestUrl: String,
+    ): String? {
+        val profile = novusTelearubaProfileBySession[session] ?: return null
+        val uri = runCatching { android.net.Uri.parse(requestUrl) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return null
+        }
+        if (!isNovusTelearubaHost(uri.host)) {
+            return null
+        }
+        val currentChannel = uri.getQueryParameter("kf_channel")?.trim().orEmpty()
+        val currentReturnUrl = uri.getQueryParameter("kf_return")?.trim().orEmpty()
+        if (currentChannel == profile.desiredChannel && currentReturnUrl == profile.returnUrl) {
+            return null
+        }
+        val builder = uri.buildUpon()
+            .clearQuery()
+        val names = uri.queryParameterNames
+        for (name in names) {
+            if (name.equals("kf_channel", ignoreCase = true) || name.equals("kf_return", ignoreCase = true)) {
+                continue
+            }
+            val values = uri.getQueryParameters(name)
+            if (values.isEmpty()) {
+                builder.appendQueryParameter(name, "")
+            } else {
+                values.forEach { value -> builder.appendQueryParameter(name, value) }
+            }
+        }
+        builder.appendQueryParameter("kf_channel", profile.desiredChannel)
+        builder.appendQueryParameter("kf_return", profile.returnUrl)
+        return builder.build().toString()
+    }
+
     private fun isCvmVimeoDiagnosticUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -8791,6 +9105,7 @@ return changed>0;
             host == "player.tegotv.com" || path.contains("/player.php") -> "tego-player"
             host == "ttt.live" || host.endsWith(".ttt.live") -> "ttt-live"
             host == "abstvradio.com" && path.contains("live-streaming") -> "abs-live"
+            host == "novus.telearuba.aw" || host.endsWith(".novus.telearuba.aw") -> "novus-live"
             host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> "caribvision-live"
             host == "cbc.bb" && path.startsWith("/live") -> "cbc-live"
             isLiveMediaSurfaceUrl(url) -> "live-media-surface"
@@ -8842,6 +9157,7 @@ return changed>0;
             host == "kulchaflo.com" && path.startsWith("/channels/") -> true
             host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> true
             host == "abstvradio.com" && path.contains("live-streaming") -> true
+            host == "novus.telearuba.aw" || host.endsWith(".novus.telearuba.aw") -> true
             host == "player.tegotv.com" -> true
             path.contains("/player.php") -> true
             path.contains("/live-stream") -> true
