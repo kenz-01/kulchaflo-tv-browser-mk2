@@ -7,6 +7,8 @@
   const ABS_TEGO_FULLSCREEN_SEQUENCE_DELAYS_MS = [0, 700, 1600, 2600, 4200, 6500, 9000, 12500, 16000];
   const NOVUS_CHANNEL_SELECT_DELAYS_MS = [350, 1200, 2600, 4500];
   const NOVUS_PLAYABLE_CHECK_DELAYS_MS = [1200, 2600, 5000, 8000, 12000, 16000, 22000, 30000];
+  const CGTV_PLAY_ASSIST_DELAYS_MS = [900, 2400, 5200];
+  const CGTV_TOP_OFFSET_PX = 8;
   const NOVUS_AUTOPLAY_MAX_ATTEMPTS = 6;
   const ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE = true;
   const ENABLE_ABS_TEGO_PLAYER_FULLSCREEN_LIKE = true;
@@ -61,6 +63,14 @@
   let novusAutoplayBlockedByPolicy = false;
   let novusPlayAssistLastActive = false;
   let novusPlayAssistLastReason = "";
+  let cgtvPlayAssistScheduled = false;
+  let cgtvPlayAssistLastKey = "";
+  let cgtvPageFullscreenLikeStarted = false;
+  let cgtvPageFullscreenLikeApplied = false;
+  let cgtvTransportLockApplied = false;
+  let cgtvFullscreenAssistAttempted = false;
+  let cgtvBradmaxPlaybackHookAttached = false;
+  let cgtvBradmaxFullscreenPollStarted = false;
 
   function isVisible(element) {
     if (!element) return false;
@@ -122,6 +132,613 @@
   function isNovusTelearubaTopPage() {
     const host = (window.location.hostname || "").toLowerCase();
     return host === "novus.telearuba.aw" || host === "www.novus.telearuba.aw";
+  }
+
+  function isCgtvWatchTopPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    const path = (window.location.pathname || "").toLowerCase();
+    return (host === "caribbeangospel.tv" || host === "www.caribbeangospel.tv") && path.indexOf("/watch") === 0;
+  }
+
+  function isCgtvBradmaxFrame() {
+    const host = (window.location.hostname || "").toLowerCase();
+    return host === "bradm.ax" || host.endsWith(".bradm.ax");
+  }
+
+  function findCgtvBradmaxIframe() {
+    if (!isCgtvWatchTopPage()) return null;
+    const frames = Array.from(document.querySelectorAll("iframe[src]"));
+    let best = null;
+    let bestScore = -1;
+    frames.forEach((frame) => {
+      try {
+        const src = String(frame.getAttribute("src") || frame.src || "").toLowerCase();
+        if (src.indexOf("bradm.ax") < 0) return;
+        if (!isVisible(frame)) return;
+        const rect = frame.getBoundingClientRect();
+        if (rect.width < 120 || rect.height < 80) return;
+        const score = rect.width * rect.height;
+        if (score > bestScore) {
+          best = frame;
+          bestScore = score;
+        }
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function collectCgtvBradmaxVideoState() {
+    const videos = Array.from(document.querySelectorAll("video"));
+    let best = null;
+    let bestScore = -1;
+    videos.forEach((video) => {
+      try {
+        const rect = video.getBoundingClientRect();
+        const score = (isVisible(video) ? 1000000 : 0) + Math.max(0, rect.width * rect.height);
+        if (score > bestScore) {
+          best = video;
+          bestScore = score;
+        }
+      } catch (_) {}
+    });
+    if (!best) {
+      return {
+        hasVideo: false,
+        playing: false,
+        paused: true,
+        readyState: 0,
+        currentTime: 0,
+        videoWidth: 0,
+        videoHeight: 0,
+        rectText: ""
+      };
+    }
+    const rect = best.getBoundingClientRect();
+    const paused = !!best.paused;
+    const currentTime = typeof best.currentTime === "number" ? best.currentTime : 0;
+    return {
+      hasVideo: true,
+      playing: !paused && (best.readyState || 0) >= 1,
+      paused,
+      readyState: best.readyState || 0,
+      currentTime,
+      videoWidth: best.videoWidth || 0,
+      videoHeight: best.videoHeight || 0,
+      rectText: rectAsText(rect)
+    };
+  }
+
+  function applyCgtvBradmaxTransportLock(reason) {
+    if (!isCgtvBradmaxFrame() || cgtvTransportLockApplied) return false;
+    try {
+      const style = document.createElement("style");
+      style.setAttribute("data-kf-cgtv-transport-lock", "1");
+      // Hide obvious UI chrome but do NOT permanently disable pointer events on the video
+      // element or hide the cursor. Pointer-events must remain enabled so users can interact
+      // with the player after startup.
+      style.textContent = [
+        ".bmpui-ui-controlbar,.bmpui-ui-titlebar,.bmpui-ui-subtitle-overlay,.bmpui-ui-seekbar,.bmpui-ui-volumeslider,",
+        ".bmpui-ui-playbacktogglebutton,.bmpui-ui-fullscreentogglebutton,.bmpui-ui-hugeplaybacktogglebutton,",
+        "[class*='controlbar'],[class*='ControlBar'],[class*='seekbar'],[class*='SeekBar'],",
+        "[class*='playbacktoggle'],[class*='PlaybackToggle'],[class*='fullscreen'],[class*='Fullscreen']{",
+        "opacity:0!important;visibility:hidden!important;pointer-events:none!important;",
+        "}"
+      ].join("");
+      (document.head || document.documentElement || document.body).appendChild(style);
+      cgtvTransportLockApplied = true;
+      promptPayload({
+        type: "cgtv-transport-lock",
+        phase: "content-cgtv-transport-lock",
+        pageUrl: window.location.href,
+        applied: true,
+        reason: String(reason || "playing")
+      });
+      return true;
+    } catch (error) {
+      promptPayload({
+        type: "cgtv-transport-lock",
+        phase: "content-cgtv-transport-lock",
+        pageUrl: window.location.href,
+        applied: false,
+        reason: (error && (error.name || error.message)) || "error"
+      });
+      return false;
+    }
+  }
+
+  function removeCgtvBradmaxTransportLock(reason) {
+    try {
+      const existing = document.querySelector('style[data-kf-cgtv-transport-lock]');
+      if (existing && existing.parentNode) {
+        existing.parentNode.removeChild(existing);
+      }
+      cgtvTransportLockApplied = false;
+      promptPayload({
+        type: "cgtv-transport-lock",
+        phase: "content-cgtv-transport-lock",
+        pageUrl: window.location.href,
+        applied: false,
+        reason: String(reason || "released")
+      });
+      return true;
+    } catch (error) {
+      promptPayload({
+        type: "cgtv-transport-lock",
+        phase: "content-cgtv-transport-lock",
+        pageUrl: window.location.href,
+        applied: false,
+        reason: (error && (error.name || error.message)) || "error"
+      });
+      return false;
+    }
+  }
+
+  function findCgtvBradmaxFullscreenControl() {
+    if (!isCgtvBradmaxFrame()) return null;
+    const selectors = [
+      ".bmpui-ui-fullscreentogglebutton",
+      "button",
+      "[role='button']",
+      "[aria-label]",
+      "[title]"
+    ];
+    const seen = new Set();
+    let best = null;
+    let bestScore = -1;
+    selectors.forEach((selector) => {
+      let nodes = [];
+      try {
+        nodes = Array.from(document.querySelectorAll(selector));
+      } catch (_) {
+        nodes = [];
+      }
+      nodes.forEach((node) => {
+        if (!node || seen.has(node)) return;
+        seen.add(node);
+        try {
+          const rect = node.getBoundingClientRect();
+          if (rect.width < 12 || rect.height < 12) return;
+          const cls = String(node.className || "").toLowerCase();
+          const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+          const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+          const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const blob = `${cls} ${aria} ${title} ${text}`;
+          if (blob.indexOf("fullscreen") < 0 && blob.indexOf("full screen") < 0) return;
+          if (blob.indexOf("exit fullscreen") >= 0 || blob.indexOf("exit full screen") >= 0) return;
+          const visibleScore = isVisible(node) ? 1000 : 0;
+          const exactScore = cls.indexOf("bmpui-ui-fullscreentogglebutton") >= 0 ? 500 : 0;
+          const score = visibleScore + exactScore + Math.round(rect.width * rect.height);
+          if (score > bestScore) {
+            best = node;
+            bestScore = score;
+          }
+        } catch (_) {}
+      });
+    });
+    return best;
+  }
+
+  function maybeTriggerCgtvBradmaxFullscreen(reason, attemptAtMs, state) {
+    if (!isCgtvBradmaxFrame() || cgtvFullscreenAssistAttempted) return false;
+    if (!state || !state.playing) return false;
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
+        cgtvFullscreenAssistAttempted = true;
+        try { console.info(`KF_CGTV_FULLSCREEN_ASSIST clicked=false reason=already-fullscreen currentTime=${Number(state.currentTime || 0)}`); } catch (_) {}
+        promptPayload({
+          type: "cgtv-fullscreen-assist",
+          phase: "content-cgtv-fullscreen-assist",
+          pageUrl: window.location.href,
+          clicked: false,
+          reason: "already-fullscreen",
+          attemptAtMs: numberOrZero(attemptAtMs),
+          controlSummary: "none",
+          controlRect: "none",
+          playing: !!state.playing,
+          currentTime: Number(state.currentTime || 0)
+        });
+        return false;
+      }
+      const control = findCgtvBradmaxFullscreenControl();
+      const controlRect = control ? rectSummary(control) : "none";
+      const clicked = clickNodeIfPossible(control);
+      if (clicked) {
+        cgtvFullscreenAssistAttempted = true;
+      }
+      try { console.info(`KF_CGTV_FULLSCREEN_ASSIST clicked=${!!clicked} reason=${clicked ? String(reason || "playing-fullscreen-clicked") : "fullscreen-control-not-clicked"} controlRect=${controlRect} currentTime=${Number(state.currentTime || 0)}`); } catch (_) {}
+      promptPayload({
+        type: "cgtv-fullscreen-assist",
+        phase: "content-cgtv-fullscreen-assist",
+        pageUrl: window.location.href,
+        clicked: !!clicked,
+        reason: clicked ? String(reason || "playing-fullscreen-clicked") : "fullscreen-control-not-clicked",
+        attemptAtMs: numberOrZero(attemptAtMs),
+        controlSummary: control ? summarizeNode(control) : "none",
+        controlRect,
+        playing: !!state.playing,
+        currentTime: Number(state.currentTime || 0)
+      });
+      return !!clicked;
+    } catch (error) {
+      try { console.info(`KF_CGTV_FULLSCREEN_ASSIST clicked=false reason=${(error && (error.name || error.message)) || "error"}`); } catch (_) {}
+      promptPayload({
+        type: "cgtv-fullscreen-assist",
+        phase: "content-cgtv-fullscreen-assist",
+        pageUrl: window.location.href,
+        clicked: false,
+        reason: (error && (error.name || error.message)) || "error",
+        attemptAtMs: numberOrZero(attemptAtMs),
+        controlSummary: "none",
+        controlRect: "none",
+        playing: !!(state && state.playing),
+        currentTime: Number((state && state.currentTime) || 0)
+      });
+      return false;
+    }
+  }
+
+  function ensureCgtvBradmaxPlaybackHook(attemptAtMs) {
+    if (!isCgtvBradmaxFrame() || cgtvBradmaxPlaybackHookAttached) return false;
+    const trigger = (eventName) => {
+      setTimeout(() => {
+        if (!isCgtvBradmaxFrame()) return;
+        const state = collectCgtvBradmaxVideoState();
+        maybeTriggerCgtvBradmaxFullscreen(`video-${eventName}-fullscreen-clicked`, attemptAtMs + 300, state);
+      }, 300);
+    };
+    try {
+      const playbackListener = (event) => {
+        const target = event && event.target;
+        if (!target || String(target.tagName || "").toLowerCase() !== "video") return;
+        trigger(String(event && event.type || "play"));
+      };
+      document.addEventListener("play", playbackListener, true);
+      document.addEventListener("playing", playbackListener, true);
+      cgtvBradmaxPlaybackHookAttached = true;
+      try { console.info(`KF_CGTV_FULLSCREEN_HOOK reason=playback-hook-attached currentTime=${Number(collectCgtvBradmaxVideoState().currentTime || 0)}`); } catch (_) {}
+      promptPayload({
+        type: "cgtv-fullscreen-assist",
+        phase: "content-cgtv-fullscreen-assist-hook",
+        pageUrl: window.location.href,
+        clicked: false,
+        reason: "playback-hook-attached",
+        attemptAtMs: numberOrZero(attemptAtMs),
+        controlSummary: "document-video-play-hook",
+        controlRect: "none",
+        playing: !!collectCgtvBradmaxVideoState().playing,
+        currentTime: Number(collectCgtvBradmaxVideoState().currentTime || 0)
+      });
+      if (collectCgtvBradmaxVideoState().playing) {
+        trigger("already-playing");
+      }
+      return true;
+    } catch (error) {
+      promptPayload({
+        type: "cgtv-fullscreen-assist",
+        phase: "content-cgtv-fullscreen-assist-hook",
+        pageUrl: window.location.href,
+        clicked: false,
+        reason: (error && (error.name || error.message)) || "hook-error",
+        attemptAtMs: numberOrZero(attemptAtMs),
+        controlSummary: "document-video-play-hook",
+        controlRect: "none",
+        playing: false,
+        currentTime: 0
+      });
+      return false;
+    }
+  }
+
+  function scheduleCgtvBradmaxFullscreenPoll(attemptAtMs) {
+    if (!isCgtvBradmaxFrame() || cgtvBradmaxFullscreenPollStarted) return false;
+    cgtvBradmaxFullscreenPollStarted = true;
+    let tick = 0;
+    const timer = setInterval(() => {
+      tick += 1;
+      if (!isCgtvBradmaxFrame() || cgtvFullscreenAssistAttempted || tick > 20) {
+        clearInterval(timer);
+        return;
+      }
+      const state = collectCgtvBradmaxVideoState();
+      const playingLike = !!state.playing || Number(state.currentTime || 0) > 0.1 || (!!state.hasVideo && Number(state.readyState || 0) >= 2 && !state.paused);
+      if (!playingLike) return;
+      const clicked = maybeTriggerCgtvBradmaxFullscreen("poll-playing-fullscreen-clicked", attemptAtMs + (tick * 500), state);
+      if (clicked || cgtvFullscreenAssistAttempted) {
+        clearInterval(timer);
+      }
+    }, 500);
+    return true;
+  }
+
+  function emitCgtvPlayAssist(reason, attemptAtMs) {
+    // Stability-gated CGTV scroll-align and play-assist. Only emit active=true
+    // after a post-scroll stable measurement sequence (two measurements within ~3px).
+    if (isCgtvWatchTopPage()) {
+      const frame = findCgtvBradmaxIframe();
+      if (!frame) return false;
+
+      try {
+        const vw = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 0);
+        const vh = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 0);
+
+        const measuredTops = [];
+        const measureRect = () => {
+          try {
+            return frame.getBoundingClientRect();
+          } catch (_) {
+            return null;
+          }
+        };
+        const recordTop = (rect) => {
+          const top = rect && typeof rect.top === "number" ? rect.top : NaN;
+          if (!Number.isNaN(top)) {
+            measuredTops.push(Math.round(top));
+          }
+          return top;
+        };
+        const payloadFromRect = (rect, active, msg) => {
+          const centerX = rect ? rect.left + rect.width / 2 : Math.max(1, vw / 2);
+          const centerY = rect ? rect.top + rect.height / 2 : Math.max(1, vh / 2);
+          const xRatio = vw > 0 ? centerX / vw : 0;
+          const yRatio = vh > 0 ? centerY / vh : 0;
+          return {
+            type: "cgtv-play-assist",
+            phase: "content-cgtv-play-assist",
+            pageUrl: window.location.href,
+            active: !!active,
+            requiresUserAction: false,
+            reason: String(msg || (active ? "aligned-after-scroll" : "waiting-for-scroll-align")),
+            attemptAtMs: numberOrZero(attemptAtMs),
+            measuredTops: measuredTops.slice(),
+            centerX: Math.round(centerX),
+            centerY: Math.round(centerY),
+            viewportWidth: numberOrZero(vw),
+            viewportHeight: numberOrZero(vh),
+            xRatio: parseFloat(xRatio.toFixed(4)),
+            yRatio: parseFloat(yRatio.toFixed(4)),
+            devicePixelRatio: numberOrZero(window.devicePixelRatio || 0),
+            rect: rect ? rectAsText(rect) : "0,0 0x0",
+            targetKind: "bradmax-iframe",
+            targetSummary: summarizeNode(frame),
+            hasVideo: false,
+            playing: false,
+            paused: true,
+            readyState: 0,
+            currentTime: 0,
+            videoWidth: 0,
+            videoHeight: 0
+          };
+        };
+        const sendWaitingPayload = (rect, msg) => {
+          promptPayload(payloadFromRect(rect, false, msg || "waiting-for-scroll-align"));
+        };
+        const sendActivePayload = (rect) => {
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+          const key = ["top", Math.round(centerX), Math.round(centerY), Math.round(rect.width), Math.round(rect.height), reason].join(":");
+          if (key === cgtvPlayAssistLastKey) return true;
+          cgtvPlayAssistLastKey = key;
+          promptPayload(payloadFromRect(rect, true, "aligned-after-scroll"));
+          return true;
+        };
+
+        const rect0 = measureRect();
+        if (!rect0) return false;
+        const top0 = recordTop(rect0);
+
+        try {
+          const currentScrollY = window.scrollY || window.pageYOffset || 0;
+          const targetScrollY = Math.max(0, Math.round(currentScrollY + (Number.isNaN(top0) ? 0 : top0) - CGTV_TOP_OFFSET_PX));
+          if (Math.abs(targetScrollY - currentScrollY) >= 1) {
+            window.scrollTo({ top: targetScrollY, left: 0, behavior: "auto" });
+          }
+        } catch (_) {}
+
+        const finalizeStableCheck = (previousRect, previousTop) => {
+          setTimeout(() => {
+            try {
+              const finalRect = measureRect();
+              if (!finalRect) {
+                sendWaitingPayload(previousRect || rect0, "waiting-for-scroll-align");
+                return;
+              }
+              const finalTop = recordTop(finalRect);
+              const alignedFinal = !Number.isNaN(finalTop) && finalTop >= 0 && finalTop <= 20;
+              const stable = !Number.isNaN(previousTop) && !Number.isNaN(finalTop) && Math.abs(finalTop - previousTop) <= 3;
+              if (alignedFinal && stable) {
+                sendActivePayload(finalRect);
+                return;
+              }
+              sendWaitingPayload(finalRect, "waiting-for-scroll-align");
+            } catch (_) {
+              sendWaitingPayload(previousRect || rect0, "waiting-for-scroll-align");
+            }
+          }, 300);
+        };
+
+        setTimeout(() => {
+          try {
+            const rect1 = measureRect();
+            if (!rect1) {
+              sendWaitingPayload(rect0, "waiting-for-scroll-align");
+              return;
+            }
+            const top1 = recordTop(rect1);
+            const needsCorrection = Number.isNaN(top1) || top1 < 0 || top1 > 20;
+            if (!needsCorrection) {
+              finalizeStableCheck(rect1, top1);
+              return;
+            }
+
+            try {
+              const currentScrollY2 = window.scrollY || window.pageYOffset || 0;
+              const correctiveTargetScrollY = Math.max(0, Math.round(currentScrollY2 + (Number.isNaN(top1) ? 0 : top1) - CGTV_TOP_OFFSET_PX));
+              if (Math.abs(correctiveTargetScrollY - currentScrollY2) >= 1) {
+                window.scrollTo({ top: correctiveTargetScrollY, left: 0, behavior: "auto" });
+              }
+            } catch (_) {}
+
+            setTimeout(() => {
+              try {
+                const rect2 = measureRect();
+                if (!rect2) {
+                  sendWaitingPayload(rect1, "waiting-for-scroll-align");
+                  return;
+                }
+                const top2 = recordTop(rect2);
+                finalizeStableCheck(rect2, top2);
+              } catch (_) {
+                sendWaitingPayload(rect1, "waiting-for-scroll-align");
+              }
+            }, 300);
+          } catch (_) {
+            sendWaitingPayload(rect0, "waiting-for-scroll-align");
+          }
+        }, 300);
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+    if (isCgtvBradmaxFrame()) {
+      ensureCgtvBradmaxPlaybackHook(attemptAtMs);
+      scheduleCgtvBradmaxFullscreenPoll(attemptAtMs);
+      const state = collectCgtvBradmaxVideoState();
+      if (state.playing) {
+        // If the page is already playing, ensure we do not leave a transport lock applied
+        // that would prevent pointer interaction. Remove any existing lock.
+        removeCgtvBradmaxTransportLock("playing");
+        setTimeout(() => {
+          if (!isCgtvBradmaxFrame()) return;
+          maybeTriggerCgtvBradmaxFullscreen("playing-fullscreen-clicked", attemptAtMs + 250, collectCgtvBradmaxVideoState());
+        }, 250);
+      }
+      promptPayload({
+        type: "cgtv-play-assist",
+        phase: "content-cgtv-play-assist",
+        pageUrl: window.location.href,
+        active: !!state.hasVideo && !state.playing,
+        requiresUserAction: !!state.hasVideo && !state.playing,
+        reason: state.playing ? "playing" : "bradmax-video-state",
+        attemptAtMs: numberOrZero(attemptAtMs),
+        centerX: Math.max(1, Math.floor(window.innerWidth / 2)),
+        centerY: Math.max(1, Math.floor(window.innerHeight / 2)),
+        viewportWidth: numberOrZero(window.innerWidth || 0),
+        viewportHeight: numberOrZero(window.innerHeight || 0),
+        devicePixelRatio: numberOrZero(window.devicePixelRatio || 0),
+        rect: state.rectText,
+        targetKind: "bradmax-video",
+        targetSummary: "video",
+        hasVideo: !!state.hasVideo,
+        playing: !!state.playing,
+        paused: !!state.paused,
+        readyState: state.readyState,
+        currentTime: state.currentTime,
+        videoWidth: state.videoWidth,
+        videoHeight: state.videoHeight
+      });
+      return true;
+    }
+    return false;
+  }
+
+  function scheduleCgtvPlayAssist() {
+    if (cgtvPlayAssistScheduled) return;
+    if (!isCgtvWatchTopPage() && !isCgtvBradmaxFrame()) return;
+    cgtvPlayAssistScheduled = true;
+    CGTV_PLAY_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        emitCgtvPlayAssist("scheduled-" + delayMs, delayMs);
+      }, delayMs);
+    });
+  }
+
+  function attemptCgtvPageFullscreenLike(attemptAtMs, phase) {
+    const payload = {
+      type: "cgtv-page-fullscreen-like",
+      phase: phase || "content-cgtv-page-fullscreen-like",
+      pageUrl: window.location.href,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      applied: false,
+      reason: "not-cgtv-watch",
+      iframeRect: "none",
+      iframeSummary: "none"
+    };
+    if (!isCgtvWatchTopPage()) {
+      promptPayload(payload);
+      return payload;
+    }
+    try {
+      const iframe = findCgtvBradmaxIframe();
+      if (!iframe) {
+        payload.reason = "no-bradmax-iframe";
+        promptPayload(payload);
+        return payload;
+      }
+      payload.iframeSummary = summarizeNode(iframe);
+      payload.iframeRect = rectSummary(iframe);
+      if (!isVisible(iframe)) {
+        payload.reason = "iframe-not-visible";
+        promptPayload(payload);
+        return payload;
+      }
+      const beforeTop = iframe.getBoundingClientRect().top;
+      const currentScrollY = window.scrollY || window.pageYOffset || 0;
+      const targetScrollY = Math.max(0, currentScrollY + beforeTop);
+      if (Math.abs(beforeTop) > 2) {
+        window.scrollTo({ top: targetScrollY, left: 0, behavior: "auto" });
+      }
+      iframe.setAttribute("data-kf-cgtv-scroll-aligned", "1");
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.backgroundColor = "black";
+      }
+      if (document.body && document.body.style) {
+        document.body.style.backgroundColor = "black";
+      }
+      cgtvPageFullscreenLikeApplied = true;
+      payload.applied = true;
+      payload.reason = Math.abs(beforeTop) > 2 ? "bradmax-iframe-scroll-aligned" : "bradmax-iframe-already-aligned";
+      payload.scrollYBefore = numberOrZero(currentScrollY);
+      payload.scrollYAfter = numberOrZero(window.scrollY || window.pageYOffset || 0);
+      payload.deltaY = numberOrZero((window.scrollY || window.pageYOffset || 0) - currentScrollY);
+      payload.iframeRect = rectSummary(iframe);
+      promptPayload(payload);
+      return payload;
+    } catch (error) {
+      payload.reason = (error && (error.name || error.message)) || "error";
+      promptPayload(payload);
+      return payload;
+    }
+  }
+
+  function scheduleCgtvPageFullscreenLike() {
+    if (cgtvPageFullscreenLikeStarted || !isCgtvWatchTopPage()) return;
+    cgtvPageFullscreenLikeStarted = true;
+    [500, 1200, 2600, 5200].forEach((delayMs, index, arr) => {
+      setTimeout(() => {
+        if (!isCgtvWatchTopPage()) return;
+        const payload = cgtvPageFullscreenLikeApplied
+          ? {
+              applied: true,
+              reason: "already-applied",
+              iframeRect: rectSummary(findCgtvBradmaxIframe()),
+              iframeSummary: summarizeNode(findCgtvBradmaxIframe())
+            }
+          : attemptCgtvPageFullscreenLike(delayMs, "content-cgtv-page-fullscreen-like");
+        if (index === arr.length - 1) {
+          promptPayload({
+            type: "cgtv-page-fullscreen-like",
+            phase: "content-cgtv-page-fullscreen-like-final",
+            pageUrl: window.location.href,
+            attemptAtMs: delayMs,
+            applied: !!(payload && payload.applied),
+            reason: (payload && payload.reason) || "no-result",
+            iframeRect: (payload && payload.iframeRect) || "none",
+            iframeSummary: (payload && payload.iframeSummary) || "none"
+          });
+        }
+      }, delayMs);
+    });
   }
 
   function readNovusIntent() {
@@ -3303,6 +3920,8 @@
   scheduleAbsTegoStartupReprobe();
   scheduleAbsTegoPageFullscreenLike();
   scheduleNovusTelearubaFlow();
+  scheduleCgtvPageFullscreenLike();
+  scheduleCgtvPlayAssist();
   maybeAttachAbsTegoTopPlaybackListener();
   setupAbsTegoFullscreenNativeBridge();
   window.addEventListener("load", publish, { once: true });
@@ -3310,6 +3929,8 @@
   window.addEventListener("load", scheduleAbsTegoStartupReprobe, { once: true });
   window.addEventListener("load", scheduleAbsTegoPageFullscreenLike, { once: true });
   window.addEventListener("load", scheduleNovusTelearubaFlow, { once: true });
+  window.addEventListener("load", scheduleCgtvPageFullscreenLike, { once: true });
+  window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
   document.addEventListener("visibilitychange", publish);
   document.addEventListener("visibilitychange", applyTegoQualityPolicy);
