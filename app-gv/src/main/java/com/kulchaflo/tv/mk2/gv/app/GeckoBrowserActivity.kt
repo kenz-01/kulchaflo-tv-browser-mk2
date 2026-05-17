@@ -90,6 +90,26 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         val returnUrl: String,
     )
 
+    private data class CgtvPlayAssistState(
+        var active: Boolean = false,
+        var requiresUserAction: Boolean = false,
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var xRatio: Float = -1f,
+        var yRatio: Float = -1f,
+        var reason: String = "",
+        var targetKind: String = "",
+        var pageUrl: String = "",
+        var viewportWidth: Float = 0f,
+        var viewportHeight: Float = 0f,
+    )
+
+    private data class CgtvCandidateSelection(
+        val sourceUrl: String,
+        val mimeType: String?,
+        val reason: String,
+    )
+
     private lateinit var geckoView: GeckoView
     private lateinit var pointerOverlay: PointerOverlayView
     private lateinit var loadingOverlay: View
@@ -129,6 +149,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val novusTelearubaProfileBySession = LinkedHashMap<GeckoSession, NovusTelearubaProfileState>()
     private val novusTelearubaPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val novusTelearubaPlayAssistBySession = LinkedHashMap<GeckoSession, NovusTelearubaPlayAssistState>()
+    private val cgtvPlayAssistBySession = LinkedHashMap<GeckoSession, CgtvPlayAssistState>()
+    private val cgtvPlayAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val cgtvPlayAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val cgtvBrowserPlaybackActiveBySession = LinkedHashSet<GeckoSession>()
+    // Fallback release runnables scheduled after the first assisted native tap to ensure
+    // play-assist state does not permanently suppress user interaction when page-side
+    // playing=true does not arrive in time.
+    private val cgtvPlayAssistFallbackReleaseRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -227,6 +255,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         }
                         promotedMediaPlayer.stop(reason = "back-pressed")
                         geckoView.visibility = View.VISIBLE
+                        restoreCgtvPointerIfHidden(reason = "back")
                         return
                     }
                     val activeTab = tabController.getActiveTab()
@@ -374,6 +403,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
+        if (maybeHandleCgtvPlayAssistOk(event)) {
+            return true
+        }
         if (maybeHandleNovusTelearubaPlayAssistOk(event)) {
             return true
         }
@@ -465,6 +497,41 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             "GvMedia",
             "novus telearuba play assist ok dispatched handled=$handled x=${x.toInt()} y=${y.toInt()} reason=${state.reason} desiredChannel=${state.desiredChannel} pageUrl=$activeUrl"
         )
+        return true
+    }
+
+    private fun maybeHandleCgtvPlayAssistOk(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        if (!isCgtvContextUrl(activeTab.url)) {
+            return false
+        }
+        if (cgtvBrowserPlaybackActiveBySession.contains(activeTab.session)) {
+            // Treat browser-playback-active as evidence that playback started successfully
+            // and should not permanently suppress OK/Enter. Allow the event to be handled
+            // normally so the user can interact with the player after startup.
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cgtv click suppression inactive reason=browser-playback-active keyCode=${event.keyCode} pageUrl=${activeTab.url}"
+                )
+            }
+            // Do not consume the key; let normal processing occur so player/site can receive it.
+            return false
+        }
+        val state = cgtvPlayAssistBySession[activeTab.session] ?: return false
+        if (!state.active || !state.requiresUserAction) {
+            return false
+        }
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        dispatchCgtvPlayAssistNativeTap(activeTab.session, state, trigger = "ok")
         return true
     }
 
@@ -599,6 +666,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 novusTelearubaPlayerFirstReturnUrlBySession.remove(session)
                 novusTelearubaProfileBySession.remove(session)
                 novusTelearubaPlayAssistBySession.remove(session)
+            }
+            if (!isCgtvContextUrl(url.orEmpty())) {
+                // Clear any CGTV play-assist state and scheduled fallback when leaving CGTV contexts.
+                cgtvPlayAssistBySession.remove(session)
+                cgtvPlayAssistNativeTapCountBySession.remove(session)
+                cgtvPlayAssistNativeTapLastMsBySession.remove(session)
+                cgtvBrowserPlaybackActiveBySession.remove(session)
+                clearCgtvPlayAssistFallback(session)
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -804,6 +879,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         novusTelearubaProfileBySession.remove(tab.session)
         novusTelearubaPlayerFirstReturnUrlBySession.remove(tab.session)
         novusTelearubaPlayAssistBySession.remove(tab.session)
+        cgtvPlayAssistBySession.remove(tab.session)
+        cgtvPlayAssistNativeTapCountBySession.remove(tab.session)
+        cgtvPlayAssistNativeTapLastMsBySession.remove(tab.session)
+        cgtvBrowserPlaybackActiveBySession.remove(tab.session)
+        clearCgtvPlayAssistFallback(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
         syncPointerToActivePage("tab-closed")
@@ -1022,6 +1102,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             observation == null -> {
                 promotedMediaPlayer.stop(reason = "page-not-eligible")
                 geckoView.visibility = View.VISIBLE
+                restoreCgtvPointerIfHidden(reason = "page-not-eligible")
+                try {
+                    pointerOverlay.visibility = View.VISIBLE
+                } catch (_: Throwable) {
+                }
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
@@ -1040,6 +1125,33 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         "promote deferred sourceKind=EXTRACTED_STREAM url=${observation.url} reason=suppressed-after-back"
                     )
                     geckoView.visibility = View.VISIBLE
+                    restoreCgtvPointerIfHidden(reason = "deferred")
+                    try {
+                        pointerOverlay.visibility = View.VISIBLE
+                    } catch (_: Throwable) {
+                    }
+                    return
+                }
+                val activePageUrl = tabController.getActiveTab()?.url.orEmpty()
+                val cgtvContext = isCgtvContextUrl(activePageUrl) || isCgtvContextUrl(observation.url)
+                if (cgtvContext && !isLikelyCgtvLiveSourceUrl(observation.url, observation.mimeHint)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "cgtv promoted player-first skipped reason=wrong-layer url=${observation.url}"
+                    )
+                    promotedMediaPlayer.stop(reason = "cgtv-wrong-layer")
+                    geckoView.visibility = View.VISIBLE
+                    restoreCgtvPointerIfHidden(reason = "wrong-layer")
+                    return
+                }
+                if (cgtvContext) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "cgtv promoted player-first skipped reason=native-player-disabled url=${observation.url}"
+                    )
+                    promotedMediaPlayer.stop(reason = "cgtv-native-disabled")
+                    geckoView.visibility = View.VISIBLE
+                    restoreCgtvPointerIfHidden(reason = "native-player-disabled")
                     return
                 }
                 GvLogger.i(
@@ -1053,6 +1165,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             else -> {
                 promotedMediaPlayer.stop(reason = "candidate-only-page")
                 geckoView.visibility = View.VISIBLE
+                restoreCgtvPointerIfHidden(reason = "candidate-only")
+                try {
+                    pointerOverlay.visibility = View.VISIBLE
+                } catch (_: Throwable) {
+                }
             }
         }
     }
@@ -8548,6 +8665,72 @@ return changed>0;
             )
             return
         }
+        if (type == "cgtv-play-assist") {
+            val active = payload.optBoolean("active")
+            val requiresUserAction = payload.optBoolean("requiresUserAction", false)
+            val targetKind = payload.optString("targetKind")
+            val state = CgtvPlayAssistState(
+                active = active,
+                requiresUserAction = requiresUserAction,
+                centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                xRatio = payload.optDouble("xRatio", -1.0).toFloat(),
+                yRatio = payload.optDouble("yRatio", -1.0).toFloat(),
+                reason = payload.optString("reason"),
+                targetKind = targetKind,
+                pageUrl = pageUrl,
+                viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat(),
+                viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat(),
+            )
+            if (targetKind == "bradmax-iframe" && active) {
+                cgtvPlayAssistBySession[session] = state
+                val handled = dispatchCgtvPlayAssistNativeTap(session, state, trigger = "auto")
+                if (handled) {
+                    // Schedule a short Kotlin-side fallback that will release play-assist
+                    // if page-side playing=true does not arrive in time.
+                    scheduleCgtvPlayAssistFallbackRelease(session, pageUrl)
+                }
+            } else if (targetKind == "bradmax-video" && payload.optBoolean("playing")) {
+                // Playback detected by the page. Cancel any scheduled fallback, remove
+                // play-assist state and release browser-playback-active suppression so
+                // user input works again.
+                clearCgtvPlayAssistFallback(session)
+                cgtvPlayAssistBySession.remove(session)
+                if (cgtvBrowserPlaybackActiveBySession.contains(session)) {
+                    cgtvBrowserPlaybackActiveBySession.remove(session)
+                    GvLogger.i("GvMedia", "cgtv play assist released reason=playing")
+                    // Restore pointer overlay if it was hidden by CGTV startup.
+                    restoreCgtvPointerIfHidden(reason = "playing")
+                    GvLogger.i("GvMedia", "cgtv transport lock released reason=playing")
+                }
+            }
+            GvLogger.i(
+                "GvMedia",
+                "cgtv play assist active=$active requiresUserAction=$requiresUserAction reason=${state.reason} targetKind=$targetKind " +
+                    "pageUrl=$pageUrl center=${state.centerX.toInt()},${state.centerY.toInt()} rect=${payload.optString("rect")} " +
+                    "viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} dpr=${payload.optDouble("devicePixelRatio", 0.0)} " +
+                    "hasVideo=${payload.optBoolean("hasVideo")} playing=${payload.optBoolean("playing")} paused=${payload.optBoolean("paused")} " +
+                    "readyState=${payload.optInt("readyState")} currentTime=${payload.optDouble("currentTime")} size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")}"
+            )
+            return
+        }
+        if (type == "cgtv-transport-lock") {
+            GvLogger.i(
+                "GvMedia",
+                "cgtv transport lock applied=${payload.optBoolean("applied")} reason=${payload.optString("reason")} pageUrl=$pageUrl"
+            )
+            return
+        }
+        if (type == "cgtv-page-fullscreen-like") {
+            GvLogger.i(
+                "GvMedia",
+                "cgtv page fullscreen-like phase=${payload.optString("phase")} reason=${payload.optString("reason")} " +
+                    "applied=${payload.optBoolean("applied")} pageUrl=$pageUrl attemptAtMs=${payload.optLong("attemptAtMs")} " +
+                    "scrollY=${payload.optDouble("scrollYBefore")}->${payload.optDouble("scrollYAfter")} deltaY=${payload.optDouble("deltaY")} " +
+                    "iframeRect=${payload.optString("iframeRect")} iframe=${payload.optString("iframeSummary")}"
+            )
+            return
+        }
         if (type == "viewport-compat") {
             GvLogger.i(
                 "GvLayout",
@@ -8574,6 +8757,25 @@ return changed>0;
                 "GvExt",
                 "media evidence ignored tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} pageUrl=$pageUrl reason=live-media-surface"
             )
+            return
+        }
+        val cgtvSelection = selectCgtvCandidate(pageUrl, candidates)
+        if (cgtvSelection != null) {
+            GvLogger.i(
+                "GvMedia",
+                "cgtv promoted player-first skipped reason=native-player-disabled url=${cgtvSelection.sourceUrl}"
+            )
+            geckoView.visibility = View.VISIBLE
+            restoreCgtvPointerIfHidden(reason = "native-player-disabled")
+            return
+        }
+        if (isCgtvContextUrl(pageUrl) && candidates.length() > 0) {
+            val fallbackUrl = candidates.optJSONObject(0)?.optString("src").orEmpty()
+            GvLogger.i(
+                "GvMedia",
+                "cgtv promoted player-first skipped reason=wrong-layer url=$fallbackUrl"
+            )
+            restoreCgtvPointerIfHidden(reason = "wrong-layer")
             return
         }
         for (index in 0 until candidates.length()) {
@@ -8655,6 +8857,11 @@ return changed>0;
         private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
         private const val POINTER_IDLE_HIDE_MS = 3500L
         private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
+        private const val CGTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
+        private const val CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 1
+        // Fallback timeout used to release CGTV play-assist state if page-side playing=true
+        // does not arrive within this window after an assisted native tap.
+        private const val CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS = 5000L
         private const val GLOBAL_SITE_SCALE = 0.76
         private const val GLOBAL_WIDTH_COMPENSATION = 1.14
         private const val EXTRA_URL = "url"
@@ -9142,6 +9349,278 @@ return changed>0;
 
     private fun shouldApplyUnifiedCompat(url: String): Boolean {
         return unifiedCompatSkipReason(url) == null
+    }
+
+    private fun restoreCgtvPointerIfHidden(reason: String) {
+        try {
+            if (pointerOverlay.visibility == View.VISIBLE) {
+                return
+            }
+            pointerOverlay.visibility = View.VISIBLE
+            GvLogger.i("GvInput", "cgtv pointer restored reason=$reason")
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun scheduleCgtvPlayAssistFallbackRelease(session: GeckoSession, pageUrl: String) {
+        try {
+            if (cgtvPlayAssistFallbackReleaseRunnableBySession.containsKey(session)) return
+            val runnable = Runnable {
+                if (isFinishing || isDestroyed) return@Runnable
+                // If playback evidence already arrived, make this fallback harmless.
+                if (cgtvBrowserPlaybackActiveBySession.contains(session)) {
+                    cgtvPlayAssistFallbackReleaseRunnableBySession.remove(session)
+                    return@Runnable
+                }
+                // Clear CGTV play-assist state and related counters.
+                cgtvPlayAssistBySession.remove(session)
+                cgtvPlayAssistNativeTapCountBySession.remove(session)
+                cgtvPlayAssistNativeTapLastMsBySession.remove(session)
+                // Remove any lingering browser-playback-active marker and log transport lock release
+                if (cgtvBrowserPlaybackActiveBySession.remove(session)) {
+                    GvLogger.i("GvMedia", "cgtv transport lock released reason=fallback-timeout pageUrl=$pageUrl")
+                }
+                GvLogger.i("GvMedia", "cgtv play assist released reason=fallback-timeout pageUrl=$pageUrl")
+                // Restore pointer overlay if it was hidden by CGTV startup.
+                restoreCgtvPointerIfHidden(reason = "fallback-timeout")
+                cgtvPlayAssistFallbackReleaseRunnableBySession.remove(session)
+            }
+            cgtvPlayAssistFallbackReleaseRunnableBySession[session] = runnable
+            pointerHandler.postDelayed(runnable, CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS)
+            GvLogger.i("GvMedia", "cgtv play assist fallback scheduled timeoutMs=$CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS pageUrl=$pageUrl")
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun clearCgtvPlayAssistFallback(session: GeckoSession) {
+        try {
+            val runnable = cgtvPlayAssistFallbackReleaseRunnableBySession.remove(session) ?: return
+            pointerHandler.removeCallbacks(runnable)
+            GvLogger.i("GvMedia", "cgtv play assist fallback cancelled reason=cleared")
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun dispatchCgtvPlayAssistNativeTap(
+        session: GeckoSession,
+        state: CgtvPlayAssistState,
+        trigger: String,
+    ): Boolean {
+        val activeTab = tabController.getActiveTab()
+        if (activeTab?.session != session || !isCgtvContextUrl(activeTab.url)) {
+            GvLogger.i(
+                "GvMedia",
+                "cgtv play assist native tap skipped trigger=$trigger reason=active-url-mismatch pageUrl=${state.pageUrl} activeUrl=${activeTab?.url.orEmpty()}"
+            )
+            return false
+        }
+        if (state.centerX < 0f || state.centerY < 0f) {
+            GvLogger.i(
+                "GvMedia",
+                "cgtv play assist native tap skipped trigger=$trigger reason=missing-coordinates pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = cgtvPlayAssistNativeTapLastMsBySession[session] ?: 0L
+        if (now - last < CGTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS) {
+            GvLogger.i(
+                "GvMedia",
+                "cgtv play assist native tap skipped trigger=$trigger reason=rate-limited pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (trigger == "auto") {
+            val alignedViewport = if (state.yRatio > 0f) {
+                // Ratio-based alignment check (device-independent)
+                state.yRatio <= 0.65f
+            } else {
+                state.viewportHeight > 0f && state.centerY <= state.viewportHeight * 0.65f
+            }
+            if (state.targetKind == "bradmax-iframe" && !alignedViewport) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cgtv play assist native tap skipped trigger=$trigger reason=waiting-for-scroll-align css=${state.centerX.toInt()},${state.centerY.toInt()} viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} pageUrl=${state.pageUrl}"
+                )
+                return false
+            }
+            val count = cgtvPlayAssistNativeTapCountBySession[session] ?: 0
+            if (count >= CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cgtv play assist native tap skipped trigger=$trigger reason=auto-limit pageUrl=${state.pageUrl}"
+                )
+                return false
+            }
+            cgtvPlayAssistNativeTapCountBySession[session] = count + 1
+        }
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+
+        // Prefer ratio-based coordinates when available. Ratios are device-independent:
+        // nativeX = geckoView.width * xRatio, nativeY = geckoView.height * yRatio
+        val usingRatio = state.xRatio > 0f && state.yRatio > 0f
+        val x: Float
+        val y: Float
+        val cssX = state.centerX
+        val cssY = state.centerY
+        if (usingRatio) {
+            x = (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
+            y = (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
+        } else {
+            val scaleX = if (state.viewportWidth > 0f && maxWidth > state.viewportWidth + 1f) {
+                maxWidth / state.viewportWidth
+            } else {
+                1f
+            }
+            val scaleY = if (state.viewportHeight > 0f && maxHeight > state.viewportHeight + 1f) {
+                maxHeight / state.viewportHeight
+            } else {
+                1f
+            }
+            x = (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
+            y = (state.centerY * scaleY).coerceIn(1f, maxHeight - 1f)
+        }
+
+        cgtvPlayAssistNativeTapLastMsBySession[session] = now
+        val handled = dispatchNativeMouseTapAt(x, y, "cgtv-play-assist-$trigger")
+        GvLogger.i(
+            "GvMedia",
+            "cgtv play assist native tap dispatched trigger=$trigger handled=$handled native=${x.toInt()},${y.toInt()} css=${cssX.toInt()},${cssY.toInt()} viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} ratio=${if (usingRatio) "${state.xRatio},${state.yRatio}" else "-,-"} targetKind=${state.targetKind} reason=${state.reason} pageUrl=${state.pageUrl}"
+        )
+        return handled
+    }
+
+    private fun selectCgtvCandidate(
+        pageUrl: String,
+        candidates: JSONArray,
+    ): CgtvCandidateSelection? {
+        if (!isCgtvContextUrl(pageUrl)) {
+            return null
+        }
+        val selected = extractBradmaxMediaUrl(pageUrl)?.let { mediaUrl ->
+            CgtvCandidateSelection(
+                sourceUrl = mediaUrl,
+                mimeType = inferMimeTypeFromUrl(mediaUrl),
+                reason = if (isLikelyHlsUrl(mediaUrl, inferMimeTypeFromUrl(mediaUrl))) "bradmax-mediaUrl-hls" else "bradmax-mediaUrl",
+            )
+        } ?: run {
+            var firstNonSplash: CgtvCandidateSelection? = null
+            for (index in 0 until candidates.length()) {
+                val candidate = candidates.optJSONObject(index) ?: continue
+                val sourceUrl = candidate.optString("src").trim()
+                if (sourceUrl.isBlank()) continue
+                val mimeType = candidate.optString("mimeType").ifBlank { null }
+                val bradmaxMediaUrl = extractBradmaxMediaUrl(sourceUrl)
+                if (!bradmaxMediaUrl.isNullOrBlank() && isLikelyHlsUrl(bradmaxMediaUrl, mimeType)) {
+                    return@run CgtvCandidateSelection(
+                        sourceUrl = bradmaxMediaUrl,
+                        mimeType = inferMimeTypeFromUrl(bradmaxMediaUrl),
+                        reason = "bradmax-mediaUrl-hls",
+                    )
+                }
+                if (isLikelyCgtvSplashAnimationUrl(sourceUrl)) {
+                    GvLogger.i("GvMedia", "cgtv media candidate rejected reason=splash-animation url=$sourceUrl")
+                    continue
+                }
+                val normalizedSource = bradmaxMediaUrl ?: sourceUrl
+                val normalizedMime = mimeType ?: inferMimeTypeFromUrl(normalizedSource)
+                val reason = if (isLikelyHlsUrl(normalizedSource, normalizedMime)) "direct-hls" else "direct-candidate"
+                if (isLikelyHlsUrl(normalizedSource, normalizedMime)) {
+                    return@run CgtvCandidateSelection(
+                        sourceUrl = normalizedSource,
+                        mimeType = normalizedMime,
+                        reason = reason,
+                    )
+                }
+                if (firstNonSplash == null) {
+                    firstNonSplash = CgtvCandidateSelection(
+                        sourceUrl = normalizedSource,
+                        mimeType = normalizedMime,
+                        reason = reason,
+                    )
+                }
+            }
+            firstNonSplash
+        }
+        if (selected != null) {
+            GvLogger.i("GvMedia", "cgtv media candidate selected reason=${selected.reason} url=${selected.sourceUrl}")
+        }
+        return selected
+    }
+
+    private fun extractBradmaxMediaUrl(url: String): String? {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return null
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "bradm.ax" && !host.endsWith(".bradm.ax")) {
+            return null
+        }
+        val encoded = uri.getQueryParameter("mediaUrl")?.trim().orEmpty()
+        if (encoded.isBlank()) {
+            return null
+        }
+        val decoded = runCatching { android.net.Uri.decode(encoded) }.getOrDefault(encoded).trim()
+        if (decoded.startsWith("http://", ignoreCase = true) || decoded.startsWith("https://", ignoreCase = true)) {
+            return decoded
+        }
+        return null
+    }
+
+    private fun isCgtvContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "kulchaflo.com" && path.startsWith("/channels/caribbean-gospel-tv")) {
+            return true
+        }
+        if (host == "caribbeangospel.tv" || host.endsWith(".caribbeangospel.tv")) {
+            return true
+        }
+        return host == "bradm.ax" || host.endsWith(".bradm.ax")
+    }
+
+    private fun isLikelyCgtvSplashAnimationUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        if (!lower.contains(".mp4")) {
+            return false
+        }
+        return lower.contains("cgtv-animation") ||
+            lower.contains("animation") ||
+            lower.contains("website-test") ||
+            lower.contains("/wp-content/uploads/")
+    }
+
+    private fun inferMimeTypeFromUrl(url: String): String? {
+        val path = runCatching { android.net.Uri.parse(url) }.getOrNull()?.encodedPath.orEmpty()
+        return when {
+            path.endsWith(".m3u8", ignoreCase = true) -> "application/x-mpegURL"
+            path.endsWith(".mp4", ignoreCase = true) -> "video/mp4"
+            path.endsWith(".webm", ignoreCase = true) -> "video/webm"
+            path.endsWith(".mp3", ignoreCase = true) || path.endsWith(".m4a", ignoreCase = true) -> "audio/*"
+            else -> null
+        }
+    }
+
+    private fun isLikelyHlsUrl(url: String, mimeType: String?): Boolean {
+        if (mimeType?.contains("mpegurl", ignoreCase = true) == true) {
+            return true
+        }
+        val lower = url.lowercase()
+        return lower.contains(".m3u8")
+    }
+
+    private fun isLikelyCgtvLiveSourceUrl(url: String, mimeType: String?): Boolean {
+        if (isLikelyHlsUrl(url, mimeType)) {
+            return true
+        }
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host.endsWith(".servers.dvcloud.tv") && path.contains("/hls/")
     }
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
