@@ -17,6 +17,12 @@ class GvPromotedMediaPlayer(
     private val context: Context,
     private val host: ViewGroup,
 ) {
+    interface Listener {
+        fun onPromotedPlayerError(source: GvMediaPathController.Observation, error: androidx.media3.common.PlaybackException)
+    }
+
+    var listener: Listener? = null
+
     private var playerView: PlayerView? = null
     private var player: ExoPlayer? = null
     private var activeSource: GvMediaPathController.Observation? = null
@@ -98,6 +104,7 @@ class GvPromotedMediaPlayer(
                         "player failed errorType=${error.errorCodeName} message=${error.message ?: "unknown"} url=${source.url}",
                         error
                     )
+                    listener?.onPromotedPlayerError(source, error)
                 }
             })
             prepare()

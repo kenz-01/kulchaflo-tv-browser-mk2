@@ -145,6 +145,44 @@
     return host === "bradm.ax" || host.endsWith(".bradm.ax");
   }
 
+  function isCaribVisionAppPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    return host === "app.caribvision.tv";
+  }
+
+  function emitCaribVisionLiveHlsReady(reason) {
+    if (!isCaribVisionAppPage()) return false;
+    try {
+      const player = document.querySelector("video#live-stream-player");
+      if (!player) return false;
+      const source = player.querySelector('source[type="application/x-mpegURL" i]');
+      if (!source) return false;
+      const sourceUrl = String(source.getAttribute("src") || source.src || "").trim();
+      if (!sourceUrl) return false;
+      promptPayload({
+        type: "caribvision-live-hls-ready",
+        phase: "content-caribvision-live-hls-ready",
+        pageUrl: window.location.href,
+        reason: String(reason || "videojs-source"),
+        playerId: "live-stream-player",
+        sourceUrl,
+        sourceType: String(source.getAttribute("type") || ""),
+        muted: !!player.muted,
+        autoplay: !!player.autoplay
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function scheduleCaribVisionLiveHlsReady() {
+    if (!isCaribVisionAppPage()) return;
+    [400, 1200, 2600, 5000].forEach((delayMs) => {
+      setTimeout(() => emitCaribVisionLiveHlsReady("scheduled-" + delayMs), delayMs);
+    });
+  }
+
   function findCgtvBradmaxIframe() {
     if (!isCgtvWatchTopPage()) return null;
     const frames = Array.from(document.querySelectorAll("iframe[src]"));
@@ -3905,10 +3943,12 @@
     const payload = collect();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
+      emitCaribVisionLiveHlsReady("publish-no-change");
       return;
     }
     lastSignature = signature;
     promptPayload(payload);
+    emitCaribVisionLiveHlsReady("publish");
   }
 
   const absTegoUrlRedirected = maybeSanitizeAbsTegoPlayerFrameUrl();
@@ -3922,6 +3962,7 @@
   scheduleNovusTelearubaFlow();
   scheduleCgtvPageFullscreenLike();
   scheduleCgtvPlayAssist();
+  scheduleCaribVisionLiveHlsReady();
   maybeAttachAbsTegoTopPlaybackListener();
   setupAbsTegoFullscreenNativeBridge();
   window.addEventListener("load", publish, { once: true });
@@ -3931,6 +3972,7 @@
   window.addEventListener("load", scheduleNovusTelearubaFlow, { once: true });
   window.addEventListener("load", scheduleCgtvPageFullscreenLike, { once: true });
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
+  window.addEventListener("load", scheduleCaribVisionLiveHlsReady, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
   document.addEventListener("visibilitychange", publish);
   document.addEventListener("visibilitychange", applyTegoQualityPolicy);
