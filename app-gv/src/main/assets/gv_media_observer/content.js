@@ -150,6 +150,47 @@
     return host === "app.caribvision.tv";
   }
 
+  function isCbcLiveTopPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cbc.bb" && host !== "www.cbc.bb") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live" || path === "/live/";
+  }
+
+  function emitCbcLiveHlsReady(reason) {
+    if (!isCbcLiveTopPage()) return false;
+    try {
+      const player = document.querySelector('video-js[id^="videojs"]');
+      if (!player) return false;
+      const source = player.querySelector('source[type="application/x-mpegURL" i]');
+      if (!source) return false;
+      const sourceUrl = String(source.getAttribute("src") || source.src || "").trim();
+      if (!sourceUrl) return false;
+      promptPayload({
+        type: "cbc-live-hls-ready",
+        phase: "content-cbc-live-hls-ready",
+        pageUrl: window.location.href,
+        reason: String(reason || "videojs-source"),
+        playerId: String(player.getAttribute("id") || ""),
+        sourceUrl,
+        sourceType: String(source.getAttribute("type") || ""),
+        autoplay: !!(player.autoplay || player.hasAttribute("autoplay")),
+        controls: !!(player.controls || player.hasAttribute("controls")),
+        playsinline: !!(player.playsInline || player.hasAttribute("playsinline"))
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function scheduleCbcLiveHlsReady() {
+    if (!isCbcLiveTopPage()) return;
+    [400, 1200, 2600, 5000].forEach((delayMs) => {
+      setTimeout(() => emitCbcLiveHlsReady("scheduled-" + delayMs), delayMs);
+    });
+  }
+
   function emitCaribVisionLiveHlsReady(reason) {
     if (!isCaribVisionAppPage()) return false;
     try {
@@ -3943,11 +3984,13 @@
     const payload = collect();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
+      emitCbcLiveHlsReady("publish-no-change");
       emitCaribVisionLiveHlsReady("publish-no-change");
       return;
     }
     lastSignature = signature;
     promptPayload(payload);
+    emitCbcLiveHlsReady("publish");
     emitCaribVisionLiveHlsReady("publish");
   }
 
@@ -3962,6 +4005,7 @@
   scheduleNovusTelearubaFlow();
   scheduleCgtvPageFullscreenLike();
   scheduleCgtvPlayAssist();
+  scheduleCbcLiveHlsReady();
   scheduleCaribVisionLiveHlsReady();
   maybeAttachAbsTegoTopPlaybackListener();
   setupAbsTegoFullscreenNativeBridge();
@@ -3972,6 +4016,7 @@
   window.addEventListener("load", scheduleNovusTelearubaFlow, { once: true });
   window.addEventListener("load", scheduleCgtvPageFullscreenLike, { once: true });
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
+  window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
   window.addEventListener("load", scheduleCaribVisionLiveHlsReady, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
   document.addEventListener("visibilitychange", publish);

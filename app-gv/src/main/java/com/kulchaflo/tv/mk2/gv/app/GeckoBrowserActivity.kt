@@ -169,6 +169,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var pointerY = 0f
     private var pointerDownTime = 0L
     private var pointerRepeatTicks = 0
+    private var promotedPointerModeActive = false
     private var lastBackToExitAtMs = 0L
     private var lastBackToHomeAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
@@ -214,6 +215,22 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
     }
 
+    private val promotedPointerRepeatRunnable = object : Runnable {
+        override fun run() {
+            if (!promotedPointerModeActive || pointerDirectionKeys.isEmpty()) {
+                return
+            }
+            val delta = currentPointerDelta() ?: return
+            pointerRepeatTicks += 1
+            val multiplier = holdSpeedMultiplier()
+            movePromotedPointerBy(
+                deltaX = delta.first * POINTER_MOVE_STEP_PX * multiplier,
+                deltaY = delta.second * POINTER_MOVE_STEP_PX * multiplier,
+            )
+            pointerHandler.postDelayed(this, POINTER_REPEAT_FRAME_MS)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_gecko_browser)
@@ -243,20 +260,32 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 source: GvMediaPathController.Observation,
                 error: androidx.media3.common.PlaybackException,
             ) {
-                if (!isExactCaribVisionLiveHlsUrl(source.url)) {
+                val caribVisionSource = isExactCaribVisionLiveHlsUrl(source.url)
+                val cbcSource = isExactCbcLiveHlsUrl(source.url)
+                if (!caribVisionSource && !cbcSource) {
                     return
                 }
                 runOnUiThread {
-                    promotedMediaPlayer.stop(reason = "caribvision-native-error")
+                    if (cbcSource) {
+                        disablePromotedPointerMode(reason = "native-error", keepPointerVisible = false)
+                    }
+                    promotedMediaPlayer.stop(reason = if (caribVisionSource) "caribvision-native-error" else "cbc-native-error")
                     geckoView.visibility = View.VISIBLE
                     try {
                         pointerOverlay.visibility = View.VISIBLE
                     } catch (_: Throwable) {
                     }
-                    GvLogger.i(
-                        "GvMedia",
-                        "caribvision native failed fallback-to-browser errorType=${error.errorCodeName} url=${source.url}"
-                    )
+                    if (caribVisionSource) {
+                        GvLogger.i(
+                            "GvMedia",
+                            "caribvision native failed fallback-to-browser errorType=${error.errorCodeName} url=${source.url}"
+                        )
+                    } else {
+                        GvLogger.i(
+                            "GvMedia",
+                            "cbc native failed fallback-to-browser errorType=${error.errorCodeName} url=${source.url}"
+                        )
+                    }
                 }
             }
         }
@@ -272,11 +301,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         return
                     }
                     if (promotedMediaPlayer.isPromoted()) {
+                        val promotedSourceUrl = promotedMediaPlayer.currentSourceUrl().orEmpty()
                         promotedMediaPlayer.currentSourceUrl()?.let { sourceUrl ->
                             suppressDirectMediaPromotion(sourceUrl, reason = "back-pressed")
                         }
                         promotedMediaPlayer.stop(reason = "back-pressed")
                         geckoView.visibility = View.VISIBLE
+                        if (isExactCbcLiveHlsUrl(promotedSourceUrl)) {
+                            disablePromotedPointerMode(reason = "back", keepPointerVisible = true)
+                            GvLogger.i("GvInput", "cbc pointer restored reason=back sourceUrl=$promotedSourceUrl")
+                        }
                         restoreCgtvPointerIfHidden(reason = "back")
                         return
                     }
@@ -435,6 +469,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             return true
         }
         if (handleTabsOverlayInput(event)) {
+            return true
+        }
+        if (promotedPointerModeActive && handlePromotedPointerInput(event)) {
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && browserMediaController.handleMediaKey(event)) {
@@ -1130,6 +1167,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     GvLogger.i(
                         "GvMedia",
                         "caribvision native keep-alive reason=page-not-eligible currentUrl=$currentUrl sourceUrl=$activePromotedUrl"
+                    )
+                    return
+                }
+                if (
+                    isCbcLivePageUrl(currentUrl) &&
+                    isExactCbcLiveHlsUrl(activePromotedUrl)
+                ) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "cbc native keep-alive reason=page-not-eligible currentUrl=$currentUrl sourceUrl=$activePromotedUrl"
                     )
                     return
                 }
@@ -6248,6 +6295,70 @@ return changed>0;
         return false
     }
 
+    private fun handlePromotedPointerInput(event: KeyEvent): Boolean {
+        if (!promotedPointerModeActive || event.keyCode !in POINTER_KEY_CODES) {
+            return false
+        }
+        if (!promotedMediaPlayer.isPromoted() || !isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
+            disablePromotedPointerMode(reason = "source-inactive", keepPointerVisible = false)
+            return false
+        }
+        if (geckoView.width <= 0 || geckoView.height <= 0) {
+            return false
+        }
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT,
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        ensurePromotedPointerVisible()
+                        val firstPress = pointerDirectionKeys.add(event.keyCode)
+                        if (firstPress) {
+                            pointerRepeatTicks = 0
+                            val delta = directionalPointerDelta(event.keyCode)
+                            movePromotedPointerBy(
+                                deltaX = delta.first * POINTER_MOVE_STEP_PX,
+                                deltaY = delta.second * POINTER_MOVE_STEP_PX,
+                            )
+                            startPromotedPointerRepeater()
+                        }
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        ensurePromotedPointerVisible()
+                        pointerOverlay.setPointerPressed(true)
+                        pointerDownTime = SystemClock.uptimeMillis()
+                        val handled = promotedMediaPlayer.dispatchPointerTap(pointerX, pointerY)
+                        GvLogger.i(
+                            "GvInput",
+                            "promoted pointer tap dispatched target=player-view x=${pointerX.toInt()} y=${pointerY.toInt()} handled=$handled"
+                        )
+                        return true
+                    }
+                }
+                return false
+            }
+
+            KeyEvent.ACTION_UP -> {
+                if (event.keyCode in POINTER_DIRECTION_KEYS) {
+                    pointerDirectionKeys.remove(event.keyCode)
+                    if (pointerDirectionKeys.isEmpty()) {
+                        stopPromotedPointerRepeater()
+                    }
+                    return true
+                }
+                if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER) {
+                    pointerOverlay.setPointerPressed(false)
+                    return true
+                }
+                return false
+            }
+        }
+        return false
+    }
+
     private fun ensurePointerVisible() {
         if (pointerVisible && pointerOverlay.isPointerVisible()) {
             schedulePointerIdleTimeout()
@@ -6281,6 +6392,29 @@ return changed>0;
         GvLogger.i("GvInput", "pointer visible=true reason=$reason x=${pointerX.toInt()} y=${pointerY.toInt()}")
     }
 
+    private fun ensurePromotedPointerVisible() {
+        if (pointerVisible && pointerOverlay.isPointerVisible()) {
+            schedulePointerIdleTimeout()
+            return
+        }
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val inset = pointerBoundsInsetPx()
+        val minX = inset
+        val maxX = maxWidth - inset
+        val minY = inset
+        val maxY = maxHeight - inset
+        val hasStoredPosition = pointerX in minX..maxX && pointerY in minY..maxY
+        pointerX = if (hasStoredPosition) pointerX.coerceIn(minX, maxX) else (maxWidth * 0.5f).coerceIn(minX, maxX)
+        pointerY = if (hasStoredPosition) pointerY.coerceIn(minY, maxY) else (maxHeight * 0.5f).coerceIn(minY, maxY)
+        pointerOverlay.visibility = View.VISIBLE
+        pointerOverlay.bringToFront()
+        pointerOverlay.showAt(pointerX, pointerY)
+        pointerVisible = true
+        schedulePointerIdleTimeout()
+        GvLogger.i("GvInput", "pointer visible=true reason=promoted-pointer restored=$hasStoredPosition x=${pointerX.toInt()} y=${pointerY.toInt()}")
+    }
+
     private fun movePointerBy(deltaX: Float, deltaY: Float): PointerMoveResult {
         ensurePointerVisible()
         val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
@@ -6306,6 +6440,19 @@ return changed>0;
         return PointerMoveResult(overshootX = overshootX, overshootY = overshootY)
     }
 
+    private fun movePromotedPointerBy(deltaX: Float, deltaY: Float) {
+        ensurePromotedPointerVisible()
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val inset = pointerBoundsInsetPx()
+        pointerX = (pointerX + deltaX).coerceIn(inset, maxWidth - inset)
+        pointerY = (pointerY + deltaY).coerceIn(inset, maxHeight - inset)
+        pointerOverlay.updatePosition(pointerX, pointerY)
+        val handled = promotedMediaPlayer.dispatchPointerHover(pointerX, pointerY)
+        schedulePointerIdleTimeout()
+        GvLogger.i("GvInput", "promoted pointer moved x=${pointerX.toInt()} y=${pointerY.toInt()} source=promoted hoverHandled=$handled")
+    }
+
     private fun dispatchInteractionWakePulse() {
         val now = SystemClock.uptimeMillis()
         if (now - lastInteractionWakePulseMs < INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS) {
@@ -6327,7 +6474,49 @@ return changed>0;
 
     private fun stopPointerRepeater() {
         pointerHandler.removeCallbacks(pointerRepeatRunnable)
+        pointerHandler.removeCallbacks(promotedPointerRepeatRunnable)
         pointerRepeatTicks = 0
+    }
+
+    private fun startPromotedPointerRepeater() {
+        pointerHandler.removeCallbacks(promotedPointerRepeatRunnable)
+        pointerHandler.postDelayed(promotedPointerRepeatRunnable, POINTER_INITIAL_REPEAT_DELAY_MS)
+    }
+
+    private fun stopPromotedPointerRepeater() {
+        pointerHandler.removeCallbacks(promotedPointerRepeatRunnable)
+        pointerRepeatTicks = 0
+    }
+
+    private fun enablePromotedPointerModeIfCbc(sourceUrl: String) {
+        if (!isExactCbcLiveHlsUrl(sourceUrl)) {
+            return
+        }
+        if (promotedPointerModeActive) {
+            return
+        }
+        pointerOverlay.visibility = View.VISIBLE
+        pointerOverlay.bringToFront()
+        promotedPointerModeActive = true
+        ensurePromotedPointerVisible()
+        GvLogger.i("GvInput", "promoted pointer mode enabled reason=cbc-exact-hls sourceUrl=$sourceUrl")
+    }
+
+    private fun disablePromotedPointerMode(reason: String, keepPointerVisible: Boolean) {
+        if (!promotedPointerModeActive) {
+            return
+        }
+        promotedPointerModeActive = false
+        pointerDirectionKeys.clear()
+        stopPromotedPointerRepeater()
+        pointerOverlay.setPointerPressed(false)
+        if (keepPointerVisible) {
+            ensurePointerVisible()
+        } else {
+            pointerVisible = false
+            pointerOverlay.hidePointer()
+        }
+        GvLogger.i("GvInput", "promoted pointer mode disabled reason=$reason")
     }
 
     private fun maybeScrollContent(overshootX: Float, overshootY: Float, reason: String) {
@@ -8816,6 +9005,52 @@ return changed>0;
             }
             return
         }
+        if (type == "cbc-live-hls-ready") {
+            val sourceUrl = payload.optString("sourceUrl").trim()
+            val sourceType = payload.optString("sourceType")
+            val autoplay = payload.optBoolean("autoplay")
+            val controls = payload.optBoolean("controls")
+            val playsinline = payload.optBoolean("playsinline")
+            GvLogger.i(
+                "GvMedia",
+                "cbc live hls ready pageUrl=$pageUrl playerId=${payload.optString("playerId")} sourceType=$sourceType autoplay=$autoplay controls=$controls playsinline=$playsinline sourceUrl=$sourceUrl"
+            )
+            if (!isCbcLivePageUrl(pageUrl)) {
+                GvLogger.i("GvMedia", "cbc native promote skipped reason=page-context pageUrl=$pageUrl")
+                return
+            }
+            if (!isExactCbcLiveHlsUrl(sourceUrl)) {
+                GvLogger.i("GvMedia", "cbc native promote skipped reason=non-exact-hls sourceUrl=$sourceUrl")
+                return
+            }
+            if (isDirectMediaPromotionSuppressed(sourceUrl)) {
+                GvLogger.i("GvMedia", "cbc native promote deferred reason=suppressed-after-back sourceUrl=$sourceUrl")
+                geckoView.visibility = View.VISIBLE
+                return
+            }
+            val observation = mediaPathController.onExtensionMediaEvidence(
+                pageUrl = pageUrl,
+                sourceUrl = sourceUrl,
+                mimeType = if (sourceType.isBlank()) "application/x-mpegURL" else sourceType,
+                title = title,
+            )
+            if (observation == null) {
+                GvLogger.i("GvMedia", "cbc native promote skipped reason=observation-null sourceUrl=$sourceUrl")
+                return
+            }
+            GvLogger.i("GvMedia", "cbc native promote allowed exact-hls sourceUrl=$sourceUrl")
+            if (tabController.getActiveTab()?.session == session) {
+                if (isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
+                    GvLogger.i("GvMedia", "cbc native promote skipped reason=already-active sourceUrl=$sourceUrl")
+                    enablePromotedPointerModeIfCbc(sourceUrl)
+                    return
+                }
+                geckoView.visibility = View.GONE
+                promotedMediaPlayer.play(observation)
+                enablePromotedPointerModeIfCbc(sourceUrl)
+            }
+            return
+        }
         if (isFacebookUrl(pageUrl)) {
             GvLogger.i(
                 "GvExt",
@@ -8846,6 +9081,40 @@ return changed>0;
                     }
                     geckoView.visibility = View.GONE
                     promotedMediaPlayer.play(observation)
+                }
+                return
+            }
+        }
+        if (isCbcLivePageUrl(pageUrl)) {
+            for (index in 0 until candidates.length()) {
+                val candidate = candidates.optJSONObject(index) ?: continue
+                val sourceUrl = candidate.optString("src").trim()
+                if (!isExactCbcLiveHlsUrl(sourceUrl)) continue
+                if (isDirectMediaPromotionSuppressed(sourceUrl)) {
+                    GvLogger.i("GvMedia", "cbc native promote deferred reason=suppressed-after-back sourceUrl=$sourceUrl")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
+                val observation = mediaPathController.onExtensionMediaEvidence(
+                    pageUrl = pageUrl,
+                    sourceUrl = sourceUrl,
+                    mimeType = "application/x-mpegURL",
+                    title = title,
+                )
+                if (observation == null) {
+                    GvLogger.i("GvMedia", "cbc native promote skipped reason=observation-null sourceUrl=$sourceUrl")
+                    return
+                }
+                GvLogger.i("GvMedia", "cbc native promote allowed exact-hls sourceUrl=$sourceUrl")
+                if (tabController.getActiveTab()?.session == session) {
+                    if (isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
+                        GvLogger.i("GvMedia", "cbc native promote skipped reason=already-active sourceUrl=$sourceUrl")
+                        enablePromotedPointerModeIfCbc(sourceUrl)
+                        return
+                    }
+                    geckoView.visibility = View.GONE
+                    promotedMediaPlayer.play(observation)
+                    enablePromotedPointerModeIfCbc(sourceUrl)
                 }
                 return
             }
@@ -8927,6 +9196,8 @@ return changed>0;
         private const val TTT_TEGO_RETURN_URL = "https://kulchaflo.com/channels/ttt-live-official-24-7-stream/"
         private const val CARIBVISION_OFFICIAL_HLS_HOST = "5dcabf026b188.streamlock.net"
         private const val CARIBVISION_OFFICIAL_HLS_PATH = "/CaribVision/livestream/playlist.m3u8"
+        private const val CBC_OFFICIAL_HLS_HOST = "1740288887.rsc.cdn77.org"
+        private const val CBC_OFFICIAL_HLS_PATH = "/1740288887/index.m3u8"
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -9729,6 +10000,14 @@ return changed>0;
         return host == "app.caribvision.tv"
     }
 
+    private fun isCbcLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty()
+        if (host != "cbc.bb") return false
+        return path == "/live" || path == "/live/"
+    }
+
     private fun isExactCaribVisionLiveHlsUrl(url: String): Boolean {
         if (url.isBlank()) return false
         val uri = runCatching { android.net.Uri.parse(url.trim()) }.getOrNull() ?: return false
@@ -9736,6 +10015,16 @@ return changed>0;
         val path = uri.encodedPath.orEmpty()
         if (host != CARIBVISION_OFFICIAL_HLS_HOST) return false
         if (path != CARIBVISION_OFFICIAL_HLS_PATH) return false
+        return true
+    }
+
+    private fun isExactCbcLiveHlsUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        val uri = runCatching { android.net.Uri.parse(url.trim()) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.encodedPath.orEmpty()
+        if (host != CBC_OFFICIAL_HLS_HOST) return false
+        if (path != CBC_OFFICIAL_HLS_PATH) return false
         return true
     }
 

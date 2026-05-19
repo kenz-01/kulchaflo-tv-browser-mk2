@@ -2,6 +2,8 @@ package com.kulchaflo.tv.mk2.gv.media
 
 import android.content.Context
 import android.net.Uri
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.ViewGroup
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -30,6 +32,38 @@ class GvPromotedMediaPlayer(
     fun isPromoted(): Boolean = activeSource != null
 
     fun currentSourceUrl(): String? = activeSource?.url
+
+    fun dispatchPointerTap(x: Float, y: Float): Boolean {
+        val target = playerView ?: return false
+        target.showController()
+        val downTime = android.os.SystemClock.uptimeMillis()
+        val down = pointerEvent(MotionEvent.ACTION_DOWN, downTime, x, y)
+        val handledDown = target.dispatchTouchEvent(down)
+        down.recycle()
+        val up = pointerEvent(MotionEvent.ACTION_UP, downTime, x, y)
+        val handledUp = target.dispatchTouchEvent(up)
+        up.recycle()
+        return handledDown || handledUp
+    }
+
+    fun dispatchPointerHover(x: Float, y: Float): Boolean {
+        val target = playerView ?: return false
+        target.showController()
+        val eventTime = android.os.SystemClock.uptimeMillis()
+        val event = MotionEvent.obtain(
+            eventTime,
+            eventTime,
+            MotionEvent.ACTION_HOVER_MOVE,
+            x,
+            y,
+            0,
+        ).apply {
+            source = InputDevice.SOURCE_MOUSE
+        }
+        val handled = target.dispatchGenericMotionEvent(event)
+        event.recycle()
+        return handled
+    }
 
     fun play(source: GvMediaPathController.Observation) {
         if (activeSource?.url == source.url) {
@@ -162,6 +196,20 @@ class GvPromotedMediaPlayer(
         "video/webm" -> MimeTypes.VIDEO_WEBM
         "audio/*" -> null
         else -> mimeHint
+    }
+
+    private fun pointerEvent(action: Int, downTime: Long, x: Float, y: Float): MotionEvent {
+        val eventTime = android.os.SystemClock.uptimeMillis()
+        return MotionEvent.obtain(
+            downTime,
+            eventTime,
+            action,
+            x,
+            y,
+            0,
+        ).apply {
+            source = InputDevice.SOURCE_TOUCHSCREEN
+        }
     }
 
     private companion object {
