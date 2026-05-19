@@ -309,7 +309,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         geckoView.visibility = View.VISIBLE
                         if (isExactCbcLiveHlsUrl(promotedSourceUrl)) {
                             disablePromotedPointerMode(reason = "back", keepPointerVisible = true)
-                            GvLogger.i("GvInput", "cbc pointer restored reason=back sourceUrl=$promotedSourceUrl")
+                            GvLogger.i("GvInput", "cbc pointer assist restored mode=page reason=back sourceUrl=$promotedSourceUrl")
                         }
                         restoreCgtvPointerIfHidden(reason = "back")
                         return
@@ -6378,6 +6378,9 @@ return changed>0;
         pointerVisible = true
         schedulePointerIdleTimeout()
         GvLogger.i("GvInput", "pointer visible=true reason=ensure-visible restored=$hasStoredPosition x=${pointerX.toInt()} y=${pointerY.toInt()}")
+        if (!promotedMediaPlayer.isPromoted()) {
+            GvLogger.i("GvInput", "pointer assist remains available mode=page")
+        }
     }
 
     private fun showPointerAt(x: Float, y: Float, reason: String) {
@@ -6488,18 +6491,22 @@ return changed>0;
         pointerRepeatTicks = 0
     }
 
-    private fun enablePromotedPointerModeIfCbc(sourceUrl: String) {
+    private fun applyNativePromotedInputPolicyIfCbc(sourceUrl: String) {
         if (!isExactCbcLiveHlsUrl(sourceUrl)) {
             return
         }
         if (promotedPointerModeActive) {
-            return
+            GvLogger.i("GvInput", "promoted pointer auto-enable disabled reason=native-dpad-policy sourceUrl=$sourceUrl")
+            disablePromotedPointerMode(reason = "native-dpad-policy", keepPointerVisible = false)
+        } else {
+            pointerDirectionKeys.clear()
+            stopPromotedPointerRepeater()
+            pointerOverlay.setPointerPressed(false)
+            pointerVisible = false
+            pointerOverlay.hidePointer()
+            GvLogger.i("GvInput", "promoted pointer auto-enable skipped reason=native-dpad-policy sourceUrl=$sourceUrl")
         }
-        pointerOverlay.visibility = View.VISIBLE
-        pointerOverlay.bringToFront()
-        promotedPointerModeActive = true
-        ensurePromotedPointerVisible()
-        GvLogger.i("GvInput", "promoted pointer mode enabled reason=cbc-exact-hls sourceUrl=$sourceUrl")
+        GvLogger.i("GvInput", "native promoted playback uses DPAD policy sourceUrl=$sourceUrl")
     }
 
     private fun disablePromotedPointerMode(reason: String, keepPointerVisible: Boolean) {
@@ -9042,12 +9049,11 @@ return changed>0;
             if (tabController.getActiveTab()?.session == session) {
                 if (isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
                     GvLogger.i("GvMedia", "cbc native promote skipped reason=already-active sourceUrl=$sourceUrl")
-                    enablePromotedPointerModeIfCbc(sourceUrl)
                     return
                 }
                 geckoView.visibility = View.GONE
                 promotedMediaPlayer.play(observation)
-                enablePromotedPointerModeIfCbc(sourceUrl)
+                applyNativePromotedInputPolicyIfCbc(sourceUrl)
             }
             return
         }
@@ -9109,12 +9115,11 @@ return changed>0;
                 if (tabController.getActiveTab()?.session == session) {
                     if (isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
                         GvLogger.i("GvMedia", "cbc native promote skipped reason=already-active sourceUrl=$sourceUrl")
-                        enablePromotedPointerModeIfCbc(sourceUrl)
                         return
                     }
                     geckoView.visibility = View.GONE
                     promotedMediaPlayer.play(observation)
-                    enablePromotedPointerModeIfCbc(sourceUrl)
+                    applyNativePromotedInputPolicyIfCbc(sourceUrl)
                 }
                 return
             }
