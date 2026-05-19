@@ -238,6 +238,28 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         )
         browserMediaController = GvBrowserMediaController(tabController)
         promotedMediaPlayer = GvPromotedMediaPlayer(this, promotedMediaHost as ViewGroup)
+        promotedMediaPlayer.listener = object : GvPromotedMediaPlayer.Listener {
+            override fun onPromotedPlayerError(
+                source: GvMediaPathController.Observation,
+                error: androidx.media3.common.PlaybackException,
+            ) {
+                if (!isExactCaribVisionLiveHlsUrl(source.url)) {
+                    return
+                }
+                runOnUiThread {
+                    promotedMediaPlayer.stop(reason = "caribvision-native-error")
+                    geckoView.visibility = View.VISIBLE
+                    try {
+                        pointerOverlay.visibility = View.VISIBLE
+                    } catch (_: Throwable) {
+                    }
+                    GvLogger.i(
+                        "GvMedia",
+                        "caribvision native failed fallback-to-browser errorType=${error.errorCodeName} url=${source.url}"
+                    )
+                }
+            }
+        }
 
         restoreTabs(savedInstanceState)
 
@@ -1100,6 +1122,17 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private fun handleMediaObservation(observation: GvMediaPathController.Observation?) {
         when {
             observation == null -> {
+                val activePromotedUrl = promotedMediaPlayer.currentSourceUrl().orEmpty()
+                if (
+                    isCaribVisionAppUrl(currentUrl) &&
+                    isExactCaribVisionLiveHlsUrl(activePromotedUrl)
+                ) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "caribvision native keep-alive reason=page-not-eligible currentUrl=$currentUrl sourceUrl=$activePromotedUrl"
+                    )
+                    return
+                }
                 promotedMediaPlayer.stop(reason = "page-not-eligible")
                 geckoView.visibility = View.VISIBLE
                 restoreCgtvPointerIfHidden(reason = "page-not-eligible")
@@ -8745,12 +8778,77 @@ return changed>0;
             )
             return
         }
+        if (type == "caribvision-live-hls-ready") {
+            val sourceUrl = payload.optString("sourceUrl").trim()
+            val sourceType = payload.optString("sourceType")
+            val muted = payload.optBoolean("muted")
+            val autoplay = payload.optBoolean("autoplay")
+            GvLogger.i(
+                "GvMedia",
+                "caribvision live hls ready pageUrl=$pageUrl playerId=${payload.optString("playerId")} sourceType=$sourceType muted=$muted autoplay=$autoplay sourceUrl=$sourceUrl"
+            )
+            if (!isCaribVisionAppUrl(pageUrl)) {
+                GvLogger.i("GvMedia", "caribvision native promote skipped reason=page-context pageUrl=$pageUrl")
+                return
+            }
+            if (!isExactCaribVisionLiveHlsUrl(sourceUrl)) {
+                GvLogger.i("GvMedia", "caribvision native promote skipped reason=non-exact-hls sourceUrl=$sourceUrl")
+                return
+            }
+            val observation = mediaPathController.onExtensionMediaEvidence(
+                pageUrl = pageUrl,
+                sourceUrl = sourceUrl,
+                mimeType = if (sourceType.isBlank()) "application/x-mpegURL" else sourceType,
+                title = title,
+            )
+            if (observation == null) {
+                GvLogger.i("GvMedia", "caribvision native promote skipped reason=observation-null sourceUrl=$sourceUrl")
+                return
+            }
+            GvLogger.i("GvMedia", "caribvision native promote allowed exact-hls sourceUrl=$sourceUrl")
+            if (tabController.getActiveTab()?.session == session) {
+                if (isExactCaribVisionLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
+                    GvLogger.i("GvMedia", "caribvision native promote skipped reason=already-active sourceUrl=$sourceUrl")
+                    return
+                }
+                geckoView.visibility = View.GONE
+                promotedMediaPlayer.play(observation)
+            }
+            return
+        }
         if (isFacebookUrl(pageUrl)) {
             GvLogger.i(
                 "GvExt",
                 "media evidence ignored tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} pageUrl=$pageUrl reason=facebook-host"
             )
             return
+        }
+        if (isCaribVisionAppUrl(pageUrl)) {
+            for (index in 0 until candidates.length()) {
+                val candidate = candidates.optJSONObject(index) ?: continue
+                val sourceUrl = candidate.optString("src").trim()
+                if (!isExactCaribVisionLiveHlsUrl(sourceUrl)) continue
+                val observation = mediaPathController.onExtensionMediaEvidence(
+                    pageUrl = pageUrl,
+                    sourceUrl = sourceUrl,
+                    mimeType = "application/x-mpegURL",
+                    title = title,
+                )
+                if (observation == null) {
+                    GvLogger.i("GvMedia", "caribvision native promote skipped reason=observation-null sourceUrl=$sourceUrl")
+                    return
+                }
+                GvLogger.i("GvMedia", "caribvision native promote allowed exact-hls sourceUrl=$sourceUrl")
+                if (tabController.getActiveTab()?.session == session) {
+                    if (isExactCaribVisionLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
+                        GvLogger.i("GvMedia", "caribvision native promote skipped reason=already-active sourceUrl=$sourceUrl")
+                        return
+                    }
+                    geckoView.visibility = View.GONE
+                    promotedMediaPlayer.play(observation)
+                }
+                return
+            }
         }
         if (!shouldPromoteDirectMedia(pageUrl)) {
             GvLogger.i(
@@ -8827,6 +8925,8 @@ return changed>0;
         private val ABS_TEGO_STARTUP_REPROBE_DELAYS_MS = longArrayOf(2_000L, 5_000L, 9_000L, 14_000L)
         private const val ABS_TEGO_RETURN_URL = "https://kulchaflo.com/channels/abs-tv-antigua/"
         private const val TTT_TEGO_RETURN_URL = "https://kulchaflo.com/channels/ttt-live-official-24-7-stream/"
+        private const val CARIBVISION_OFFICIAL_HLS_HOST = "5dcabf026b188.streamlock.net"
+        private const val CARIBVISION_OFFICIAL_HLS_PATH = "/CaribVision/livestream/playlist.m3u8"
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -9621,6 +9721,22 @@ return changed>0;
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return host.endsWith(".servers.dvcloud.tv") && path.contains("/hls/")
+    }
+
+    private fun isCaribVisionAppUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "app.caribvision.tv"
+    }
+
+    private fun isExactCaribVisionLiveHlsUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        val uri = runCatching { android.net.Uri.parse(url.trim()) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.encodedPath.orEmpty()
+        if (host != CARIBVISION_OFFICIAL_HLS_HOST) return false
+        if (path != CARIBVISION_OFFICIAL_HLS_PATH) return false
+        return true
     }
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
