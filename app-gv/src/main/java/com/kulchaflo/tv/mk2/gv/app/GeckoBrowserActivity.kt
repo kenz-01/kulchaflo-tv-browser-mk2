@@ -169,6 +169,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var pointerY = 0f
     private var pointerDownTime = 0L
     private var pointerRepeatTicks = 0
+    private var pointerAssistModeActive = false
     private var promotedPointerModeActive = false
     private var lastBackToExitAtMs = 0L
     private var lastBackToHomeAtMs = 0L
@@ -298,6 +299,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 override fun handleOnBackPressed() {
                     if (tabsOverlay.visibility == View.VISIBLE) {
                         hideTabsOverlay()
+                        return
+                    }
+                    if (!promotedMediaPlayer.isPromoted() && pointerAssistModeActive) {
+                        disablePointerAssistMode(reason = "back-to-focus-mode")
                         return
                     }
                     if (promotedMediaPlayer.isPromoted()) {
@@ -474,10 +479,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         if (promotedPointerModeActive && handlePromotedPointerInput(event)) {
             return true
         }
+        if (!promotedMediaPlayer.isPromoted() && maybeHandlePointerAssistManualSummon(event)) {
+            return true
+        }
         if (!promotedMediaPlayer.isPromoted() && browserMediaController.handleMediaKey(event)) {
             return true
         }
-        if (!promotedMediaPlayer.isPromoted() && handlePointerInput(event)) {
+        if (!promotedMediaPlayer.isPromoted() && !pointerAssistModeActive && handleYouTubeFocusInput(event)) {
+            return true
+        }
+        if (!promotedMediaPlayer.isPromoted() && !pointerAssistModeActive && handleKulchaFloSiteFocusInput(event)) {
+            return true
+        }
+        if (!promotedMediaPlayer.isPromoted() && pointerAssistModeActive && handlePointerInput(event)) {
             return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_MENU) {
@@ -705,6 +719,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             val tab = tabController.findTabBySession(session)
             currentUrl = url ?: currentUrl
             tabController.updateLocation(session, url)
+            applyPageInputModePolicy(url.orEmpty(), reason = "location-change")
             handleLiveLoadTimingLocationChange(session, url.orEmpty())
             if (isWebHttpUrl(url.orEmpty())) {
                 applyUserAgentPolicyForUrl(session, url.orEmpty(), reason = "location-change")
@@ -908,6 +923,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 "GvContent",
                 "fullscreen tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} enabled=$fullScreen liveMediaSurface=$liveMediaSurface"
             )
+            if (fullScreen) {
+                disablePointerAssistMode(reason = "fullscreen-media")
+            }
         }
     }
 
@@ -924,7 +942,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         if (tab.isLoading) {
             loadingOverlay.visibility = View.VISIBLE
         }
-        syncPointerToActivePage("tab-activated")
+        applyPageInputModePolicy(tab.url, reason = "tab-activated")
         val observation = mediaPathController.onPageObserved(tab.url, tab.title)
         handleMediaObservation(observation)
         GvLogger.i("GvTabs", "tab activated id=${tab.id} url=${tab.url} loading=${tab.isLoading}")
@@ -945,7 +963,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         clearCgtvPlayAssistFallback(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
-        syncPointerToActivePage("tab-closed")
+        applyPageInputModePolicy(tabController.getActiveTab()?.url.orEmpty(), reason = "tab-closed")
     }
 
     private fun scheduleTransientLoadRetry(
@@ -6228,6 +6246,9 @@ return changed>0;
         if (tabsOverlay.visibility == View.VISIBLE) {
             return false
         }
+        if (!pointerAssistModeActive) {
+            return false
+        }
         if (event.keyCode !in POINTER_KEY_CODES) {
             return false
         }
@@ -6293,6 +6314,93 @@ return changed>0;
             }
         }
         return false
+    }
+
+    private fun maybeHandlePointerAssistManualSummon(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return false
+        }
+        if (!event.isLongPress) {
+            return false
+        }
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        if (!isPointerAssistAllowedForUrl(activeUrl)) {
+            GvLogger.i("GvInput", "pointer assist manual summon skipped reason=site-focus-mode url=$activeUrl")
+            return true
+        }
+        enablePointerAssistMode(reason = "manual-long-press-ok", url = activeUrl)
+        return true
+    }
+
+    private fun handleKulchaFloSiteFocusInput(event: KeyEvent): Boolean {
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        if (event.keyCode !in POINTER_KEY_CODES) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        if (!isKulchaFloPage(activeUrl)) {
+            return false
+        }
+        if (isPointerAssistAllowedForUrl(activeUrl) && !isKulchaFloGeneralSiteFocusUrl(activeUrl)) {
+            return false
+        }
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        val action = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+            KeyEvent.KEYCODE_DPAD_UP -> "up"
+            KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "activate"
+            else -> return false
+        }
+        dispatchKulchaFloSiteFocusAction(activeTab.session, activeUrl, action)
+        GvLogger.i("GvInput", "site focus key dispatched action=$action keyCode=${event.keyCode} url=$activeUrl")
+        return true
+    }
+
+    private fun handleYouTubeFocusInput(event: KeyEvent): Boolean {
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        if (event.keyCode !in POINTER_KEY_CODES) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        if (!isYouTubePageUrl(activeUrl)) {
+            return false
+        }
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        val action = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+            KeyEvent.KEYCODE_DPAD_UP -> "up"
+            KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "activate"
+            else -> return false
+        }
+        dispatchYouTubeFocusAction(activeTab.session, activeUrl, action)
+        GvLogger.i("GvInput", "youtube focus key dispatched action=$action keyCode=${event.keyCode} url=$activeUrl")
+        return true
     }
 
     private fun handlePromotedPointerInput(event: KeyEvent): Boolean {
@@ -6383,12 +6491,696 @@ return changed>0;
         }
     }
 
+    private fun enablePointerAssistMode(reason: String, url: String) {
+        pointerAssistModeActive = true
+        ensurePointerVisible()
+        GvLogger.i("GvInput", "pointer assist manually enabled reason=$reason url=$url")
+    }
+
+    private fun disablePointerAssistMode(reason: String) {
+        pointerAssistModeActive = false
+        pointerDirectionKeys.clear()
+        stopPointerRepeater()
+        pointerVisible = false
+        pointerOverlay.setPointerPressed(false)
+        pointerOverlay.hidePointer()
+        GvLogger.i("GvInput", "pointer assist hidden reason=$reason")
+    }
+
+    private fun applyPageInputModePolicy(url: String, reason: String) {
+        if (promotedMediaPlayer.isPromoted()) {
+            return
+        }
+        if (isKulchaFloPage(url)) {
+            if (pointerAssistModeActive || pointerVisible || pointerOverlay.isPointerVisible()) {
+                disablePointerAssistMode(reason = "site-focus-mode")
+            }
+            geckoView.requestFocus()
+            GvLogger.i("GvInput", "site focus mode active url=$url reason=$reason")
+            GvLogger.i("GvInput", "pointer assist hidden reason=site-focus-mode url=$url")
+            return
+        }
+        if (isAbsTegoGestureFullscreenContextUrl(url) || isTttTegoContextUrl(url)) {
+            if (!pointerAssistModeActive) {
+                enablePointerAssistMode(reason = "hostile-web-player", url = url)
+            } else {
+                ensurePointerVisible()
+            }
+            geckoView.requestFocus()
+            GvLogger.i("GvInput", "pointer assist auto-enabled reason=hostile-web-player url=$url")
+            return
+        }
+        if (pointerAssistModeActive) {
+            disablePointerAssistMode(reason = "navigation-focus-first")
+        } else {
+            pointerDirectionKeys.clear()
+            stopPointerRepeater()
+            pointerVisible = false
+            pointerOverlay.setPointerPressed(false)
+            pointerOverlay.hidePointer()
+        }
+        geckoView.requestFocus()
+        GvLogger.i("GvInput", "external page using focus-first fallback url=$url reason=$reason")
+    }
+
+    private fun isPointerAssistAllowedForUrl(url: String): Boolean {
+        if (!isKulchaFloPage(url)) {
+            return true
+        }
+        return isCgtvContextUrl(url) ||
+            isAbsTegoChannel10ContextUrl(url) ||
+            isTttTegoContextUrl(url) ||
+            isNovusTelearubaContextUrl(url)
+    }
+
+    private fun isKulchaFloGeneralSiteFocusUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
+        if (host != "kulchaflo.com") return false
+        return true
+    }
+
+    private fun dispatchKulchaFloSiteFocusAction(session: GeckoSession, pageUrl: String, action: String) {
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=${JSONObject.quote(pageUrl)};
+                var action=${JSONObject.quote(action)};
+                var stateKey='__kfTvFocusState';
+                var state=window[stateKey]||(window[stateKey]={railIndex:0,itemByRail:{}});
+                var detailPage=(function(){
+                  try{
+                    var path=new URL(pageUrl,location.href).pathname||location.pathname||'';
+                    var parts=path.split('/').filter(Boolean);
+                    if(parts.length<2){return false;}
+                    if(parts[0]==='category'||parts[0]==='tag'||parts[0]==='search'||parts[0]==='countries'){return false;}
+                    return true;
+                  }catch(_){return false;}
+                })();
+                var styleId='kf-tv-focus-style';
+                if(!document.getElementById(styleId)){
+                  var style=document.createElement('style');
+                  style.id=styleId;
+                  style.textContent='input[type="search"],input[type="text"][name*="search" i],[role="searchbox"]{color:#f8f3ea!important;-webkit-text-fill-color:#f8f3ea!important;opacity:1!important;}input[type="search"]::placeholder,input[type="text"][name*="search" i]::placeholder{color:rgba(248,243,234,.72)!important;-webkit-text-fill-color:rgba(248,243,234,.72)!important;opacity:1!important;}[data-kf-tv-focused="1"],[data-kf-tv-focused="1"]:focus,[data-kf-tv-focused="1"]:focus-visible,[data-kf-tv-focused="1"] *:focus,[data-kf-tv-focused="1"] *:focus-visible{outline:none!important;}[data-kf-tv-focused="1"]{position:relative!important;z-index:20!important;transition:box-shadow .16s ease,transform .16s ease,background-color .16s ease,color .16s ease!important;}[data-kf-tv-focused="1"].kf-card,[data-kf-tv-focused="1"].kf-mini,[data-kf-tv-focused="1"].kf-channel-card,[data-kf-tv-focused="1"].kf-post-card,[data-kf-tv-focused="1"].wp-block-embed,[data-kf-tv-focused="1"].kf-watch-frame,[data-kf-tv-focused="1"].kf-player-frame,[data-kf-tv-focused="1"].kf-video-frame,[data-kf-tv-focused="1"].kf-meta-card,[data-kf-tv-focused="1"].kf-info-card,[data-kf-tv-focused="1"].kf-stat-card,[data-kf-tv-focused="1"].kf-channel-detail,[data-kf-tv-focused="1"].kf-channel-meta,[data-kf-tv-focused="1"].kf-channel-info,[data-kf-tv-focused="1"].wp-block-column,[data-kf-tv-focused="1"].wp-block-group{border-radius:18px!important;box-shadow:0 16px 38px rgba(255,255,255,.14)!important;transform:translateZ(0) scale(1.01)!important;}[data-kf-tv-focused="1"].kf-card::after,[data-kf-tv-focused="1"].kf-mini::after,[data-kf-tv-focused="1"].kf-channel-card::after,[data-kf-tv-focused="1"].kf-post-card::after,[data-kf-tv-focused="1"].wp-block-embed::after,[data-kf-tv-focused="1"].kf-watch-frame::after,[data-kf-tv-focused="1"].kf-player-frame::after,[data-kf-tv-focused="1"].kf-video-frame::after,[data-kf-tv-focused="1"].kf-meta-card::after,[data-kf-tv-focused="1"].kf-info-card::after,[data-kf-tv-focused="1"].kf-stat-card::after,[data-kf-tv-focused="1"].kf-channel-detail::after,[data-kf-tv-focused="1"].kf-channel-meta::after,[data-kf-tv-focused="1"].kf-channel-info::after,[data-kf-tv-focused="1"].wp-block-column::after,[data-kf-tv-focused="1"].wp-block-group::after{content:""!important;position:absolute!important;inset:0!important;border:5px solid #fff!important;border-radius:inherit!important;box-shadow:inset 0 0 0 3px rgba(8,10,12,.9)!important;pointer-events:none!important;z-index:40!important;}iframe[data-kf-tv-focused="1"],video[data-kf-tv-focused="1"]{border-radius:18px!important;box-shadow:0 0 0 5px #fff,0 0 0 9px rgba(8,10,12,.96),0 16px 38px rgba(255,255,255,.16)!important;}[data-kf-tv-focused="1"].kf-chipbtn,[data-kf-tv-focused="1"].wp-block-button__link,[data-kf-tv-focused="1"][role="button"],[data-kf-tv-focused="1"][role="link"],a[data-kf-tv-focused="1"]:not(.kf-card):not(.kf-mini):not(.kf-channel-card):not(.kf-post-card),button[data-kf-tv-focused="1"],summary[data-kf-tv-focused="1"]{background:#fff!important;color:#0b0907!important;border-color:#fff!important;border-radius:999px!important;box-shadow:inset 0 0 0 1px #3a2418,0 0 0 4px #fff,0 0 0 8px rgba(8,10,12,.96),0 10px 26px rgba(255,255,255,.18)!important;transform:translateZ(0) scale(1.025)!important;}input[data-kf-tv-focused="1"],[data-kf-tv-focused="1"][role="searchbox"]{background:#fff!important;color:#0b0907!important;-webkit-text-fill-color:#0b0907!important;border-color:#fff!important;border-radius:10px!important;box-shadow:inset 0 0 0 1px #3a2418,0 0 0 4px #fff,0 0 0 8px rgba(8,10,12,.96),0 10px 26px rgba(255,255,255,.18)!important;}input[data-kf-tv-focused="1"]::placeholder{color:rgba(11,9,7,.64)!important;-webkit-text-fill-color:rgba(11,9,7,.64)!important;opacity:1!important;}[data-kf-tv-focused="1"].kf-chipbtn *,[data-kf-tv-focused="1"].wp-block-button__link *,[data-kf-tv-focused="1"][role="button"] *,[data-kf-tv-focused="1"][role="link"] *,a[data-kf-tv-focused="1"]:not(.kf-card):not(.kf-mini):not(.kf-channel-card):not(.kf-post-card) *,button[data-kf-tv-focused="1"] *,summary[data-kf-tv-focused="1"] *{color:#0b0907!important;}[data-kf-tv-focused="1"] img{filter:saturate(1.04) contrast(1.02)!important;}';
+                  document.documentElement.appendChild(style);
+                }
+                var itemSelector=[
+                  'a.kf-card[href]','.kf-card a[href]','a.kf-channel-card[href]','.kf-channel-card a[href]',
+                  'a.kf-post-card[href]','.kf-post-card a[href]','.wp-block-button__link','article a[href]',
+                  '.wp-block-embed','iframe[src]','video','.kf-watch-frame','.kf-player-frame','.kf-video-frame',
+                  'a[href]','button','summary','input[type="search"]','input[type="text"]',
+                  '[role="button"]','[role="link"]','[role="menuitem"]','[role="searchbox"]'
+                ].join(',');
+                var channelInfoSelector='.kf-meta-card,.kf-info-card,.kf-stat-card,.kf-channel-detail,.kf-channel-meta,.kf-channel-info,.kf-show-hero,.kf-detail-hero,.kf-hero-media,.kf-media-frame,.kf-show-frame,.kf-video-card,.wp-block-column,.wp-block-group,figure,.wp-block-image';
+                var railSelector='.kf-rail,.kf-chiprail,.kf-search-rail,.kf-grid,.kf-card-grid,.wp-block-post-template,.wp-block-query';
+                var displayable=function(el){
+                  try{
+                    if(!el||el.disabled||el.getAttribute('aria-hidden')==='true'){return false;}
+                    var tag=(el.tagName||'').toLowerCase();
+                    var inputType=(el.getAttribute&&String(el.getAttribute('type')||'').toLowerCase())||'';
+                    if(tag==='select'||tag==='textarea'||(tag==='input'&&inputType!=='search'&&inputType!=='text')){return false;}
+                    var r=el.getBoundingClientRect();
+                    if(r.width<8||r.height<8){return false;}
+                    var s=getComputedStyle(el);
+                    return !(s.visibility==='hidden'||s.display==='none'||Number(s.opacity||1)<0.05);
+                  }catch(_){return false;}
+                };
+                var railVisible=function(el){
+                  try{
+                    if(!displayable(el)){return false;}
+                    var r=el.getBoundingClientRect();
+                    return r.bottom>=0&&r.top<window.innerHeight&&r.right>=0&&r.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var normalize=function(el){
+                  try{
+                    if(!el){return null;}
+                    var card=el.closest&&el.closest('a.kf-card[href],a.kf-channel-card[href],a.kf-post-card[href],.kf-card,.kf-channel-card,.kf-post-card');
+                    if(card){
+                      return card;
+                    }
+                    var frame=el.closest&&el.closest('.wp-block-embed,.kf-watch-frame,.kf-player-frame,.kf-video-frame');
+                    if(frame){return frame;}
+                    if(detailPage){
+                      var info=el.closest&&el.closest(channelInfoSelector);
+                      if(info){return info;}
+                    }
+                    if(el.matches&&el.matches(itemSelector)){return el;}
+                    return el.closest&&el.closest(itemSelector);
+                  }catch(_){return el;}
+                };
+                var unique=function(nodes){
+                  var seen=new Set();
+                  return nodes.filter(function(el){
+                    if(!el||seen.has(el)||!displayable(el)){return false;}
+                    seen.add(el);
+                    return true;
+                  });
+                };
+                var sortItems=function(items){
+                  return items.slice().sort(function(a,b){
+                    var ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
+                    var row=Math.abs(ar.top-br.top)>Math.max(32,Math.min(ar.height||0,br.height||0)*0.55);
+                    if(row){return ar.top-br.top;}
+                    return ar.left-br.left;
+                  });
+                };
+                var docTop=function(el){
+                  try{var r=el.getBoundingClientRect();return r.top+(window.scrollY||document.documentElement.scrollTop||0);}catch(_){return 0;}
+                };
+                var summary=function(el){
+                  try{
+                    if(!el){return 'none';}
+                    var tag=(el.tagName||'').toLowerCase();
+                    var id=el.id?('#'+el.id):'';
+                    var cls=(typeof el.className==='string'&&el.className.trim())?('.'+el.className.trim().split(/\s+/).slice(0,3).join('.')):'';
+                    var text=(el.innerText||el.getAttribute('aria-label')||el.getAttribute('title')||el.href||'').trim().replace(/\s+/g,' ').slice(0,80);
+                    return tag+id+cls+(text?(' "'+text+'"'):'');
+                  }catch(_){return 'unknown';}
+                };
+                var clear=function(){
+                  try{document.querySelectorAll('[data-kf-tv-focused="1"]').forEach(function(el){el.removeAttribute('data-kf-tv-focused');});}catch(_){}
+                };
+                var makeRail=function(node,index){
+                  var items=unique(Array.from(node.querySelectorAll(itemSelector)).map(normalize));
+                  if(!items.length&&node.matches&&node.matches(itemSelector)){items=unique([normalize(node)]);}
+                  items=sortItems(items);
+                  return {node:node,index:index,items:items};
+                };
+                var splitWrappedRail=function(rail){
+                  try{
+                    if(!rail||!rail.items||rail.items.length<2){return [rail];}
+                    var node=rail.node;
+                    var isHorizontalScroller=node&&node.scrollWidth>node.clientWidth+12;
+                    var rows=[];
+                    rail.items.forEach(function(el){
+                      var r=el.getBoundingClientRect();
+                      var top=docTop(el);
+                      var row=rows.find(function(candidate){
+                        return Math.abs(candidate.top-top)<Math.max(42,Math.min(86,(r.height||80)*0.38));
+                      });
+                      if(!row){row={top:top,items:[]};rows.push(row);}
+                      row.items.push(el);
+                    });
+                    rows=rows.sort(function(a,b){return a.top-b.top;}).map(function(row,idx){
+                      return {node:node,index:String(rail.index)+':'+idx,items:sortItems(row.items),sectionIndex:rail.index,rowIndex:idx,rowCount:rows.length};
+                    }).filter(function(row){return row.items.length>0;});
+                    if(isHorizontalScroller&&rows.length<=1){return [rail];}
+                    if(isHorizontalScroller&&rows.length>1){
+                      var mostlyOneVisibleRow=rows.every(function(row){return row.items.length<=Math.max(1,Math.ceil(rail.items.length/rows.length)+1);});
+                      if(!mostlyOneVisibleRow){return [rail];}
+                    }
+                    return rows.length?rows:[rail];
+                  }catch(_){return [rail];}
+                };
+                var railNodes=Array.from(document.querySelectorAll(railSelector)).filter(function(node){
+                  return displayable(node)&&node.querySelector(itemSelector);
+                });
+                var rails=railNodes.map(makeRail).filter(function(rail){return rail.items.length>0;}).reduce(function(acc,rail){
+                  return acc.concat(splitWrappedRail(rail));
+                },[]);
+                if(detailPage){
+                  var channelInfoItems=unique(Array.from(document.querySelectorAll(channelInfoSelector)).map(normalize)).filter(function(el){
+                    try{
+                      if(!displayable(el)){return false;}
+                      if(el.querySelector&&el.querySelector(itemSelector)){return false;}
+                      var r=el.getBoundingClientRect();
+                      var text=(el.innerText||'').trim().replace(/\s+/g,' ');
+                      return r.width>=120&&r.height>=44&&text.length>=2;
+                    }catch(_){return false;}
+                  });
+                  if(channelInfoItems.length){
+                    var infoRows=[];
+                    sortItems(channelInfoItems).forEach(function(el){
+                      var top=docTop(el);
+                      var row=infoRows.find(function(candidate){return Math.abs(candidate.top-top)<58;});
+                      if(!row){row={top:top,items:[]};infoRows.push(row);}
+                      row.items.push(el);
+                    });
+                    infoRows=infoRows.map(function(row,idx){
+                      return {node:document.scrollingElement||document.documentElement||document.body,index:'channel-info:'+idx,items:sortItems(row.items)};
+                    }).filter(function(row){return row.items.length>0;});
+                    rails=rails.concat(infoRows).sort(function(a,b){
+                      var ai=a.items&&a.items[0],bi=b.items&&b.items[0];
+                      return docTop(ai)-docTop(bi);
+                    });
+                  }
+                }
+                if(rails.length){
+                  var inRail=function(el){
+                    try{return railNodes.some(function(node){return node!==el&&node.contains(el);});}catch(_){return false;}
+                  };
+                  var topItems=unique(Array.from(document.querySelectorAll(itemSelector)).map(normalize)).filter(function(el){
+                    try{
+                      if(inRail(el)||!displayable(el)){return false;}
+                      var r=el.getBoundingClientRect();
+                      return r.width>=8&&r.height>=8;
+                    }catch(_){return false;}
+                  });
+                  if(topItems.length){
+                    var rows=[];
+                    sortItems(topItems).forEach(function(el){
+                      var top=docTop(el);
+                      var row=rows.find(function(candidate){return Math.abs(candidate.top-top)<58;});
+                      if(!row){row={top:top,items:[]};rows.push(row);}
+                      row.items.push(el);
+                    });
+                    rows=rows.map(function(row,idx){
+                      return {node:document.scrollingElement||document.documentElement||document.body,index:-(idx+1),items:sortItems(row.items)};
+                    }).filter(function(row){return row.items.length>0;});
+                    rails=rows.concat(rails).sort(function(a,b){
+                      var ai=a.items&&a.items[0],bi=b.items&&b.items[0];
+                      return docTop(ai)-docTop(bi);
+                    });
+                  }
+                }
+                if(!rails.length){
+                  var visibleItems=unique(Array.from(document.querySelectorAll(itemSelector)).map(normalize)).filter(function(el){
+                    try{var r=el.getBoundingClientRect();return r.bottom>=0&&r.top<window.innerHeight&&r.right>=0&&r.left<window.innerWidth;}catch(_){return false;}
+                  });
+                  rails=[{node:document.scrollingElement||document.documentElement||document.body,index:0,items:sortItems(visibleItems)}];
+                }
+                var current=document.querySelector('[data-kf-tv-focused="1"]');
+                var activeRail=0,activeItem=0;
+                rails.forEach(function(rail,ri){
+                  var ii=rail.items.indexOf(current);
+                  if(ii>=0){activeRail=ri;activeItem=ii;}
+                });
+                if(!current){
+                  activeRail=Math.max(0,Math.min(Number(state.railIndex||0),rails.length-1));
+                  activeItem=Math.max(0,Math.min(Number((state.itemByRail||{})[activeRail]||0),(rails[activeRail]&&rails[activeRail].items.length||1)-1));
+                  if(detailPage&&!state.initializedForDetailPage){
+                    var bestChannel=null,bestChannelScore=-1;
+                    rails.forEach(function(rail,ri){
+                      rail.items.forEach(function(item,ii){
+                        try{
+                          var r=item.getBoundingClientRect();
+                          var text=(item.innerText||item.getAttribute('aria-label')||item.getAttribute('title')||'').trim().toLowerCase();
+                          var media=item.matches&&item.matches('.wp-block-embed,.kf-watch-frame,.kf-player-frame,.kf-video-frame,iframe,video');
+                          var watchButton=/^watch$/.test(text);
+                          var score=(media?1000000:0)+(watchButton?600000:0)+(r.width*r.height);
+                          if(score>bestChannelScore){bestChannelScore=score;bestChannel={rail:ri,item:ii};}
+                        }catch(_){}
+                      });
+                    });
+                    if(bestChannel){activeRail=bestChannel.rail;activeItem=bestChannel.item;}
+                    state.initializedForDetailPage=true;
+                  }
+                }
+                var closestIndex=function(items,reference){
+                  if(!items.length){return 0;}
+                  if(!reference){return Math.max(0,Math.min(Number((state.itemByRail||{})[activeRail]||0),items.length-1));}
+                  try{
+                    var rr=reference.getBoundingClientRect();
+                    var rx=rr.left+rr.width/2;
+                    var best=0,bestScore=Infinity;
+                    items.forEach(function(el,i){
+                      var r=el.getBoundingClientRect();
+                      var x=r.left+r.width/2;
+                      var score=Math.abs(x-rx);
+                      if(score<bestScore){bestScore=score;best=i;}
+                    });
+                    return best;
+                  }catch(_){return 0;}
+                };
+                var ensureVisible=function(rail,item){
+                  try{
+                    if(!rail||!item){return;}
+                    var node=rail.node;
+                    var nr=node.getBoundingClientRect();
+                    var ir=item.getBoundingClientRect();
+                    var pad=Math.max(26,Math.min(52,(window.innerWidth||1280)*0.035));
+                    if(node&&node.scrollWidth>node.clientWidth+4){
+                      var leftLimit=nr.left+pad;
+                      var rightLimit=nr.right-pad;
+                      var delta=0;
+                      if(ir.left<leftLimit){delta=ir.left-leftLimit;}
+                      else if(ir.right>rightLimit){delta=ir.right-rightLimit;}
+                      if(Math.abs(delta)>3){node.scrollLeft=Number(node.scrollLeft||0)+delta;}
+                    }
+                    var currentY=window.scrollY||document.documentElement.scrollTop||0;
+                    var viewportH=window.innerHeight||720;
+                    var topSafe=Math.max(104,Math.min(156,viewportH*0.16));
+                    var bottomSafe=viewportH-Math.max(96,Math.min(132,viewportH*0.14));
+                    var targetY=null;
+                    if(ir.top<topSafe){
+                      targetY=currentY+ir.top-topSafe;
+                    }else if(ir.bottom>bottomSafe){
+                      targetY=currentY+(ir.bottom-bottomSafe)+28;
+                    }
+                    if(targetY!==null){
+                      try{window.scrollTo({top:Math.max(0,targetY),left:0,behavior:'smooth'});}catch(_){window.scrollTo(0,Math.max(0,targetY));}
+                    }
+                  }catch(_){}
+                };
+                var focusItem=function(railIndex,itemIndex,mode,phase){
+                  var rail=rails[railIndex];
+                  var item=rail&&rail.items[itemIndex];
+                  if(!rail||!item){return null;}
+                  clear();
+                  item.setAttribute('data-kf-tv-focused','1');
+                  if(!item.hasAttribute('tabindex')&&!/^(a|button|summary)$/i.test(item.tagName||'')){item.setAttribute('tabindex','0');}
+                  try{item.focus({preventScroll:true});}catch(_){try{item.focus();}catch(__){}}
+                  ensureVisible(rail,item);
+                  state.railIndex=railIndex;
+                  state.itemByRail=state.itemByRail||{};
+                  state.itemByRail[railIndex]=itemIndex;
+                  window[stateKey]=state;
+                  window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-site-focus',phase:phase||'move',pageUrl:pageUrl,action:action,mode:mode,railIndex:railIndex,itemIndex:itemIndex,railCount:rails.length,count:rail.items.length,target:summary(item)}),'');
+                  return item;
+                };
+                var focusDetailGeometry=function(direction){
+                  if(!detailPage){return false;}
+                  try{
+                    var currentItem=(rails[activeRail]&&rails[activeRail].items[activeItem])||current||null;
+                    if(!currentItem){return false;}
+                    var cr=currentItem.getBoundingClientRect();
+                    var cx=cr.left+cr.width/2;
+                    var cy=cr.top+cr.height/2;
+                    var sign=direction==='down'?1:-1;
+                    var candidates=unique(Array.from(document.querySelectorAll([
+                      itemSelector,
+                      channelInfoSelector,
+                      '[class*="meta"]','[class*="info"]','[class*="detail"]','[class*="note"]','[class*="tag"]',
+                      'figure','section','article div','main div'
+                    ].join(','))).map(normalize)).filter(function(el){
+                      try{
+                        if(!el||el===currentItem||!displayable(el)){return false;}
+                        if(el.contains&&el.contains(currentItem)){return false;}
+                        var r=el.getBoundingClientRect();
+                        var text=(el.innerText||el.getAttribute('aria-label')||el.getAttribute('title')||'').trim().replace(/\s+/g,' ');
+                        if(r.width<80||r.height<28){return false;}
+                        if(r.width>(window.innerWidth||1280)*0.98&&r.height>(window.innerHeight||720)*0.75){return false;}
+                        if(!text&&!(el.matches&&el.matches('iframe,video,.wp-block-embed,.kf-watch-frame,.kf-player-frame,.kf-video-frame,figure,.wp-block-image'))){return false;}
+                        var y=r.top+r.height/2;
+                        return (y-cy)*sign>12;
+                      }catch(_){return false;}
+                    });
+                    var best=null,bestScore=Infinity;
+                    candidates.forEach(function(el){
+                      var r=el.getBoundingClientRect();
+                      var x=r.left+r.width/2,y=r.top+r.height/2;
+                      var primary=Math.abs(y-cy);
+                      var secondary=Math.abs(x-cx);
+                      var score=primary*primary+secondary*secondary*0.45;
+                      if(score<bestScore){bestScore=score;best=el;}
+                    });
+                    if(!best){return false;}
+                    clear();
+                    best.setAttribute('data-kf-tv-focused','1');
+                    if(!best.hasAttribute('tabindex')&&!/^(a|button|summary|input)$/i.test(best.tagName||'')){best.setAttribute('tabindex','0');}
+                    try{best.focus({preventScroll:true});}catch(_){try{best.focus();}catch(__){}}
+                    var pseudoRail={node:document.scrollingElement||document.documentElement||document.body,index:'detail-geometry',items:[best]};
+                    ensureVisible(pseudoRail,best);
+                    state.railIndex=0;
+                    state.itemByRail=state.itemByRail||{};
+                    state.detailGeometryTarget=summary(best);
+                    window[stateKey]=state;
+                    window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-site-focus',phase:'move',pageUrl:pageUrl,action:direction,mode:'detail-geometry',railIndex:-1,itemIndex:0,railCount:rails.length,count:candidates.length,target:summary(best)}),'');
+                    return true;
+                  }catch(_){return false;}
+                };
+                if(!rails.length||!rails[0].items.length){
+                  window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-site-focus',phase:'empty',pageUrl:pageUrl,action:action,mode:'rail-index',railCount:0,count:0,target:'none'}),'');
+                  return;
+                }
+                if(action==='activate'){
+                  var target=(rails[activeRail]&&rails[activeRail].items[activeItem])||null;
+                  if(target){
+                    focusItem(activeRail,activeItem,'rail-index','activate');
+                    var nestedAnchor=(target.querySelector&&target.querySelector('a[href]'))||null;
+                    var href=(target.href||(target.closest&&target.closest('a[href]')&&target.closest('a[href]').href)||(nestedAnchor&&nestedAnchor.href)||'');
+                    if(href){window.location.href=href;}else{try{target.click();}catch(_){try{target.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(__){}}}
+                  }else{
+                    window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-site-focus',phase:'activate',pageUrl:pageUrl,action:action,mode:'rail-index',railIndex:activeRail,itemIndex:activeItem,railCount:rails.length,count:0,target:'none'}),'');
+                  }
+                  return;
+                }
+                if(action==='left'||action==='right'){
+                  var rail=rails[activeRail];
+                  var nextItem=activeItem+(action==='right'?1:-1);
+                  if(nextItem<0||nextItem>=rail.items.length){
+                    window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-site-focus',phase:'boundary',pageUrl:pageUrl,action:action,mode:'rail-index-boundary',railIndex:activeRail,itemIndex:activeItem,railCount:rails.length,count:rail.items.length,target:summary(rail.items[activeItem])}),'');
+                    return;
+                  }
+                  focusItem(activeRail,nextItem,'rail-index','move');
+                  return;
+                }
+                if(action==='up'||action==='down'){
+                  var nextRail=activeRail+(action==='down'?1:-1);
+                  if(nextRail<0||nextRail>=rails.length){
+                    if(focusDetailGeometry(action)){return;}
+                    var before=Number((document.scrollingElement||document.documentElement||document.body).scrollTop||window.scrollY||0);
+                    var amount=Math.round((window.innerHeight||720)*0.72)*(action==='down'?1:-1);
+                    try{window.scrollBy({top:amount,left:0,behavior:'smooth'});}catch(_){window.scrollBy(0,amount);}
+                    window.prompt(promptPrefix+JSON.stringify({type:'kulchaflo-site-focus',phase:'scroll',pageUrl:pageUrl,action:action,mode:'rail-vertical-boundary',railIndex:activeRail,itemIndex:activeItem,railCount:rails.length,count:(rails[activeRail]&&rails[activeRail].items.length)||0,target:summary((rails[activeRail]&&rails[activeRail].items[activeItem])||null),beforeY:before,amount:amount}),'');
+                    return;
+                  }
+                  var remembered=state.itemByRail&&state.itemByRail[nextRail];
+                  var nextItems=rails[nextRail].items;
+                  var nextIndex=(remembered!==undefined)?Math.max(0,Math.min(Number(remembered),nextItems.length-1)):closestIndex(nextItems,rails[activeRail].items[activeItem]);
+                  focusItem(nextRail,nextIndex,'rail-index-vertical','move');
+                  return;
+                }
+              }catch(e){
+                try{window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'kulchaflo-site-focus',phase:'error',pageUrl:${JSONObject.quote(pageUrl)},action:${JSONObject.quote(action)},error:String(e&&e.message||e)}),'');}catch(_){}
+              }
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+    }
+    private fun dispatchYouTubeFocusAction(session: GeckoSession, pageUrl: String, action: String) {
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var pageUrl=${JSONObject.quote(pageUrl)};
+                var action=${JSONObject.quote(action)};
+                var styleId='kf-youtube-tv-focus-style';
+                if(!document.getElementById(styleId)){
+                  var style=document.createElement('style');
+                  style.id=styleId;
+                  style.textContent='[data-kf-youtube-focused="1"],[data-kf-youtube-focused="1"]:focus,[data-kf-youtube-focused="1"]:focus-visible{outline:none!important;}[data-kf-youtube-focused="1"]{border-radius:14px!important;box-shadow:0 0 0 5px #fff,0 0 0 9px rgba(8,10,12,.96),0 14px 34px rgba(255,255,255,.18)!important;position:relative!important;z-index:20!important;transform:translateZ(0) scale(1.01)!important;}ytd-thumbnail[data-kf-youtube-focused="1"],a#thumbnail[data-kf-youtube-focused="1"]{display:block!important;overflow:visible!important;}';
+                  document.documentElement.appendChild(style);
+                }
+                var rendererSelector='ytd-rich-item-renderer,ytd-video-renderer,ytd-grid-video-renderer,ytd-compact-video-renderer,ytd-reel-item-renderer';
+                var selector=[
+                  rendererSelector,
+                  'ytd-rich-item-renderer ytd-thumbnail',
+                  'ytd-video-renderer ytd-thumbnail',
+                  'ytd-grid-video-renderer ytd-thumbnail',
+                  'ytd-compact-video-renderer ytd-thumbnail',
+                  'ytd-rich-item-renderer a#thumbnail',
+                  'ytd-video-renderer a#thumbnail',
+                  'ytd-grid-video-renderer a#thumbnail',
+                  'ytd-compact-video-renderer a#thumbnail',
+                  'yt-tab-shape',
+                  'yt-tab-shape a[href]',
+                  'tp-yt-paper-tab',
+                  'tp-yt-paper-tab a[href]',
+                  'yt-chip-cloud-chip-renderer',
+                  'yt-chip-cloud-chip-renderer button',
+                  'ytd-feed-filter-chip-bar-renderer yt-chip-cloud-chip-renderer',
+                  'ytd-guide-entry-renderer a[href]',
+                  'button[aria-label]'
+                ].join(',');
+                var visible=function(el){
+                  try{
+                    if(!el||el.disabled||el.getAttribute('aria-hidden')==='true'){return false;}
+                    var r=el.getBoundingClientRect();
+                    if(r.width<14||r.height<14){return false;}
+                    var s=getComputedStyle(el);
+                    if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity||1)<0.05){return false;}
+                    return r.bottom>=0&&r.right>=0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                  }catch(_){return false;}
+                };
+                var rendererFor=function(el){
+                  try{return el&&el.closest&&el.closest(rendererSelector);}catch(_){return null;}
+                };
+                var videoHref=function(el){
+                  try{
+                    var renderer=rendererFor(el);
+                    var anchor=(renderer&&renderer.querySelector('a#thumbnail[href],a#video-title-link[href],a[href*="/watch"],a[href*="/shorts"]'))||(el&&el.closest&&el.closest('a[href]'))||el;
+                    var href=String((anchor&&anchor.href)||(anchor&&anchor.getAttribute&&anchor.getAttribute('href'))||'');
+                    return (/\/watch|\/shorts/.test(href))?href:'';
+                  }catch(_){return '';}
+                };
+                var visualTarget=function(el){
+                  try{
+                    var renderer=rendererFor(el);
+                    if(renderer){
+                      return renderer.querySelector('ytd-thumbnail')||renderer.querySelector('a#thumbnail')||renderer;
+                    }
+                    if(el&&el.matches&&el.matches('ytd-thumbnail,a#thumbnail')){return el;}
+                    return el;
+                  }catch(_){return el;}
+                };
+                var normalize=function(el){
+                  try{
+                    if(!el){return null;}
+                    var renderer=rendererFor(el);
+                    if(renderer){return visualTarget(renderer);}
+                    if(el.matches&&el.matches(selector)){return visualTarget(el);}
+                    var closest=el.closest&&el.closest(selector);
+                    return closest?visualTarget(closest):null;
+                  }catch(_){return el;}
+                };
+                var isUseful=function(el){
+                  try{
+                    if(videoHref(el)){return true;}
+                    if(rendererFor(el)){return false;}
+                    var tab=el.closest&&el.closest('yt-tab-shape,tp-yt-paper-tab,yt-chip-cloud-chip-renderer');
+                    var href=String(el.href||el.getAttribute('href')||(tab&&(tab.href||tab.getAttribute('href')))||'');
+                    var label=String(el.getAttribute('aria-label')||el.getAttribute('title')||el.innerText||(tab&&(tab.getAttribute('aria-label')||tab.getAttribute('title')||tab.innerText))||'').trim();
+                    if(tab&&label&&/(videos|live|podcasts|playlist|playlists|shorts|home|community|channels|about|all|music|recently uploaded|popular)/i.test(label)){return true;}
+                    if(href&&href.indexOf('javascript:')===0){return false;}
+                    if(href&&(/[?&]pp=/.test(href))){return false;}
+                    if(href&&(/\/playlist|\/@|\/channel|\/c\//.test(href))){return true;}
+                    if(label&&/(play|search|subscribe|home|videos|shorts|live|channels|back|close|menu)/i.test(label)){return true;}
+                    return false;
+                  }catch(_){return false;}
+                };
+                var nodes=Array.from(document.querySelectorAll(selector)).map(normalize).filter(Boolean);
+                var seen=new Set();
+                var items=nodes.filter(function(el){
+                  if(seen.has(el)||!visible(el)||!isUseful(el)){return false;}
+                  seen.add(el);
+                  return true;
+                });
+                var clear=function(){
+                  try{document.querySelectorAll('[data-kf-youtube-focused="1"]').forEach(function(el){el.removeAttribute('data-kf-youtube-focused');});}catch(_){}
+                };
+                var summary=function(el){
+                  try{
+                    if(!el){return 'none';}
+                    var tag=(el.tagName||'').toLowerCase();
+                    var id=el.id?('#'+el.id):'';
+                    var renderer=rendererFor(el);
+                    var labelNode=renderer&&renderer.querySelector('#video-title,a#video-title-link,[aria-label]');
+                    var txt=(el.getAttribute('aria-label')||el.getAttribute('title')||(labelNode&&(labelNode.getAttribute('aria-label')||labelNode.getAttribute('title')||labelNode.innerText))||el.innerText||videoHref(el)||'').trim().replace(/\s+/g,' ').slice(0,90);
+                    return tag+id+(txt?(' "'+txt+'"'):'');
+                  }catch(_){return 'unknown';}
+                };
+                var fireThumbnailHover=function(el){
+                  try{
+                    var renderer=rendererFor(el);
+                    var targets=[el];
+                    if(renderer){
+                      var a=renderer.querySelector('a#thumbnail');
+                      var thumb=renderer.querySelector('ytd-thumbnail');
+                      if(a&&targets.indexOf(a)<0){targets.push(a);}
+                      if(thumb&&targets.indexOf(thumb)<0){targets.push(thumb);}
+                      if(targets.indexOf(renderer)<0){targets.push(renderer);}
+                    }
+                    var r=el.getBoundingClientRect();
+                    var x=Math.max(1,Math.min(window.innerWidth-1,r.left+r.width*0.5));
+                    var y=Math.max(1,Math.min(window.innerHeight-1,r.top+r.height*0.5));
+                    ['pointerover','pointerenter','mouseover','mouseenter','mousemove'].forEach(function(type){
+                      targets.forEach(function(t){
+                        try{t.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));}catch(_){}
+                      });
+                    });
+                  }catch(_){}
+                };
+                var focusPoint=function(el){
+                  try{
+                    if(!el){return null;}
+                    var r=el.getBoundingClientRect();
+                    return {x:Math.round(Math.max(1,Math.min(window.innerWidth-1,r.left+r.width*0.5))),y:Math.round(Math.max(1,Math.min(window.innerHeight-1,r.top+r.height*0.5))),video:!!videoHref(el)};
+                  }catch(_){return null;}
+                };
+                var current=normalize(document.querySelector('[data-kf-youtube-focused="1"]'))||normalize(document.activeElement);
+                if(!current||items.indexOf(current)<0){current=null;}
+                if(action==='activate'){
+                  var target=current||items[0]||null;
+                  if(target){
+                    clear();
+                    target.setAttribute('data-kf-youtube-focused','1');
+                    if(!target.hasAttribute('tabindex')){target.setAttribute('tabindex','0');}
+                    try{target.focus({preventScroll:true});}catch(_){try{target.focus();}catch(__){}}
+                    fireThumbnailHover(target);
+                    var href=videoHref(target)||target.href||(target.closest&&target.closest('a[href]')&&target.closest('a[href]').href)||'';
+                    if(href&&(/\/watch|\/shorts|\/playlist|\/@|\/channel|\/c\//.test(href))){
+                      window.location.href=href;
+                    }else{
+                      var clickTarget=(target.closest&&target.closest('yt-tab-shape,tp-yt-paper-tab,yt-chip-cloud-chip-renderer,button,a[href]'))||target;
+                      try{clickTarget.click();}catch(_){
+                        try{clickTarget.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(__){}
+                      }
+                    }
+                  }
+                  var activatePoint=focusPoint(target);
+                  window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'activate',pageUrl:pageUrl,action:action,count:items.length,target:summary(target),hoverX:activatePoint&&activatePoint.x,hoverY:activatePoint&&activatePoint.y,thumbnail:activatePoint&&activatePoint.video}),'');
+                  return;
+                }
+                var chosen=null,mode='thumbnail-geometry';
+                if(items.length){
+                  if(!current){
+                    chosen=items.slice().sort(function(a,b){
+                      var ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
+                      return (ar.top-br.top)||(ar.left-br.left);
+                    })[0];
+                    mode='thumbnail-initial';
+                  }else{
+                    var cr=current.getBoundingClientRect();
+                    var cx=cr.left+cr.width/2,cy=cr.top+cr.height/2;
+                    var horizontal=(action==='left'||action==='right');
+                    var sign=(action==='right'||action==='down')?1:-1;
+                    var best=null,bestScore=Infinity;
+                    items.forEach(function(el){
+                      if(el===current){return;}
+                      var r=el.getBoundingClientRect();
+                      var x=r.left+r.width/2,y=r.top+r.height/2;
+                      var primary=horizontal?(x-cx):(y-cy);
+                      if(primary*sign<=3){return;}
+                      var secondary=horizontal?Math.abs(y-cy):Math.abs(x-cx);
+                      var score=(primary*primary)+(secondary*secondary*2.1);
+                      if(score<bestScore){bestScore=score;best=el;}
+                    });
+                    chosen=best;
+                    if(!chosen&&(action==='up'||action==='down')){
+                      var before=Number((document.scrollingElement||document.documentElement||document.body).scrollTop||window.scrollY||0);
+                      var amount=Math.round((window.innerHeight||720)*0.72)*(action==='down'?1:-1);
+                      try{window.scrollBy({top:amount,left:0,behavior:'smooth'});}catch(_){window.scrollBy(0,amount);}
+                      window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'scroll',pageUrl:pageUrl,action:action,mode:'vertical-boundary',count:items.length,target:summary(current),beforeY:before,amount:amount}),'');
+                      return;
+                    }
+                    if(!chosen&&(action==='left'||action==='right')){
+                      window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'boundary',pageUrl:pageUrl,action:action,mode:'horizontal-boundary',count:items.length,target:summary(current)}),'');
+                      return;
+                    }
+                  }
+                }
+                if(chosen){
+                  clear();
+                  chosen.setAttribute('data-kf-youtube-focused','1');
+                  if(!chosen.hasAttribute('tabindex')){chosen.setAttribute('tabindex','0');}
+                  try{chosen.focus({preventScroll:true});}catch(_){try{chosen.focus();}catch(__){}}
+                  try{chosen.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});}catch(_){try{chosen.scrollIntoView(false);}catch(__){}}
+                  fireThumbnailHover(chosen);
+                }
+                var chosenPoint=focusPoint(chosen);
+                window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'move',pageUrl:pageUrl,action:action,mode:mode,count:items.length,target:summary(chosen),hoverX:chosenPoint&&chosenPoint.x,hoverY:chosenPoint&&chosenPoint.y,thumbnail:chosenPoint&&chosenPoint.video}),'');
+              }catch(e){
+                try{window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'youtube-site-focus',phase:'error',pageUrl:${JSONObject.quote(pageUrl)},action:${JSONObject.quote(action)},error:String(e&&e.message||e)}),'');}catch(_){}
+              }
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+    }
+
     private fun showPointerAt(x: Float, y: Float, reason: String) {
         val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
         val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
         val inset = pointerBoundsInsetPx()
         pointerX = x.coerceIn(inset, maxWidth - inset)
         pointerY = y.coerceIn(inset, maxHeight - inset)
+        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        if (!promotedMediaPlayer.isPromoted() && isPointerAssistAllowedForUrl(activeUrl)) {
+            pointerAssistModeActive = true
+            GvLogger.i("GvInput", "pointer assist manually enabled reason=$reason url=$activeUrl")
+        }
         pointerOverlay.showAt(pointerX, pointerY)
         pointerVisible = true
         schedulePointerIdleTimeout()
@@ -8066,6 +8858,26 @@ return changed>0;
             )
             return
         }
+        if (type == "kulchaflo-site-focus") {
+            GvLogger.i(
+                "GvInput",
+                "kulchaflo site focus result phase=${payload.optString("phase")} action=${payload.optString("action")} mode=${payload.optString("mode")} count=${payload.optInt("count")} target=${payload.optString("target")} pageUrl=$pageUrl beforeY=${payload.optDouble("beforeY")} beforeX=${payload.optDouble("beforeX")} amount=${payload.optInt("amount")} error=${payload.optString("error")}"
+            )
+            return
+        }
+        if (type == "youtube-site-focus") {
+            val hoverX = payload.optDouble("hoverX", -1.0).toFloat()
+            val hoverY = payload.optDouble("hoverY", -1.0).toFloat()
+            val thumbnail = payload.optBoolean("thumbnail")
+            if (thumbnail && hoverX > 0f && hoverY > 0f) {
+                dispatchNativeMouseHoverAt(hoverX, hoverY, "youtube-thumbnail-focus")
+            }
+            GvLogger.i(
+                "GvInput",
+                "youtube site focus result phase=${payload.optString("phase")} action=${payload.optString("action")} mode=${payload.optString("mode")} count=${payload.optInt("count")} target=${payload.optString("target")} pageUrl=$pageUrl beforeY=${payload.optDouble("beforeY")} amount=${payload.optInt("amount")} hover=${hoverX.toInt()},${hoverY.toInt()} thumbnail=$thumbnail error=${payload.optString("error")}"
+            )
+            return
+        }
         if (type == "dpad-document-scroll-fallback") {
             GvLogger.i(
                 "GvInput",
@@ -9303,6 +10115,16 @@ return changed>0;
         }
         val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
         return host == "kulchaflo.com"
+    }
+
+    private fun isYouTubePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty()
+        return isYouTubeSurfaceHostForUnifiedCompat(host)
     }
 
     private fun applyMediaSessionDelegateForUrl(
