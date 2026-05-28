@@ -159,6 +159,29 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val cgtvPlayAssistFallbackReleaseRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    // Smart auto-fullscreen state (media-ready policy)
+    private val youtubeAutoFsArmedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubeAutoFsAttemptCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val youtubeAutoFsMediaReadyBySession = LinkedHashSet<GeckoSession>()
+    private val youtubeAutoFsPendingRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeAutoFsFallbackRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeAutoFsCallbackCheckRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeAutoFsTargetProbeTokenBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubeAutoFsTargetProbeFallbackRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeFullscreenChatCollapseLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val youtubeQualityTrackedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubeQualityAttemptCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val youtubeQualityLastAttemptAtBySession = LinkedHashMap<GeckoSession, Long>()
+    private val youtubeQualityPendingRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeQualityFollowUpQueuedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubePremiumPopupTrackedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubePremiumPopupCheckCountBySessionWindow = LinkedHashMap<GeckoSession, LinkedHashMap<String, Int>>()
+    private val youtubePremiumPopupPendingRunnablesBySession = LinkedHashMap<GeckoSession, MutableList<Runnable>>()
+    private val youtubePremiumPopupPendingWindowBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubePremiumPopupLastDismissMsByUrl = LinkedHashMap<String, Long>()
+    private val youtubePremiumPopupLastInteractionBurstMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val youtubeFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
+    private val browserFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
@@ -171,8 +194,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var pointerRepeatTicks = 0
     private var pointerAssistModeActive = false
     private var promotedPointerModeActive = false
+    private var browserFullscreenPointerSleepActive = false
+    private var browserFullscreenWakeOnlyPendingKeyUp = false
     private var lastBackToExitAtMs = 0L
     private var lastBackToHomeAtMs = 0L
+    private var lastYouTubeBackAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
     private var lastDpadDocumentScrollFallbackMs = 0L
     private var lastKulchaFloRailHoverScrollMs = 0L
@@ -182,7 +208,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             schedulePointerIdleTimeout()
             return@Runnable
         }
-        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted()) {
+        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        if (browserFullscreenPointerSleepActive) {
+            if (!pointerVisible || !pointerOverlay.isPointerVisible()) {
+                return@Runnable
+            }
+            pointerVisible = false
+            pointerOverlay.setPointerPressed(false)
+            pointerOverlay.hidePointer()
+            GvLogger.i("GvInput", "browser fullscreen pointer slept reason=idle")
+            return@Runnable
+        }
+        val youtubePointerPolicy = isYouTubePageUrl(activeUrl)
+        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted() && !youtubePointerPolicy) {
             cancelPointerIdleTimeout()
             GvLogger.i("GvInput", "pointer idle suppressed reason=focus-navigation-mode")
             return@Runnable
@@ -192,7 +230,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
         pointerVisible = false
         pointerOverlay.hidePointer()
-        GvLogger.i("GvInput", "pointer auto-hidden reason=idle-timeout")
+        if (youtubePointerPolicy) {
+            GvLogger.i("GvInput", "youtube pointer slept reason=idle")
+        } else {
+            GvLogger.i("GvInput", "pointer auto-hidden reason=idle-timeout")
+        }
     }
 
     private val pointerRepeatRunnable = object : Runnable {
@@ -260,6 +302,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             listener = this,
         )
         browserMediaController = GvBrowserMediaController(tabController)
+        browserMediaController.youtubeMediaReadyListener = { session ->
+            onYouTubeMediaReady(session)
+        }
         promotedMediaPlayer = GvPromotedMediaPlayer(this, promotedMediaHost as ViewGroup)
         promotedMediaPlayer.listener = object : GvPromotedMediaPlayer.Listener {
             override fun onPromotedPlayerError(
@@ -306,7 +351,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         hideTabsOverlay()
                         return
                     }
-                    if (!promotedMediaPlayer.isPromoted() && pointerAssistModeActive) {
+                    if (shouldDebounceYouTubeBack()) {
+                        return
+                    }
+                    if (maybeHandleBrowserFullscreenBackPolicy()) {
+                        return
+                    }
+                    if (maybeHandleYouTubeBackPolicy()) {
+                        return
+                    }
+                    if (!promotedMediaPlayer.isPromoted() &&
+                        pointerAssistModeActive &&
+                        !isYouTubePageUrl(tabController.getActiveTab()?.url.orEmpty())
+                    ) {
                         disablePointerAssistMode(reason = "back-to-focus-mode")
                         return
                     }
@@ -447,6 +504,27 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         )
     }
 
+    private fun shouldDebounceYouTubeBack(): Boolean {
+        if (promotedMediaPlayer.isPromoted() || tabsOverlay.visibility == View.VISIBLE) {
+            return false
+        }
+        val activeUrl = tabController.getActiveTab()?.url.orEmpty()
+        if (!isYouTubePageUrl(activeUrl)) {
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        val elapsedMs = now - lastYouTubeBackAtMs
+        if (elapsedMs in 0 until YOUTUBE_BACK_DEBOUNCE_MS) {
+            GvLogger.i(
+                "GvInput",
+                "youtube back throttled reason=debounce elapsedMs=$elapsedMs windowMs=$YOUTUBE_BACK_DEBOUNCE_MS url=$activeUrl"
+            )
+            return true
+        }
+        lastYouTubeBackAtMs = now
+        return false
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -490,7 +568,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         if (!promotedMediaPlayer.isPromoted() && browserMediaController.handleMediaKey(event)) {
             return true
         }
-        if (!promotedMediaPlayer.isPromoted() && !pointerAssistModeActive && handleYouTubeFocusInput(event)) {
+        if (!promotedMediaPlayer.isPromoted() && maybeHandleBrowserFullscreenPointerInput(event)) {
+            return true
+        }
+        if (!promotedMediaPlayer.isPromoted() && maybeRecoverYouTubePointerAssistForDpad(event)) {
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && !pointerAssistModeActive && handleKulchaFloSiteFocusInput(event)) {
@@ -688,6 +769,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     maybeDispatchAmazonConsentCompat(session, pageUrl, reason = "page-stop")
                     maybeDispatchTttConsentCompat(session, pageUrl, reason = "page-stop")
                     maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
+                    armYouTubeAutoFullscreen(session, pageUrl)
+                    maybeScheduleYouTubePremiumPopupChecks(session, pageUrl, reason = "page-stop")
                     if (shouldPromoteDirectMedia(pageUrl)) {
                         triggerDirectMediaProbe(session, pageUrl)
                     } else {
@@ -737,6 +820,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             maybeDispatchCvmVimeoDiagnostic(session, url.orEmpty(), reason = "location-change")
             maybeDispatchFacebookCompat(session, url.orEmpty(), reason = "location-change")
             maybeDispatchYouTubeConsentCompat(session, url.orEmpty(), reason = "location-change")
+            armYouTubeAutoFullscreen(session, url.orEmpty())
+            maybeScheduleYouTubePremiumPopupChecks(session, url.orEmpty(), reason = "location-change")
             if (!isAbsTegoChannel10ContextUrl(url.orEmpty())) {
                 absTegoPlayerFirstReturnUrlBySession.remove(session)
                 tttTegoPlayerFirstReturnUrlBySession.remove(session)
@@ -917,6 +1002,27 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
 
         override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+            youtubeFullscreenStateBySession[session] = fullScreen
+            browserFullscreenStateBySession[session] = fullScreen
+            val pageUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            if (fullScreen) {
+                if (youtubeAutoFsArmedUrlBySession[session] != null && isYouTubeWatchOrLivePageUrl(pageUrl)) {
+                    GvLogger.i("GvInput", "youtube-native-fullscreen-success reason=fullscreen-callback url=$pageUrl")
+                }
+                stopYouTubeAutoFullscreen(session, reason = "fullscreen-enter")
+                maybeScheduleYouTubeQualityHelper(session, pageUrl, reason = "fullscreen-success", delayMs = 700L)
+                maybeDispatchYouTubeFullscreenChatGuard(session, pageUrl, reason = "fullscreen-enter", delayMs = 100L)
+                maybeDispatchYouTubeChatCollapseForFullscreen(session, pageUrl, reason = "fullscreen-enter", delayMs = 260L)
+                maybeScheduleYouTubePremiumPopupChecks(session, pageUrl, reason = "fullscreen-enter")
+                enterBrowserFullscreenPointerSleep(reason = "fullscreen-enter")
+            } else {
+                maybeDispatchYouTubeFullscreenChatGuardRemove(session, pageUrl, reason = "fullscreen-exit")
+                if (tabController.getActiveTab()?.session == session) {
+                browserFullscreenPointerSleepActive = false
+                browserFullscreenWakeOnlyPendingKeyUp = false
+                GvLogger.i("GvInput", "browser fullscreen pointer sleep exit reason=fullscreen-exit")
+                }
+            }
             val liveMediaSurface = isLiveMediaSurfaceUrl(tabController.findTabBySession(session)?.url.orEmpty())
             val controller = WindowInsetsControllerCompat(window, window.decorView)
             if (fullScreen && !liveMediaSurface) {
@@ -928,9 +1034,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 "GvContent",
                 "fullscreen tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} enabled=$fullScreen liveMediaSurface=$liveMediaSurface"
             )
-            if (fullScreen) {
-                disablePointerAssistMode(reason = "fullscreen-media")
-            }
         }
     }
 
@@ -965,6 +1068,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         cgtvPlayAssistNativeTapCountBySession.remove(tab.session)
         cgtvPlayAssistNativeTapLastMsBySession.remove(tab.session)
         cgtvBrowserPlaybackActiveBySession.remove(tab.session)
+        stopYouTubeAutoFullscreen(tab.session, reason = "tab-closed")
+        clearYouTubeQualityHelperTracking(tab.session)
+        clearYouTubePremiumPopupTracking(tab.session)
+        youtubeFullscreenChatCollapseLastDispatchMsBySession.remove(tab.session)
+        youtubeFullscreenStateBySession.remove(tab.session)
+        browserFullscreenStateBySession.remove(tab.session)
         clearCgtvPlayAssistFallback(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
@@ -6049,37 +6158,15 @@ return changed>0;
         )
     }
 
-    private fun scheduleYouTubeConsentFollowUp(session: GeckoSession, delayMs: Long) {
-        pointerHandler.postDelayed(
-            {
-                if (isFinishing || isDestroyed) {
-                    return@postDelayed
-                }
-                val tab = tabController.findTabBySession(session) ?: return@postDelayed
-                val currentTabUrl = tab.url
-                if (!isGoogleVideoSurfaceUrl(currentTabUrl)) {
-                    return@postDelayed
-                }
-                triggerYouTubeConsentCompat(session, currentTabUrl, reason = "follow-up-$delayMs")
-            },
-            delayMs,
-        )
-    }
-
     private fun maybeDispatchYouTubeConsentCompat(
         session: GeckoSession,
         pageUrl: String,
         reason: String,
     ) {
-        if (!isGoogleVideoSurfaceUrl(pageUrl)) {
+        if (!isYouTubeConsentPageUrl(pageUrl)) {
             return
         }
         triggerYouTubeConsentCompat(session, pageUrl, reason)
-        if (reason == "location-change") {
-            scheduleYouTubeConsentFollowUp(session, 900L)
-            scheduleYouTubeConsentFollowUp(session, 2500L)
-            scheduleYouTubeConsentFollowUp(session, 5000L)
-        }
     }
 
     private fun maybeDispatchYouTubeConsentNativeTap(
@@ -6129,6 +6216,1412 @@ return changed>0;
             },
             160L,
         )
+    }
+
+    // ─── YouTube native coordinate fullscreen (media-ready policy) ────────────
+
+    private fun armYouTubeAutoFullscreen(session: GeckoSession, pageUrl: String) {
+        val currentArmed = youtubeAutoFsArmedUrlBySession[session]
+        if (!isYouTubePageUrl(pageUrl)) {
+            if (currentArmed != null) {
+                stopYouTubeAutoFullscreen(session, reason = "not-youtube", oldUrl = currentArmed)
+            }
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=not-youtube url=$pageUrl")
+            return
+        }
+        if (!isYouTubeWatchOrLivePageUrl(pageUrl)) {
+            if (currentArmed != null) {
+                stopYouTubeAutoFullscreen(session, reason = "not-watch-live", oldUrl = currentArmed)
+            }
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=not-watch-live url=$pageUrl")
+            return
+        }
+        if (youtubeFullscreenStateBySession[session] == true) {
+            stopYouTubeAutoFullscreen(session, reason = "already-fullscreen", oldUrl = currentArmed)
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$pageUrl")
+            return
+        }
+        if (currentArmed == pageUrl) {
+            return
+        }
+        if (currentArmed != null) {
+            stopYouTubeAutoFullscreen(session, reason = "url-changed", oldUrl = currentArmed, newUrl = pageUrl)
+        }
+        youtubeAutoFsArmedUrlBySession[session] = pageUrl
+        youtubeAutoFsAttemptCountBySession[session] = 0
+        youtubeAutoFsMediaReadyBySession.remove(session)
+        GvLogger.i("GvInput", "youtube-native-fullscreen-arm url=$pageUrl reason=watch-live-ready attempt=1")
+        val fallback = Runnable {
+            if (isFinishing || isDestroyed) return@Runnable
+            if (youtubeAutoFsArmedUrlBySession[session] != pageUrl) return@Runnable
+            if (youtubeFullscreenStateBySession[session] == true) return@Runnable
+            if (youtubeAutoFsMediaReadyBySession.contains(session)) return@Runnable
+            val attempts = youtubeAutoFsAttemptCountBySession[session] ?: 0
+            if (attempts >= YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=max-attempts url=$pageUrl")
+                return@Runnable
+            }
+            val nextAttempt = attempts + 1
+            youtubeAutoFsPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+            scheduleYouTubeAutoFullscreenAttempt(session, pageUrl, nextAttempt, 0L, reason = "absolute-fallback")
+        }
+        youtubeAutoFsFallbackRunnableBySession[session] = fallback
+        pointerHandler.postDelayed(fallback, YOUTUBE_AUTO_FULLSCREEN_ABSOLUTE_FALLBACK_MS)
+    }
+
+    private fun stopYouTubeAutoFullscreen(
+        session: GeckoSession,
+        reason: String,
+        oldUrl: String? = null,
+        newUrl: String? = null,
+    ) {
+        val armed = youtubeAutoFsArmedUrlBySession.remove(session) ?: oldUrl ?: return
+        youtubeAutoFsAttemptCountBySession.remove(session)
+        youtubeAutoFsMediaReadyBySession.remove(session)
+        youtubeAutoFsPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsCallbackCheckRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsTargetProbeTokenBySession.remove(session)
+        youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        val msg = buildString {
+            append("youtube-native-fullscreen-stop reason=$reason url=$armed")
+            if (newUrl != null) append(" newUrl=$newUrl")
+        }
+        GvLogger.i("GvInput", msg)
+    }
+
+    private fun onYouTubeMediaReady(session: GeckoSession) {
+        val pageUrl = youtubeAutoFsArmedUrlBySession[session] ?: return
+        maybeScheduleYouTubeQualityHelper(session, pageUrl, reason = "media-play", delayMs = 1200L)
+        if (youtubeFullscreenStateBySession[session] == true) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$pageUrl")
+            stopYouTubeAutoFullscreen(session, reason = "already-fullscreen")
+            return
+        }
+        if (youtubeAutoFsMediaReadyBySession.contains(session)) return
+        youtubeAutoFsMediaReadyBySession.add(session)
+        val attempt = (youtubeAutoFsAttemptCountBySession[session] ?: 0) + 1
+        if (attempt > YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=max-attempts url=$pageUrl")
+            stopYouTubeAutoFullscreen(session, reason = "max-attempts")
+            return
+        }
+        scheduleYouTubeAutoFullscreenAttempt(
+            session = session,
+            pageUrl = pageUrl,
+            attempt = attempt,
+            delayMs = YOUTUBE_AUTO_FULLSCREEN_AFTER_MEDIA_READY_MS,
+            reason = "media-ready",
+        )
+    }
+
+    private fun scheduleYouTubeAutoFullscreenAttempt(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        delayMs: Long,
+        reason: String,
+    ) {
+        youtubeAutoFsPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        val r = Runnable {
+            if (isFinishing || isDestroyed) return@Runnable
+            val armed = youtubeAutoFsArmedUrlBySession[session]
+            if (armed != pageUrl) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=${armed.orEmpty()}")
+                return@Runnable
+            }
+            if (youtubeFullscreenStateBySession[session] == true) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$pageUrl")
+                stopYouTubeAutoFullscreen(session, reason = "already-fullscreen")
+                return@Runnable
+            }
+            youtubeAutoFsPendingRunnableBySession.remove(session)
+            runYouTubeAutoFullscreenAttempt(session, pageUrl, attempt, reason)
+        }
+        youtubeAutoFsPendingRunnableBySession[session] = r
+        pointerHandler.postDelayed(r, delayMs)
+    }
+
+    private fun resolveYouTubeNativeTapPoint(xRatio: Float, yRatio: Float, fallbackX: Float, fallbackY: Float): Pair<Float, Float> {
+        val width = geckoView.width.takeIf { it > 0 } ?: 1920
+        val height = geckoView.height.takeIf { it > 0 } ?: 1080
+        val x = (width * xRatio).takeIf { it.isFinite() && it > 0f } ?: fallbackX
+        val y = (height * yRatio).takeIf { it.isFinite() && it > 0f } ?: fallbackY
+        return x.coerceIn(1f, (width - 1).coerceAtLeast(1).toFloat()) to
+            y.coerceIn(1f, (height - 1).coerceAtLeast(1).toFloat())
+    }
+
+    private fun runYouTubeAutoFullscreenAttempt(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        reason: String,
+    ) {
+        val tab = tabController.findTabBySession(session)
+        if (tab == null) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=tab-missing")
+            stopYouTubeAutoFullscreen(session, reason = "url-changed", oldUrl = pageUrl)
+            return
+        }
+        val activeUrl = tab.url
+        if (activeUrl != pageUrl) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=$activeUrl")
+            stopYouTubeAutoFullscreen(session, reason = "url-changed", oldUrl = pageUrl, newUrl = activeUrl)
+            return
+        }
+        if (!isYouTubeWatchOrLivePageUrl(activeUrl)) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=not-watch-live url=$activeUrl")
+            stopYouTubeAutoFullscreen(session, reason = "not-watch-live", oldUrl = activeUrl)
+            return
+        }
+        if (promotedMediaPlayer.isPromoted()) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=promoted-native-active url=$activeUrl")
+            return
+        }
+        if (youtubeFullscreenStateBySession[session] == true || isBrowserFullscreenLikeState(tab)) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$activeUrl")
+            stopYouTubeAutoFullscreen(session, reason = "already-fullscreen")
+            return
+        }
+        if (attempt > YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=max-attempts url=$activeUrl")
+            stopYouTubeAutoFullscreen(session, reason = "max-attempts", oldUrl = activeUrl)
+            return
+        }
+        youtubeAutoFsAttemptCountBySession[session] = attempt
+        val (controlsX, controlsY) = resolveYouTubeNativeTapPoint(
+            xRatio = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_RATIO,
+            yRatio = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_RATIO,
+            fallbackX = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_FALLBACK,
+            fallbackY = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_FALLBACK,
+        )
+        val (buttonX, buttonY) = resolveYouTubeNativeTapPoint(
+            xRatio = YOUTUBE_FULLSCREEN_BUTTON_X_RATIO,
+            yRatio = YOUTUBE_FULLSCREEN_BUTTON_Y_RATIO,
+            fallbackX = YOUTUBE_FULLSCREEN_BUTTON_X_FALLBACK,
+            fallbackY = YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK,
+        )
+        val revealHandled = dispatchNativeMouseHoverAt(controlsX, controlsY, "youtube-native-fullscreen-controls-reveal")
+        GvLogger.i(
+            "GvInput",
+            "youtube-native-fullscreen-controls-hover x=${controlsX.toInt()} y=${controlsY.toInt()} attempt=$attempt reason=$reason handled=$revealHandled"
+        )
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val currentArmed = youtubeAutoFsArmedUrlBySession[session]
+                val currentTab = tabController.findTabBySession(session)
+                val currentUrl = currentTab?.url.orEmpty()
+                if (currentArmed != pageUrl || currentUrl != pageUrl) {
+                    GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=$currentUrl")
+                    return@postDelayed
+                }
+                if (youtubeFullscreenStateBySession[session] == true || (currentTab != null && isBrowserFullscreenLikeState(currentTab))) {
+                    GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$currentUrl")
+                    stopYouTubeAutoFullscreen(session, reason = "already-fullscreen")
+                    return@postDelayed
+                }
+                dispatchYouTubeNativeFullscreenTargetProbe(
+                    session = session,
+                    pageUrl = pageUrl,
+                    attempt = attempt,
+                    reason = reason,
+                    fallbackX = buttonX,
+                    fallbackY = buttonY,
+                )
+            },
+            YOUTUBE_AUTO_FULLSCREEN_CONTROLS_REVEAL_TO_BUTTON_DELAY_MS,
+        )
+    }
+
+    private fun dispatchYouTubeNativeFullscreenTargetProbe(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        reason: String,
+        fallbackX: Float,
+        fallbackY: Float,
+    ) {
+        youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        val probeToken = "fs-$attempt-${SystemClock.uptimeMillis()}"
+        youtubeAutoFsTargetProbeTokenBySession[session] = probeToken
+        val fallbackRunnable = Runnable {
+            if (isFinishing || isDestroyed) return@Runnable
+            val activeToken = youtubeAutoFsTargetProbeTokenBySession[session] ?: return@Runnable
+            if (activeToken != probeToken) return@Runnable
+            if (attempt == 1) {
+                youtubeAutoFsTargetProbeTokenBySession.remove(session)
+                youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)
+                GvLogger.i("GvInput", "youtube-native-fullscreen-target-timeout-retry-no-fallback attempt=$attempt")
+                scheduleYouTubeAutoFullscreenAttempt(
+                    session = session,
+                    pageUrl = pageUrl,
+                    attempt = attempt + 1,
+                    delayMs = 0L,
+                    reason = "retry-after-target-timeout",
+                )
+                return@Runnable
+            }
+            GvLogger.i("GvInput", "youtube-native-fullscreen-target-timeout-fallback attempt=$attempt")
+            performYouTubeNativeFullscreenButtonTap(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = attempt,
+                x = fallbackX,
+                y = fallbackY,
+                source = "fallback",
+                token = probeToken,
+                fallbackReason = "target-timeout",
+            )
+        }
+        youtubeAutoFsTargetProbeFallbackRunnableBySession[session] = fallbackRunnable
+        pointerHandler.postDelayed(fallbackRunnable, YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS)
+        GvLogger.i(
+            "GvInput",
+            "youtube-native-fullscreen-target-probe-dispatched attempt=$attempt timeoutMs=$YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS reason=$reason"
+        )
+
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var probeToken=${JSONObject.quote(probeToken)};
+                var attempt=${attempt};
+                var visible=function(node){
+                  try{
+                    if(!node||node.disabled){return false;}
+                    var style=getComputedStyle(node);
+                    if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity||1)<0.05){return false;}
+                    var r=node.getBoundingClientRect();
+                    if(r.width<12||r.height<12){return false;}
+                    if(r.right<0||r.bottom<0||r.left>window.innerWidth||r.top>window.innerHeight){return false;}
+                    return true;
+                  }catch(_){return false;}
+                };
+                var selectors=[
+                  '.ytp-fullscreen-button',
+                  'button.ytp-fullscreen-button',
+                  'button[aria-label*="Full screen" i]',
+                  'button[title*="Full screen" i]',
+                  'button[aria-label*="fullscreen" i]',
+                  'button[title*="fullscreen" i]'
+                ];
+                var target=null;
+                for(var s=0;s<selectors.length;s++){
+                  var nodes=Array.from(document.querySelectorAll(selectors[s]));
+                  for(var i=0;i<nodes.length;i++){
+                    var node=nodes[i];
+                    if(visible(node)){target=node;break;}
+                  }
+                  if(target){break;}
+                }
+                if(!target){
+                  window.prompt(promptPrefix+JSON.stringify({
+                    type:'youtube-native-fullscreen-target',
+                    action:'skipped',
+                    reason:'no-visible-button',
+                    probeToken:probeToken,
+                    attempt:attempt,
+                    pageUrl:window.location.href,
+                    centerX:-1,centerY:-1,
+                    left:-1,top:-1,right:-1,bottom:-1,width:-1,height:-1,
+                    viewportWidth:Math.round(window.innerWidth||0),
+                    viewportHeight:Math.round(window.innerHeight||0),
+                    devicePixelRatio:Number(window.devicePixelRatio||1)
+                  }),'');
+                  return;
+                }
+                var r=target.getBoundingClientRect();
+                var cx=Math.round((r.left+r.right)/2);
+                var cy=Math.round((r.top+r.bottom)/2);
+                window.prompt(promptPrefix+JSON.stringify({
+                  type:'youtube-native-fullscreen-target',
+                  action:'measured',
+                  reason:${JSONObject.quote(reason)},
+                  probeToken:probeToken,
+                  attempt:attempt,
+                  pageUrl:window.location.href,
+                  centerX:cx,centerY:cy,
+                  left:Math.round(r.left),top:Math.round(r.top),right:Math.round(r.right),bottom:Math.round(r.bottom),
+                  width:Math.round(r.width),height:Math.round(r.height),
+                  viewportWidth:Math.round(window.innerWidth||0),
+                  viewportHeight:Math.round(window.innerHeight||0),
+                  devicePixelRatio:Number(window.devicePixelRatio||1)
+                }),'');
+              }catch(error){
+                try{
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                    type:'youtube-native-fullscreen-target',
+                    action:'error',
+                    reason:String(error&&error.message||error),
+                    probeToken:${JSONObject.quote(probeToken)},
+                    attempt:${attempt},
+                    pageUrl:window.location.href,
+                    centerX:-1,centerY:-1,
+                    left:-1,top:-1,right:-1,bottom:-1,width:-1,height:-1,
+                    viewportWidth:Math.round(window.innerWidth||0),
+                    viewportHeight:Math.round(window.innerHeight||0),
+                    devicePixelRatio:Number(window.devicePixelRatio||1)
+                  }),'');
+                }catch(_){}
+              }
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+    }
+
+    private fun performYouTubeNativeFullscreenButtonTap(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        x: Float,
+        y: Float,
+        source: String,
+        token: String,
+        fallbackReason: String? = null,
+    ) {
+        val activeToken = youtubeAutoFsTargetProbeTokenBySession[session] ?: return
+        if (activeToken != token) {
+            return
+        }
+        youtubeAutoFsTargetProbeTokenBySession.remove(session)
+        youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+
+        val tab = tabController.findTabBySession(session) ?: return
+        val activeUrl = tab.url
+        if (activeUrl != pageUrl) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=$activeUrl")
+            return
+        }
+        if (!isYouTubeWatchOrLivePageUrl(activeUrl)) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=not-watch-live url=$activeUrl")
+            return
+        }
+        if (youtubeFullscreenStateBySession[session] == true || isBrowserFullscreenLikeState(tab)) {
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$activeUrl")
+            stopYouTubeAutoFullscreen(session, reason = "already-fullscreen")
+            return
+        }
+        val width = geckoView.width.takeIf { it > 0 } ?: 1920
+        val height = geckoView.height.takeIf { it > 0 } ?: 1080
+        val clampedX = x.coerceIn(1f, (width - 1).coerceAtLeast(1).toFloat())
+        val clampedY = y.coerceIn(1f, (height - 1).coerceAtLeast(1).toFloat())
+        val tapReason = if (source == "measured") "youtube-native-fullscreen-button-measured" else "youtube-native-fullscreen-button"
+        val handled = dispatchNativeMouseTapAt(clampedX, clampedY, tapReason)
+        if (source == "measured") {
+            GvLogger.i(
+                "GvInput",
+                "youtube-native-fullscreen-button-tap source=measured x=${clampedX.toInt()} y=${clampedY.toInt()} attempt=$attempt handled=$handled"
+            )
+        } else {
+            val reasonSuffix = fallbackReason?.takeIf { it.isNotBlank() }?.let { " reason=$it" }.orEmpty()
+            GvLogger.i(
+                "GvInput",
+                "youtube-native-fullscreen-button-tap source=fallback x=${clampedX.toInt()} y=${clampedY.toInt()} attempt=$attempt handled=$handled$reasonSuffix"
+            )
+        }
+        GvLogger.i("GvInput", "youtube-native-fullscreen-waiting-for-callback attempt=$attempt url=$pageUrl")
+        scheduleYouTubeNativeFullscreenCallbackCheck(session, pageUrl, attempt)
+    }
+
+    private fun scheduleYouTubeNativeFullscreenCallbackCheck(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+    ) {
+        youtubeAutoFsCallbackCheckRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        val callbackCheck = Runnable {
+            youtubeAutoFsCallbackCheckRunnableBySession.remove(session)
+            if (isFinishing || isDestroyed) {
+                return@Runnable
+            }
+            val currentArmed = youtubeAutoFsArmedUrlBySession[session]
+            if (currentArmed != pageUrl) {
+                val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=$activeUrl")
+                return@Runnable
+            }
+            if (youtubeFullscreenStateBySession[session] == true) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-success reason=fullscreen-callback url=$pageUrl")
+                stopYouTubeAutoFullscreen(session, reason = "fullscreen-callback")
+                return@Runnable
+            }
+            GvLogger.i("GvInput", "youtube-native-fullscreen-failed reason=no-fullscreen-callback attempt=$attempt url=$pageUrl")
+            if (attempt >= YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=max-attempts url=$pageUrl")
+                stopYouTubeAutoFullscreen(session, reason = "max-attempts")
+                return@Runnable
+            }
+            val nextAttempt = attempt + 1
+            if (nextAttempt > 2 && !youtubeAutoFsMediaReadyBySession.contains(session)) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=no-media-evidence-late-retry url=$pageUrl")
+                stopYouTubeAutoFullscreen(session, reason = "no-media-evidence-late-retry")
+                return@Runnable
+            }
+            scheduleYouTubeAutoFullscreenAttempt(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = nextAttempt,
+                delayMs = if (nextAttempt > 2) YOUTUBE_AUTO_FULLSCREEN_RETRY_2_MS else YOUTUBE_AUTO_FULLSCREEN_RETRY_1_MS,
+                reason = "retry-after-callback-miss",
+            )
+        }
+        youtubeAutoFsCallbackCheckRunnableBySession[session] = callbackCheck
+        pointerHandler.postDelayed(callbackCheck, YOUTUBE_AUTO_FULLSCREEN_CALLBACK_WAIT_MS)
+    }
+
+    // ─── YouTube quality helper (bounded, verify-first logging) ───────────────
+
+    private fun clearYouTubeQualityHelperTracking(session: GeckoSession) {
+        youtubeQualityTrackedUrlBySession.remove(session)
+        youtubeQualityAttemptCountBySession.remove(session)
+        youtubeQualityLastAttemptAtBySession.remove(session)
+        youtubeQualityFollowUpQueuedUrlBySession.remove(session)
+        youtubeQualityPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+    }
+
+    private fun maybeScheduleYouTubeQualityHelper(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+        delayMs: Long = 0L,
+        bypassCooldown: Boolean = false,
+    ) {
+        if (!isYouTubePageUrl(pageUrl)) {
+            clearYouTubeQualityHelperTracking(session)
+            GvLogger.i("GvInput", "youtube-quality-helper skipped reason=not-youtube")
+            return
+        }
+        if (isYouTubeConsentPageUrl(pageUrl)) {
+            GvLogger.i("GvInput", "youtube-quality-helper skipped reason=consent-page")
+            return
+        }
+        if (!isYouTubeWatchOrLivePageUrl(pageUrl)) {
+            clearYouTubeQualityHelperTracking(session)
+            GvLogger.i("GvInput", "youtube-quality-helper skipped reason=not-watch-live")
+            return
+        }
+        val tracked = youtubeQualityTrackedUrlBySession[session]
+        if (tracked != pageUrl) {
+            clearYouTubeQualityHelperTracking(session)
+            youtubeQualityTrackedUrlBySession[session] = pageUrl
+        }
+        val attempts = youtubeQualityAttemptCountBySession[session] ?: 0
+        if (attempts >= YOUTUBE_QUALITY_HELPER_MAX_ATTEMPTS_PER_URL) {
+            GvLogger.i("GvInput", "youtube-quality-helper skipped reason=budget-exhausted")
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastAttemptAt = youtubeQualityLastAttemptAtBySession[session] ?: 0L
+        if (!bypassCooldown && lastAttemptAt > 0L && now - lastAttemptAt < YOUTUBE_QUALITY_HELPER_COOLDOWN_MS) {
+            GvLogger.i("GvInput", "youtube-quality-helper skipped reason=budget-exhausted")
+            return
+        }
+        if (youtubeQualityPendingRunnableBySession.containsKey(session)) {
+            return
+        }
+        youtubeQualityPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        val runnable = Runnable {
+            youtubeQualityPendingRunnableBySession.remove(session)
+            if (isFinishing || isDestroyed) return@Runnable
+            val tab = tabController.findTabBySession(session) ?: return@Runnable
+            val activeUrl = tab.url
+            if (activeUrl != pageUrl) {
+                return@Runnable
+            }
+            if (!isYouTubeWatchOrLivePageUrl(activeUrl) || isYouTubeConsentPageUrl(activeUrl)) {
+                return@Runnable
+            }
+            val nextAttempt = (youtubeQualityAttemptCountBySession[session] ?: 0) + 1
+            if (nextAttempt > YOUTUBE_QUALITY_HELPER_MAX_ATTEMPTS_PER_URL) {
+                GvLogger.i("GvInput", "youtube-quality-helper skipped reason=budget-exhausted")
+                return@Runnable
+            }
+            youtubeQualityAttemptCountBySession[session] = nextAttempt
+            youtubeQualityLastAttemptAtBySession[session] = SystemClock.uptimeMillis()
+            dispatchYouTubeQualityHelperProbe(session, activeUrl, reason, nextAttempt)
+        }
+        youtubeQualityPendingRunnableBySession[session] = runnable
+        pointerHandler.postDelayed(runnable, delayMs)
+        GvLogger.i("GvInput", "youtube-quality-helper scheduled reason=$reason url=$pageUrl")
+    }
+
+    private fun dispatchYouTubeQualityHelperProbe(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+        attempt: Int,
+    ) {
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var checkReason=${JSONObject.quote(reason)};
+                var attempt=${attempt};
+                var pageUrl=(window.location&&window.location.href)||'';
+                var lower=function(v){return String(v||'').toLowerCase();};
+                var toNum=function(v){var n=Number(v);return Number.isFinite(n)?n:0;};
+                var firstVideo=function(){
+                  try{
+                    return document.querySelector('#movie_player video, video');
+                  }catch(_){return null;}
+                };
+                var moviePlayer=function(){
+                  try{
+                    return document.querySelector('#movie_player') || (window.movie_player||null);
+                  }catch(_){return null;}
+                };
+                var player=moviePlayer();
+                var hasPlayer=!!player;
+                var hasGetLevels=!!(player&&typeof player.getAvailableQualityLevels==='function');
+                var hasGetCurrent=!!(player&&typeof player.getPlaybackQuality==='function');
+                var hasSetRange=!!(player&&typeof player.setPlaybackQualityRange==='function');
+                var hasSetQuality=!!(player&&typeof player.setPlaybackQuality==='function');
+                var levels=[];
+                var currentBefore='';
+                try{ if(hasGetLevels){ levels=(player.getAvailableQualityLevels()||[]).map(function(v){return String(v||'');}); } }catch(_){}
+                try{ if(hasGetCurrent){ currentBefore=String(player.getPlaybackQuality()||''); } }catch(_){}
+                var videoBefore=firstVideo();
+                var widthBefore=toNum(videoBefore&&videoBefore.videoWidth);
+                var heightBefore=toNum(videoBefore&&videoBefore.videoHeight);
+                var target='';
+                if(levels.indexOf('hd1080')>=0){target='hd1080';}
+                else if(levels.indexOf('hd720')>=0){target='hd720';}
+                var methodsApplied=[];
+                if(target){
+                  try{ if(hasSetRange){ player.setPlaybackQualityRange(target); methodsApplied.push('setPlaybackQualityRange'); } }catch(_){}
+                  try{ if(hasSetQuality){ player.setPlaybackQuality(target); methodsApplied.push('setPlaybackQuality'); } }catch(_){}
+                }
+                setTimeout(function(){
+                  try{
+                    var currentAfter='';
+                    try{ if(hasGetCurrent){ currentAfter=String(player.getPlaybackQuality()||''); } }catch(_){}
+                    var videoAfter=firstVideo();
+                    var widthAfter=toNum(videoAfter&&videoAfter.videoWidth);
+                    var heightAfter=toNum(videoAfter&&videoAfter.videoHeight);
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'youtube-quality-helper',
+                      action:'report',
+                      reason:checkReason,
+                      attempt:attempt,
+                      pageUrl:pageUrl,
+                      hasPlayer:hasPlayer,
+                      hasGetLevels:hasGetLevels,
+                      hasGetCurrent:hasGetCurrent,
+                      hasSetRange:hasSetRange,
+                      hasSetQuality:hasSetQuality,
+                      levels:levels,
+                      currentBefore:currentBefore,
+                      currentAfter:currentAfter,
+                      target:target,
+                      methodsApplied:methodsApplied,
+                      videoWidthBefore:widthBefore,
+                      videoHeightBefore:heightBefore,
+                      videoWidthAfter:widthAfter,
+                      videoHeightAfter:heightAfter
+                    }),'');
+                  }catch(reportError){
+                    try{
+                      window.prompt(promptPrefix+JSON.stringify({
+                        type:'youtube-quality-helper',
+                        action:'error',
+                        reason:String(reportError&&reportError.message||reportError),
+                        attempt:attempt,
+                        pageUrl:pageUrl
+                      }),'');
+                    }catch(_){}
+                  }
+                }, 1000);
+              }catch(error){
+                try{
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({
+                    type:'youtube-quality-helper',
+                    action:'error',
+                    reason:String(error&&error.message||error),
+                    attempt:${attempt},
+                    pageUrl:(window.location&&window.location.href)||''
+                  }),'');
+                }catch(_){}
+              }
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+    }
+
+    // ─── end YouTube native coordinate fullscreen ──────────────────────────────
+
+    private fun maybeDispatchYouTubeFullscreenChatGuard(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+        delayMs: Long,
+    ) {
+        if (!isYouTubeWatchOrLivePageUrl(pageUrl)) {
+            return
+        }
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) return@postDelayed
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                val activeUrl = tab.url
+                if (!isYouTubeWatchOrLivePageUrl(activeUrl)) return@postDelayed
+                if (youtubeFullscreenStateBySession[session] != true) return@postDelayed
+                val script = """
+                    javascript:(function(){
+                      try{
+                        var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                        var guardKey='__kfYoutubeFullscreenChatGuard';
+                        var styleId='kf-youtube-fullscreen-chat-guard-style';
+                        var now=function(){return Date.now();};
+                        var visibleRect=function(node){
+                          try{
+                            if(!node){return null;}
+                            var s=getComputedStyle(node);
+                            if(s.display==='none'||s.visibility==='hidden'||Number(s.opacity||1)<0.05){return null;}
+                            var r=node.getBoundingClientRect();
+                            if(r.width<=0||r.height<=0){return null;}
+                            return r;
+                          }catch(_){return null;}
+                        };
+                        var chatSelectors=[
+                          'ytd-live-chat-frame',
+                          '#chat',
+                          '#chat-container',
+                          '#chatframe',
+                          '#chat-messages',
+                          '#panels',
+                          '#secondary',
+                          '#secondary-inner',
+                          'ytd-watch-flexy #secondary',
+                          'ytd-watch-flexy #secondary-inner',
+                          'ytd-watch-flexy #panels',
+                          'ytd-engagement-panel-section-list-renderer',
+                          'ytd-engagement-panel-section-list-renderer[target-id*="chat" i]',
+                          'ytd-engagement-panel-section-list-renderer[panel-id*="chat" i]',
+                          'ytd-engagement-panel-section-list-renderer[visibility*="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED" i]',
+                          'iframe[src*="live_chat"]',
+                          'iframe[src*="live_chat_replay"]',
+                          'iframe[src*="youtube.com/live_chat"]',
+                          'iframe[src*="youtube.com/live_chat_replay"]'
+                        ];
+                        var chatSelectorText=chatSelectors.join(',');
+                        var metrics=function(){
+                          var m={
+                            visibleChatCount:0,
+                            maxChatWidth:0,
+                            maxChatHeight:0,
+                            liveChatIframeVisible:false,
+                            secondaryWidth:0,
+                            panelsWidth:0,
+                            viewportWidth:Math.max(0,Math.round(window.innerWidth||0)),
+                            primaryWidth:0,
+                            playerWidth:0
+                          };
+                          try{
+                            Array.from(document.querySelectorAll(chatSelectorText)).forEach(function(node){
+                              var r=visibleRect(node);
+                              if(!r){return;}
+                              m.visibleChatCount+=1;
+                              m.maxChatWidth=Math.max(m.maxChatWidth,Math.round(r.width));
+                              m.maxChatHeight=Math.max(m.maxChatHeight,Math.round(r.height));
+                              if((node.tagName||'').toLowerCase()==='iframe'){
+                                var src=String(node.getAttribute('src')||'').toLowerCase();
+                                if(src.indexOf('live_chat')>=0){m.liveChatIframeVisible=true;}
+                              }
+                            });
+                            var sec=visibleRect(document.querySelector('#secondary'));
+                            if(sec){m.secondaryWidth=Math.max(0,Math.round(sec.width));}
+                            var pnl=visibleRect(document.querySelector('#panels'));
+                            if(pnl){m.panelsWidth=Math.max(0,Math.round(pnl.width));}
+                            var primary=visibleRect(document.querySelector('#primary')||document.querySelector('#primary-inner'));
+                            if(primary){m.primaryWidth=Math.max(0,Math.round(primary.width));}
+                            var player=visibleRect(document.querySelector('#movie_player')||document.querySelector('#player')||document.querySelector('.html5-video-player'));
+                            if(player){m.playerWidth=Math.max(0,Math.round(player.width));}
+                          }catch(_){}
+                          return m;
+                        };
+                        var styleText=[
+                          'ytd-live-chat-frame,#chat,#chat-container,#chatframe,#chat-messages,#panels,#secondary,#secondary-inner,',
+                          'ytd-watch-flexy #secondary,ytd-watch-flexy #secondary-inner,ytd-watch-flexy #panels,',
+                          'ytd-engagement-panel-section-list-renderer,',
+                          'ytd-engagement-panel-section-list-renderer[target-id*="chat" i],',
+                          'ytd-engagement-panel-section-list-renderer[panel-id*="chat" i],',
+                          'ytd-engagement-panel-section-list-renderer[visibility*="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED" i],',
+                          'iframe[src*="live_chat"],iframe[src*="live_chat_replay"],iframe[src*="youtube.com/live_chat"],iframe[src*="youtube.com/live_chat_replay"]{',
+                          'display:none !important;visibility:hidden !important;opacity:0 !important;width:0 !important;min-width:0 !important;max-width:0 !important;',
+                          'height:0 !important;min-height:0 !important;max-height:0 !important;flex:0 0 0px !important;margin:0 !important;padding:0 !important;',
+                          'pointer-events:none !important;overflow:hidden !important;}',
+                          'ytd-watch-flexy,ytd-watch-flexy[theater],ytd-watch-flexy[fullscreen],ytd-watch-flexy #columns,#columns,#primary,#primary-inner,#player,#player-container,#player-container-outer,#movie_player,.html5-video-player{',
+                          'max-width:100vw !important;width:100vw !important;margin-right:0 !important;padding-right:0 !important;column-gap:0 !important;grid-template-columns:minmax(0,1fr) !important;}',
+                          '#primary,#primary-inner{width:100% !important;max-width:100% !important;flex:1 1 auto !important;margin-right:0 !important;}',
+                          'ytd-watch-flexy{',
+                          '--ytd-watch-flexy-sidebar-width:0px !important;',
+                          '--ytd-watch-flexy-sidebar-min-width:0px !important;',
+                          '--ytd-watch-flexy-chat-max-height:0px !important;',
+                          '--ytd-watch-flexy-panel-max-height:0px !important;}'
+                        ].join('');
+                        var ensureStyle=function(){
+                          var style=document.getElementById(styleId);
+                          if(!style){
+                            style=document.createElement('style');
+                            style.id=styleId;
+                            (document.head||document.documentElement).appendChild(style);
+                          }
+                          if(style.textContent!==styleText){style.textContent=styleText;}
+                          return style;
+                        };
+                        var applyNow=function(phase){
+                          ensureStyle();
+                          var host=document.querySelector('ytd-watch-flexy');
+                          if(host&&host.style){
+                            try{
+                              host.style.setProperty('--ytd-watch-flexy-sidebar-width','0px','important');
+                              host.style.setProperty('--ytd-watch-flexy-sidebar-min-width','0px','important');
+                              host.style.setProperty('--ytd-watch-flexy-chat-max-height','0px','important');
+                              host.style.setProperty('--ytd-watch-flexy-panel-max-height','0px','important');
+                            }catch(_){}
+                          }
+                          return metrics();
+                        };
+                        var send=function(action,why,m){
+                          try{
+                            window.prompt(promptPrefix+JSON.stringify({
+                              type:'youtube-fullscreen-chat-guard',
+                              pageUrl:window.location.href,
+                              action:action,
+                              reason:why||'',
+                              visibleChatCount:Number(m.visibleChatCount||0),
+                              maxChatWidth:Number(m.maxChatWidth||0),
+                              maxChatHeight:Number(m.maxChatHeight||0),
+                              liveChatIframeVisible:!!m.liveChatIframeVisible,
+                              secondaryWidth:Number(m.secondaryWidth||0),
+                              panelsWidth:Number(m.panelsWidth||0),
+                              viewportWidth:Number(m.viewportWidth||0),
+                              primaryWidth:Number(m.primaryWidth||0),
+                              playerWidth:Number(m.playerWidth||0)
+                            }),'');
+                          }catch(_){}
+                        };
+                        var state=window[guardKey];
+                        if(!state){
+                          state={observer:null,reapplyTimer:0,stopTimer:0,lastMutationLogAt:0,timers:[]};
+                          window[guardKey]=state;
+                        }
+                        var m0=applyNow('apply');
+                        send('applied',${JSONObject.quote(reason)},m0);
+                        if(state.observer){try{state.observer.disconnect();}catch(_){}}
+                        if(state.reapplyTimer){try{clearInterval(state.reapplyTimer);}catch(_){}}
+                        if(state.stopTimer){try{clearTimeout(state.stopTimer);}catch(_){}}
+                        if(state.timers&&state.timers.length){try{state.timers.forEach(function(id){clearTimeout(id);});}catch(_){}}
+                        state.timers=[];
+                        state.observer=new MutationObserver(function(){
+                          var g=applyNow('mutation');
+                          var t=now();
+                          if(t-(state.lastMutationLogAt||0)>900){
+                            state.lastMutationLogAt=t;
+                            send('reapplied','mutation',g);
+                          }
+                        });
+                        try{
+                          state.observer.observe(document.documentElement||document,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','hidden','collapsed','aria-hidden']});
+                        }catch(_){}
+                        [250,750,1500,3000,6000,10000].forEach(function(delay){
+                          var id=setTimeout(function(){
+                            var gm=applyNow('schedule-'+delay);
+                            send('reapplied','schedule-'+delay,gm);
+                          },delay);
+                          state.timers.push(id);
+                        });
+                        state.reapplyTimer=setInterval(function(){applyNow('interval');},700);
+                        state.stopTimer=setTimeout(function(){
+                          try{if(state.observer){state.observer.disconnect();}}catch(_){}
+                          try{if(state.reapplyTimer){clearInterval(state.reapplyTimer);state.reapplyTimer=0;}}catch(_){}
+                        },12000);
+                      }catch(error){
+                        try{
+                          window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'youtube-fullscreen-chat-guard',pageUrl:window.location.href,action:'error',reason:String(error&&error.message||error),visibleChatCount:-1,maxChatWidth:-1,maxChatHeight:-1,liveChatIframeVisible:false,secondaryWidth:-1,panelsWidth:-1,viewportWidth:-1,primaryWidth:-1,playerWidth:-1}),'');
+                        }catch(_){}
+                      }
+                    })();
+                """.trimIndent()
+                session.loadUri(script)
+            },
+            delayMs,
+        )
+    }
+
+    private fun maybeDispatchYouTubeFullscreenChatGuardRemove(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isYouTubePageUrl(pageUrl)) {
+            return
+        }
+        val script = """
+            javascript:(function(){
+              try{
+                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                var guardKey='__kfYoutubeFullscreenChatGuard';
+                var styleId='kf-youtube-fullscreen-chat-guard-style';
+                var state=window[guardKey];
+                if(state){
+                  try{if(state.observer){state.observer.disconnect();}}catch(_){}
+                  try{if(state.reapplyTimer){clearInterval(state.reapplyTimer);}}catch(_){}
+                  try{if(state.stopTimer){clearTimeout(state.stopTimer);}}catch(_){}
+                  try{if(state.timers&&state.timers.length){state.timers.forEach(function(id){clearTimeout(id);});}}catch(_){}
+                }
+                try{delete window[guardKey];}catch(_){window[guardKey]=null;}
+                var style=document.getElementById(styleId);
+                if(style&&style.parentNode){style.parentNode.removeChild(style);}
+                var rect=function(node){try{if(!node){return 0;}var r=node.getBoundingClientRect();return Math.max(0,Math.round(r.width||0));}catch(_){return 0;}};
+                var sec=rect(document.querySelector('#secondary'));
+                var pnl=rect(document.querySelector('#panels'));
+                var pri=rect(document.querySelector('#primary'));
+                var ply=rect(document.querySelector('#movie_player')||document.querySelector('#player'));
+                window.prompt(promptPrefix+JSON.stringify({type:'youtube-fullscreen-chat-guard',pageUrl:window.location.href,action:'removed',reason:${JSONObject.quote(reason)},visibleChatCount:0,maxChatWidth:0,maxChatHeight:0,liveChatIframeVisible:false,secondaryWidth:sec,panelsWidth:pnl,viewportWidth:Math.round(window.innerWidth||0),primaryWidth:pri,playerWidth:ply}),'');
+              }catch(error){
+                try{
+                  window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'youtube-fullscreen-chat-guard',pageUrl:window.location.href,action:'error',reason:String(error&&error.message||error),visibleChatCount:-1,maxChatWidth:-1,maxChatHeight:-1,liveChatIframeVisible:false,secondaryWidth:-1,panelsWidth:-1,viewportWidth:-1,primaryWidth:-1,playerWidth:-1}),'');
+                }catch(_){}
+              }
+            })();
+        """.trimIndent()
+        session.loadUri(script)
+    }
+
+    private fun maybeDispatchYouTubeChatCollapseForFullscreen(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+        delayMs: Long,
+    ) {
+        if (!isYouTubeWatchOrLivePageUrl(pageUrl)) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val last = youtubeFullscreenChatCollapseLastDispatchMsBySession[session] ?: 0L
+        if (now - last < YOUTUBE_FULLSCREEN_CHAT_COLLAPSE_MIN_INTERVAL_MS) {
+            return
+        }
+        youtubeFullscreenChatCollapseLastDispatchMsBySession[session] = now
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                val activeUrl = tab.url
+                if (!isYouTubeWatchOrLivePageUrl(activeUrl)) {
+                    return@postDelayed
+                }
+                if (youtubeFullscreenStateBySession[session] != true) {
+                    return@postDelayed
+                }
+                GvLogger.i("GvInput", "youtube-chat-collapse attempt reason=$reason url=$activeUrl")
+                val script = """
+                    javascript:(function(){
+                      try{
+                        var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                        var pageUrl=window.location.href;
+                        var visible=function(node){
+                          try{
+                            if(!node||node.disabled){return false;}
+                            var s=getComputedStyle(node);
+                            if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity||1)<0.05){return false;}
+                            var r=node.getBoundingClientRect();
+                            return r.width>10&&r.height>10&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                          }catch(_){return false;}
+                        };
+                        var clickNode=function(node){
+                          if(!node){return false;}
+                          try{node.click();return true;}catch(_){}
+                          try{node.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return true;}catch(_){}
+                          return false;
+                        };
+                        var closeSelector=[
+                          'ytd-live-chat-frame #show-hide-button button',
+                          'ytd-live-chat-frame button[aria-label*="close" i]',
+                          'ytd-live-chat-frame button[aria-label*="hide" i]',
+                          'ytd-engagement-panel-section-list-renderer button[aria-label*="close" i]',
+                          'ytd-engagement-panel-section-list-renderer button[aria-label*="hide" i]',
+                          'button[aria-label*="close chat" i]',
+                          'button[aria-label*="hide chat" i]'
+                        ].join(',');
+                        var closeButton=Array.from(document.querySelectorAll(closeSelector)).find(visible)||null;
+                        if(closeButton&&clickNode(closeButton)){
+                          window.prompt(promptPrefix+JSON.stringify({type:'youtube-chat-collapse',pageUrl:pageUrl,action:'closed-button',reason:''}),'');
+                          return;
+                        }
+                        var hidden=false;
+                        var chatSelectors='ytd-live-chat-frame,#chat,#chat-container,#chatframe,ytd-engagement-panel-section-list-renderer[target-id*="chat" i],ytd-engagement-panel-section-list-renderer[panel-id*="chat" i]';
+                        var chatNodes=Array.from(document.querySelectorAll(chatSelectors));
+                        chatNodes.forEach(function(node){
+                          try{
+                            node.style.setProperty('display','none','important');
+                            node.style.setProperty('visibility','hidden','important');
+                            node.style.setProperty('width','0px','important');
+                            node.style.setProperty('min-width','0px','important');
+                            node.style.setProperty('max-width','0px','important');
+                            node.style.setProperty('flex','0 0 0px','important');
+                            node.style.setProperty('opacity','0','important');
+                            hidden=true;
+                          }catch(_){}
+                        });
+                        if(hidden){
+                          Array.from(document.querySelectorAll('ytd-watch-flexy #secondary,ytd-watch-flexy #secondary-inner,ytd-watch-flexy #panels,ytd-watch-flexy #chat-container')).forEach(function(node){
+                            try{
+                              node.style.setProperty('display','none','important');
+                              node.style.setProperty('visibility','hidden','important');
+                              node.style.setProperty('width','0px','important');
+                              node.style.setProperty('min-width','0px','important');
+                              node.style.setProperty('max-width','0px','important');
+                              node.style.setProperty('flex','0 0 0px','important');
+                              node.style.setProperty('margin','0','important');
+                              node.style.setProperty('padding','0','important');
+                            }catch(_){}
+                          });
+                        }
+                        if(hidden){
+                          window.prompt(promptPrefix+JSON.stringify({type:'youtube-chat-collapse',pageUrl:pageUrl,action:'hidden-css',reason:'chat-and-secondary-collapsed'}),'');
+                          return;
+                        }
+                        window.prompt(promptPrefix+JSON.stringify({type:'youtube-chat-collapse',pageUrl:pageUrl,action:'skipped',reason:'no-chat'}),'');
+                      }catch(error){
+                        try{
+                          window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'youtube-chat-collapse',pageUrl:window.location.href,action:'skipped',reason:'exception',error:String(error&&error.message||error)}),'');
+                        }catch(_){}
+                      }
+                    })();
+                """.trimIndent()
+                session.loadUri(script)
+            },
+            delayMs,
+        )
+    }
+
+    private fun clearYouTubePremiumPopupTracking(session: GeckoSession) {
+        youtubePremiumPopupTrackedUrlBySession.remove(session)
+        youtubePremiumPopupCheckCountBySessionWindow.remove(session)
+        youtubePremiumPopupPendingRunnablesBySession.remove(session)?.forEach { pointerHandler.removeCallbacks(it) }
+        youtubePremiumPopupPendingWindowBySession.remove(session)
+        youtubePremiumPopupLastInteractionBurstMsBySession.remove(session)
+    }
+
+    private fun youtubePremiumPopupWindowForReason(reason: String): String =
+        if (reason.startsWith("fullscreen-enter")) "fullscreen-enter" else "location-change"
+
+    private fun youtubePremiumPopupMaxChecksForWindow(window: String): Int =
+        if (window == "fullscreen-enter") YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_FULLSCREEN_WINDOW else YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_LOCATION_WINDOW
+
+    private fun maybeScheduleYouTubePremiumPopupChecks(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isYouTubePageUrl(pageUrl)) {
+            clearYouTubePremiumPopupTracking(session)
+            GvLogger.i("GvInput", "youtube-premium-popup skipped reason=not-youtube pageUrl=$pageUrl")
+            return
+        }
+        if (!isYouTubeWatchOrLivePageUrl(pageUrl)) {
+            clearYouTubePremiumPopupTracking(session)
+            GvLogger.i("GvInput", "youtube-premium-popup skipped reason=not-watch-live pageUrl=$pageUrl")
+            return
+        }
+        val trackedUrl = youtubePremiumPopupTrackedUrlBySession[session]
+        if (trackedUrl != pageUrl) {
+            clearYouTubePremiumPopupTracking(session)
+            youtubePremiumPopupTrackedUrlBySession[session] = pageUrl
+        }
+        val window = youtubePremiumPopupWindowForReason(reason)
+        val now = SystemClock.uptimeMillis()
+        val lastDismiss = youtubePremiumPopupLastDismissMsByUrl[pageUrl] ?: 0L
+        if (lastDismiss > 0L && now - lastDismiss < YOUTUBE_PREMIUM_POPUP_DISMISS_COOLDOWN_MS) {
+            GvLogger.i("GvInput", "youtube-premium-popup skipped reason=dismiss-cooldown pageUrl=$pageUrl")
+            return
+        }
+        val pendingRunnables = youtubePremiumPopupPendingRunnablesBySession[session]
+        val hasPending = pendingRunnables?.isNotEmpty() == true
+        val pendingWindow = youtubePremiumPopupPendingWindowBySession[session]
+        val isFullscreenRefresh = window == "fullscreen-enter" && reason.startsWith("fullscreen-enter-refresh")
+        if (hasPending) {
+            if ((window == "fullscreen-enter" && pendingWindow != "fullscreen-enter") || isFullscreenRefresh) {
+                pendingRunnables?.forEach { pointerHandler.removeCallbacks(it) }
+                youtubePremiumPopupPendingRunnablesBySession.remove(session)
+                youtubePremiumPopupPendingWindowBySession.remove(session)
+                GvLogger.i(
+                    "GvInput",
+                    "youtube-premium-popup burst-replace oldReason=${pendingWindow.orEmpty()} newReason=fullscreen-enter url=$pageUrl"
+                )
+            } else {
+                GvLogger.i(
+                    "GvInput",
+                    "youtube-premium-popup skipped reason=window-pending window=${pendingWindow ?: window} pageUrl=$pageUrl"
+                )
+                return
+            }
+        }
+        val countByWindow = youtubePremiumPopupCheckCountBySessionWindow.getOrPut(session) { linkedMapOf() }
+        if (isFullscreenRefresh) {
+            countByWindow.remove("fullscreen-enter")
+        }
+        val currentChecks = countByWindow[window] ?: 0
+        val maxChecks = youtubePremiumPopupMaxChecksForWindow(window)
+        if (currentChecks >= maxChecks) {
+            GvLogger.i(
+                "GvInput",
+                "youtube-premium-popup skipped reason=window-budget-exhausted window=$window pageUrl=$pageUrl"
+            )
+            return
+        }
+        val delays = if (window == "fullscreen-enter") {
+            longArrayOf(0L, 750L, 2000L, 5000L, 9000L)
+        } else {
+            longArrayOf(0L, 750L, 2000L)
+        }
+        if (window == "fullscreen-enter") {
+            GvLogger.i("GvInput", "youtube-premium-popup burst-start reason=fullscreen-enter url=$pageUrl")
+        }
+        youtubePremiumPopupPendingWindowBySession[session] = window
+        delays.forEachIndexed { index, delayMs ->
+            maybeDispatchYouTubePremiumPopupCheck(
+                session = session,
+                expectedPageUrl = pageUrl,
+                reason = "$window-pass${index + 1}",
+                window = window,
+                delayMs = delayMs,
+            )
+        }
+    }
+
+    private fun maybeScheduleYouTubePremiumPopupInteractionBurst(trigger: String) {
+        val activeTab = tabController.getActiveTab() ?: return
+        val session = activeTab.session
+        val activeUrl = activeTab.url
+        if (!isYouTubeWatchOrLivePageUrl(activeUrl)) {
+            return
+        }
+        if (youtubeFullscreenStateBySession[session] != true && !isBrowserFullscreenLikeState(activeTab)) {
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        val lastBurst = youtubePremiumPopupLastInteractionBurstMsBySession[session] ?: 0L
+        if (now - lastBurst < YOUTUBE_PREMIUM_POPUP_INTERACTION_BURST_MIN_INTERVAL_MS) {
+            return
+        }
+        youtubePremiumPopupLastInteractionBurstMsBySession[session] = now
+        maybeScheduleYouTubePremiumPopupChecks(
+            session = session,
+            pageUrl = activeUrl,
+            reason = "fullscreen-enter-refresh-$trigger",
+        )
+    }
+
+    private fun recordYouTubePremiumPopupDismiss(session: GeckoSession, pageUrl: String) {
+        youtubePremiumPopupLastDismissMsByUrl[pageUrl] = SystemClock.uptimeMillis()
+        youtubePremiumPopupCheckCountBySessionWindow.remove(session)
+        youtubePremiumPopupPendingRunnablesBySession.remove(session)?.forEach { pointerHandler.removeCallbacks(it) }
+        youtubePremiumPopupPendingWindowBySession.remove(session)
+    }
+
+    private fun maybeDispatchYouTubePremiumPopupCheck(
+        session: GeckoSession,
+        expectedPageUrl: String,
+        reason: String,
+        window: String,
+        delayMs: Long,
+    ) {
+        val checkRunnable = object : Runnable {
+            override fun run() {
+                youtubePremiumPopupPendingRunnablesBySession[session]?.remove(this)
+                if (youtubePremiumPopupPendingRunnablesBySession[session]?.isEmpty() == true) {
+                    youtubePremiumPopupPendingRunnablesBySession.remove(session)
+                    youtubePremiumPopupPendingWindowBySession.remove(session)
+                }
+                if (isFinishing || isDestroyed) return
+                val tab = tabController.findTabBySession(session) ?: return
+                val activeUrl = tab.url
+                if (activeUrl != expectedPageUrl) {
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup skipped reason=url-changed expected=$expectedPageUrl actual=$activeUrl"
+                    )
+                    return
+                }
+                if (!isYouTubeWatchOrLivePageUrl(activeUrl)) {
+                    GvLogger.i("GvInput", "youtube-premium-popup skipped reason=not-watch-live pageUrl=$activeUrl")
+                    return
+                }
+                val now = SystemClock.uptimeMillis()
+                val lastDismiss = youtubePremiumPopupLastDismissMsByUrl[activeUrl] ?: 0L
+                if (lastDismiss > 0L && now - lastDismiss < YOUTUBE_PREMIUM_POPUP_DISMISS_COOLDOWN_MS) {
+                    GvLogger.i("GvInput", "youtube-premium-popup skipped reason=dismiss-cooldown pageUrl=$activeUrl")
+                    return
+                }
+                val countByWindow = youtubePremiumPopupCheckCountBySessionWindow.getOrPut(session) { linkedMapOf() }
+                val currentChecks = countByWindow[window] ?: 0
+                val maxChecks = youtubePremiumPopupMaxChecksForWindow(window)
+                if (currentChecks >= maxChecks) {
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup skipped reason=window-budget-exhausted window=$window pageUrl=$activeUrl"
+                    )
+                    return
+                }
+                countByWindow[window] = currentChecks + 1
+                GvLogger.i("GvInput", "youtube-premium-popup check reason=$reason pageUrl=$activeUrl")
+                val script = """
+                javascript:(function(){
+                  try{
+                    var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
+                    var checkReason=${JSONObject.quote(reason)};
+                    var norm=function(v){return String(v||'').replace(/\s+/g,' ').trim();};
+                    var lower=function(v){return norm(v).toLowerCase();};
+                    var safeText=function(v,max){
+                      var t=norm(v||'');
+                      if(!max||max<1){return t;}
+                      return t.length>max?t.slice(0,max):t;
+                    };
+                    var visible=function(node){
+                      try{
+                        if(!node){return false;}
+                        var style=window.getComputedStyle(node);
+                        if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity||1)<0.05){return false;}
+                        var r=node.getBoundingClientRect();
+                        return r.width>8&&r.height>8&&r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth;
+                      }catch(_){return false;}
+                    };
+                    var premiumSurfaceText=function(text){
+                      var t=lower(text);
+                      return t.indexOf('youtube premium')>=0||
+                        t.indexOf('get youtube without the ads')>=0||
+                        t.indexOf('youtube without the ads')>=0||
+                        (t.indexOf('premium')>=0&&t.indexOf('youtube')>=0);
+                    };
+                    var negativeLabel=function(text){
+                      var t=lower(text);
+                      if(t==='no thanks'){return 'no thanks';}
+                      if(t==='not now'){return 'not now';}
+                      if(t==='maybe later'){return 'maybe later';}
+                      if(t==='dismiss'){return 'dismiss';}
+                      if(t.indexOf('no thanks')>=0){return 'no thanks';}
+                      if(t.indexOf('not now')>=0){return 'not now';}
+                      if(t.indexOf('maybe later')>=0){return 'maybe later';}
+                      if(t.indexOf('dismiss')>=0){return 'dismiss';}
+                      return '';
+                    };
+                    var isPositiveLabel=function(text){
+                      var t=lower(text);
+                      return t.indexOf('1 month free')>=0||
+                        t.indexOf('try it free')>=0||
+                        t.indexOf('start trial')>=0||
+                        t.indexOf('subscribe')>=0||
+                        t.indexOf('premium')>=0||
+                        t.indexOf('get premium')>=0||
+                        t.indexOf('buy')>=0||
+                        t.indexOf('join')>=0||
+                        t.indexOf('skip ads')>=0||
+                        t==='skip'||
+                        t.indexOf(' skip ')>=0;
+                    };
+                    var readLabel=function(node){
+                      if(!node){return '';}
+                      var fromNode=norm(node.innerText||node.textContent||'');
+                      var aria=norm(node.getAttribute&&node.getAttribute('aria-label')||'');
+                      var title=norm(node.getAttribute&&node.getAttribute('title')||'');
+                      var value=norm(node.getAttribute&&node.getAttribute('value')||'');
+                      var spanText='';
+                      try{
+                        spanText=norm(Array.from(node.querySelectorAll('span')).map(function(s){return norm(s.textContent||'');}).filter(Boolean).join(' '));
+                      }catch(_){}
+                      return norm(fromNode||aria||title||value||spanText);
+                    };
+                    var closestInteractive=function(node){
+                      if(!node){return null;}
+                      if(node.closest){
+                        return node.closest('button,[role="button"],tp-yt-paper-button,yt-button-shape,a[role="button"],.yt-spec-button-shape-next');
+                      }
+                      return null;
+                    };
+                    var pushUnique=function(list, seen, node){
+                      if(!node||!node.nodeType){return;}
+                      if(seen.has(node)){return;}
+                      seen.add(node);
+                      list.push(node);
+                    };
+                    var buttonSelector='button,[role="button"],tp-yt-paper-button,yt-button-shape button,yt-button-shape,a[role="button"],.yt-spec-button-shape-next,.yt-spec-button-shape-next__button-text-content';
+                    var rawCandidates=[];
+                    var rawSeen=new Set();
+                    try{
+                      Array.from(document.querySelectorAll(buttonSelector)).forEach(function(node){
+                        var resolved=closestInteractive(node)||node;
+                        pushUnique(rawCandidates, rawSeen, resolved);
+                      });
+                    }catch(_){}
+                    try{
+                      var walker=document.createTreeWalker(document.documentElement||document.body, NodeFilter.SHOW_ELEMENT);
+                      var visited=0;
+                      var current=walker.currentNode;
+                      while(current&&visited<2200){
+                        visited++;
+                        if(current.shadowRoot&&current.shadowRoot.querySelectorAll){
+                          try{
+                            Array.from(current.shadowRoot.querySelectorAll(buttonSelector)).forEach(function(node){
+                              var resolved=closestInteractive(node)||node;
+                              pushUnique(rawCandidates, rawSeen, resolved);
+                            });
+                          }catch(_){}
+                        }
+                        current=walker.nextNode();
+                      }
+                    }catch(_){}
+                    var viewportWidth=Math.round(window.innerWidth||0);
+                    var viewportHeight=Math.round(window.innerHeight||0);
+                    var visibleCandidates=[];
+                    for(var ci=0;ci<rawCandidates.length;ci++){
+                      var candidate=rawCandidates[ci];
+                      if(!visible(candidate)){continue;}
+                      var rect=candidate.getBoundingClientRect();
+                      if(rect.width<8||rect.height<8){continue;}
+                      visibleCandidates.push(candidate);
+                    }
+                    var candidateButtons=visibleCandidates.length;
+                    var negativeCandidates=[];
+                    var seenNegativeNodes=new Set();
+                    for(var vi=0;vi<visibleCandidates.length;vi++){
+                      var node=visibleCandidates[vi];
+                      var label=readLabel(node);
+                      if(!label){continue;}
+                      if(isPositiveLabel(label)){continue;}
+                      var neg=negativeLabel(label);
+                      if(!neg){continue;}
+                      if(seenNegativeNodes.has(node)){continue;}
+                      seenNegativeNodes.add(node);
+                      negativeCandidates.push({node:node,label:label,neg:neg});
+                    }
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'youtube-premium-popup',
+                      pageUrl:window.location.href,
+                      action:'candidate-buttons',
+                      reason:'count='+candidateButtons+' negativeCount='+negativeCandidates.length,
+                      checkReason:checkReason,
+                      buttonLabel:'',
+                      containerText:'',
+                      buttonCenterX:-1,
+                      buttonCenterY:-1,
+                      viewportWidth:viewportWidth,
+                      viewportHeight:viewportHeight
+                    }),'');
+                    var collectContext=function(node){
+                      var parts=[];
+                      var seen=new Set();
+                      var cur=node;
+                      var depth=0;
+                      while(cur&&depth<8){
+                        depth++;
+                        var txt=safeText(cur.innerText||cur.textContent||'', 420);
+                        if(txt&&!seen.has(txt)){seen.add(txt);parts.push(txt);}
+                        cur=cur.parentElement;
+                      }
+                      var popupSelectors=[
+                        'tp-yt-paper-dialog',
+                        'ytd-popup-container',
+                        'ytd-popup-container tp-yt-paper-dialog',
+                        'ytd-mealbar-promo-renderer',
+                        'ytd-modal-with-title-and-button-renderer',
+                        'yt-confirm-dialog-renderer',
+                        'ytd-engagement-panel-section-list-renderer',
+                        '.ytp-paid-content-overlay'
+                      ];
+                      for(var pi=0;pi<popupSelectors.length;pi++){
+                        try{
+                          var popup=node.closest&&node.closest(popupSelectors[pi]);
+                          if(popup){
+                            var ptxt=safeText(popup.innerText||popup.textContent||'', 600);
+                            if(ptxt&&!seen.has(ptxt)){seen.add(ptxt);parts.push(ptxt);}
+                          }
+                        }catch(_){}
+                      }
+                      return safeText(parts.join(' | '), 220);
+                    };
+                    var isNoThanksZone=function(cx,cy,label){
+                      if(lower(label)!=='no thanks'){return false;}
+                      if(viewportWidth<200||viewportHeight<120){return false;}
+                      return cx < Math.round(viewportWidth*0.40) && cy > Math.round(viewportHeight*0.55);
+                    };
+                    var chosen=null;
+                    for(var ni=0;ni<negativeCandidates.length;ni++){
+                      var hit=negativeCandidates[ni];
+                      var r=hit.node.getBoundingClientRect();
+                      var cx=Math.round((r.left+r.right)/2);
+                      var cy=Math.round((r.top+r.bottom)/2);
+                      var contextText=collectContext(hit.node);
+                      if(premiumSurfaceText(contextText)){
+                        chosen={node:hit.node,label:hit.label,cx:cx,cy:cy,context:contextText,matchReason:'context-match'};
+                        break;
+                      }
+                    }
+                    if(!chosen){
+                      for(var zi=0;zi<negativeCandidates.length;zi++){
+                        var zoneHit=negativeCandidates[zi];
+                        var zr=zoneHit.node.getBoundingClientRect();
+                        var zcx=Math.round((zr.left+zr.right)/2);
+                        var zcy=Math.round((zr.top+zr.bottom)/2);
+                        if(isNoThanksZone(zcx,zcy,zoneHit.neg)){
+                          chosen={node:zoneHit.node,label:zoneHit.label,cx:zcx,cy:zcy,context:'',matchReason:'negative-button-zone-match'};
+                          break;
+                        }
+                      }
+                    }
+                    if(!chosen){
+                      var noMatchReason=negativeCandidates.length>0
+                        ? ('no-premium-surface candidateButtons='+candidateButtons+' negativeCount='+negativeCandidates.length)
+                        : ('no-negative-button candidateButtons='+candidateButtons+' negativeCount=0');
+                      window.prompt(promptPrefix+JSON.stringify({
+                        type:'youtube-premium-popup',
+                        pageUrl:window.location.href,
+                        action:'skipped',
+                        reason:noMatchReason,
+                        checkReason:checkReason,
+                        buttonLabel:'',
+                        containerText:'',
+                        buttonCenterX:-1,
+                        buttonCenterY:-1,
+                        viewportWidth:viewportWidth,
+                        viewportHeight:viewportHeight
+                      }),'');
+                      return;
+                    }
+                    var bcx=chosen.cx;
+                    var bcy=chosen.cy;
+                    window.prompt(promptPrefix+JSON.stringify({
+                      type:'youtube-premium-popup',
+                      pageUrl:window.location.href,
+                      action:'negative-button-found',
+                      reason:chosen.matchReason,
+                      checkReason:checkReason,
+                      buttonLabel:chosen.label,
+                      containerText:chosen.context,
+                      buttonCenterX:bcx,
+                      buttonCenterY:bcy,
+                      viewportWidth:viewportWidth,
+                      viewportHeight:viewportHeight
+                    }),'');
+                  }catch(error){
+                    try{
+                      window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'youtube-premium-popup',pageUrl:window.location.href,action:'error',reason:String(error&&error.message||error),checkReason:${JSONObject.quote(reason)},buttonLabel:'',containerText:'',buttonCenterX:-1,buttonCenterY:-1,viewportWidth:Math.round(window.innerWidth||0),viewportHeight:Math.round(window.innerHeight||0)}),'');
+                    }catch(_){}
+                  }
+                })();
+            """.trimIndent()
+                session.loadUri(script)
+            }
+        }
+        youtubePremiumPopupPendingRunnablesBySession.getOrPut(session) { mutableListOf() }.add(checkRunnable)
+        pointerHandler.postDelayed(checkRunnable, delayMs)
     }
 
     private val permissionDelegate = object : GeckoSession.PermissionDelegate {
@@ -6267,7 +7760,12 @@ return changed>0;
                     KeyEvent.KEYCODE_DPAD_RIGHT,
                     KeyEvent.KEYCODE_DPAD_UP,
                     KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+                        val wasHidden = !pointerVisible || !pointerOverlay.isPointerVisible()
                         ensurePointerVisible()
+                        if (wasHidden && isYouTubePageUrl(activeUrl)) {
+                            GvLogger.i("GvInput", "youtube pointer woke reason=dpad-move")
+                        }
                         val firstPress = pointerDirectionKeys.add(event.keyCode)
                         if (firstPress) {
                             pointerRepeatTicks = 0
@@ -6293,7 +7791,10 @@ return changed>0;
                         }
                         pointerOverlay.setPointerPressed(true)
                         pointerDownTime = SystemClock.uptimeMillis()
-                        dispatchPointerClick()
+                        val handled = dispatchPointerClick()
+                        if (handled) {
+                            maybeScheduleYouTubePremiumPopupInteractionBurst(trigger = "pointer-ok")
+                        }
                         return true
                     }
                 }
@@ -6343,6 +7844,185 @@ return changed>0;
         return true
     }
 
+    private fun isBrowserFullscreenLikeState(tab: GvTab? = tabController.getActiveTab()): Boolean {
+        val activeTab = tab ?: return false
+        return browserFullscreenStateBySession[activeTab.session] == true
+    }
+
+    private fun hideBrowserFullscreenPointer(reason: String) {
+        pointerDirectionKeys.clear()
+        stopPointerRepeater()
+        pointerOverlay.setPointerPressed(false)
+        browserFullscreenWakeOnlyPendingKeyUp = false
+        if (!pointerVisible || !pointerOverlay.isPointerVisible()) {
+            return
+        }
+        pointerVisible = false
+        pointerOverlay.hidePointer()
+        GvLogger.i("GvInput", "browser fullscreen pointer hide reason=$reason")
+    }
+
+    private fun scheduleBrowserFullscreenPointerSleep(reason: String) {
+        if (!browserFullscreenPointerSleepActive) {
+            return
+        }
+        pointerHandler.removeCallbacks(pointerIdleRunnable)
+        pointerHandler.postDelayed(pointerIdleRunnable, BROWSER_FULLSCREEN_POINTER_IDLE_HIDE_MS)
+        GvLogger.i("GvInput", "browser fullscreen pointer sleep scheduled delayMs=$BROWSER_FULLSCREEN_POINTER_IDLE_HIDE_MS reason=$reason")
+    }
+
+    private fun enterBrowserFullscreenPointerSleep(reason: String) {
+        browserFullscreenPointerSleepActive = true
+        hideBrowserFullscreenPointer(reason = reason)
+        scheduleBrowserFullscreenPointerSleep(reason = reason)
+        GvLogger.i("GvInput", "browser fullscreen pointer sleep enter reason=$reason")
+    }
+
+    private fun wakeBrowserFullscreenPointer(reason: String, url: String): Boolean {
+        if (promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        pointerAssistModeActive = true
+        ensurePointerVisible()
+        browserFullscreenPointerSleepActive = true
+        scheduleBrowserFullscreenPointerSleep(reason = reason)
+        GvLogger.i("GvInput", "browser fullscreen pointer wake reason=$reason url=$url")
+        return true
+    }
+
+    private fun maybeHandleBrowserFullscreenPointerInput(event: KeyEvent): Boolean {
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        if (event.keyCode !in POINTER_KEY_CODES) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val fullscreenActive = isBrowserFullscreenLikeState(activeTab)
+        if (!fullscreenActive && !browserFullscreenPointerSleepActive) {
+            return false
+        }
+        val activeUrl = activeTab.url
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (event.action == KeyEvent.ACTION_DOWN && (!pointerVisible || !pointerOverlay.isPointerVisible())) {
+                    wakeBrowserFullscreenPointer(reason = "dpad-move", url = activeUrl)
+                }
+                return handlePointerInput(event)
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER -> {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    if (!pointerVisible || !pointerOverlay.isPointerVisible()) {
+                        browserFullscreenWakeOnlyPendingKeyUp = true
+                        wakeBrowserFullscreenPointer(reason = "ok-wake", url = activeUrl)
+                        return true
+                    }
+                    return handlePointerInput(event)
+                }
+                if (event.action == KeyEvent.ACTION_UP) {
+                    if (browserFullscreenWakeOnlyPendingKeyUp) {
+                        browserFullscreenWakeOnlyPendingKeyUp = false
+                        scheduleBrowserFullscreenPointerSleep(reason = "ok-wake")
+                        return true
+                    }
+                    return handlePointerInput(event)
+                }
+            }
+        }
+        return false
+    }
+
+    private fun maybeHandleBrowserFullscreenBackPolicy(): Boolean {
+        if (promotedMediaPlayer.isPromoted() || tabsOverlay.visibility == View.VISIBLE) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        val fullscreenActive = isBrowserFullscreenLikeState(activeTab)
+        if (!fullscreenActive && !browserFullscreenPointerSleepActive) {
+            return false
+        }
+        if (pointerVisible && pointerOverlay.isPointerVisible()) {
+            hideBrowserFullscreenPointer(reason = "back")
+            GvLogger.i("GvInput", "browser fullscreen back consumed reason=hide-pointer url=$activeUrl")
+            return true
+        }
+        if (fullscreenActive) {
+            val eventTime = SystemClock.uptimeMillis()
+            val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0)
+            val up = KeyEvent(eventTime, eventTime + 20L, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE, 0)
+            val downHandled = geckoView.dispatchKeyEvent(down)
+            val upHandled = geckoView.dispatchKeyEvent(up)
+            activeTab.session.loadUri(
+                "javascript:(function(){try{if(document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen();}}catch(_){}})();"
+            )
+            GvLogger.i(
+                "GvInput",
+                "browser fullscreen back dispatched reason=exit-fullscreen downHandled=$downHandled upHandled=$upHandled url=$activeUrl"
+            )
+            return true
+        }
+        browserFullscreenPointerSleepActive = false
+        return false
+    }
+
+    private fun maybeHandleYouTubeBackPolicy(): Boolean {
+        if (promotedMediaPlayer.isPromoted() || tabsOverlay.visibility == View.VISIBLE) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        val activeUrl = activeTab.url
+        if (!isYouTubePageUrl(activeUrl)) {
+            return false
+        }
+        if (isBrowserFullscreenLikeState(activeTab)) {
+            return false
+        }
+        // Cancel any pending auto-fullscreen attempt when user presses Back.
+        val activeSession = activeTab.session
+        if (isYouTubeWatchOrLivePageUrl(activeUrl)) {
+            stopYouTubeAutoFullscreen(activeSession, reason = "back")
+        }
+        val pointerMissing = !pointerAssistModeActive || !pointerVisible || !pointerOverlay.isPointerVisible()
+        if (pointerMissing) {
+            if (!pointerAssistModeActive) {
+                enablePointerAssistMode(reason = "youtube-back-restore-pointer", url = activeUrl)
+            } else {
+                ensurePointerVisible()
+            }
+            GvLogger.i("GvInput", "youtube back consumed reason=restore-pointer url=$activeUrl")
+            return true
+        }
+        GvLogger.i("GvInput", "youtube back allowed reason=normal-history url=$activeUrl")
+        return false
+    }
+
+    private fun maybeRecoverYouTubePointerAssistForDpad(event: KeyEvent): Boolean {
+        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
+            return false
+        }
+        if (event.keyCode !in POINTER_KEY_CODES) {
+            return false
+        }
+        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        if (!isYouTubePageUrl(activeUrl)) {
+            return false
+        }
+        if (pointerAssistModeActive) {
+            return false
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        enablePointerAssistMode(reason = "youtube-dpad-recover", url = activeUrl)
+        GvLogger.i("GvInput", "youtube pointer recovery enabled reason=dpad-input url=$activeUrl")
+        return false
+    }
+
     private fun handleKulchaFloSiteFocusInput(event: KeyEvent): Boolean {
         if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
             return false
@@ -6374,37 +8054,6 @@ return changed>0;
         }
         dispatchKulchaFloSiteFocusAction(activeTab.session, activeUrl, action)
         GvLogger.i("GvInput", "site focus key dispatched action=$action keyCode=${event.keyCode} url=$activeUrl")
-        return true
-    }
-
-    private fun handleYouTubeFocusInput(event: KeyEvent): Boolean {
-        if (tabsOverlay.visibility == View.VISIBLE || promotedMediaPlayer.isPromoted()) {
-            return false
-        }
-        if (event.keyCode !in POINTER_KEY_CODES) {
-            return false
-        }
-        val activeTab = tabController.getActiveTab() ?: return false
-        val activeUrl = activeTab.url
-        if (!isYouTubePageUrl(activeUrl)) {
-            return false
-        }
-        if (event.action == KeyEvent.ACTION_UP) {
-            return true
-        }
-        if (event.action != KeyEvent.ACTION_DOWN) {
-            return false
-        }
-        val action = when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
-            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
-            KeyEvent.KEYCODE_DPAD_UP -> "up"
-            KeyEvent.KEYCODE_DPAD_DOWN -> "down"
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "activate"
-            else -> return false
-        }
-        dispatchYouTubeFocusAction(activeTab.session, activeUrl, action)
-        GvLogger.i("GvInput", "youtube focus key dispatched action=$action keyCode=${event.keyCode} url=$activeUrl")
         return true
     }
 
@@ -6520,32 +8169,33 @@ return changed>0;
             if (pointerAssistModeActive || pointerVisible || pointerOverlay.isPointerVisible()) {
                 disablePointerAssistMode(reason = "site-focus-mode")
             }
+            browserFullscreenPointerSleepActive = false
+            browserFullscreenWakeOnlyPendingKeyUp = false
             geckoView.requestFocus()
             GvLogger.i("GvInput", "site focus mode active url=$url reason=$reason")
             GvLogger.i("GvInput", "pointer assist hidden reason=site-focus-mode url=$url")
             return
         }
-        if (isAbsTegoGestureFullscreenContextUrl(url) || isTttTegoContextUrl(url)) {
-            if (!pointerAssistModeActive) {
-                enablePointerAssistMode(reason = "hostile-web-player", url = url)
-            } else {
-                ensurePointerVisible()
-            }
-            geckoView.requestFocus()
-            GvLogger.i("GvInput", "pointer assist auto-enabled reason=hostile-web-player url=$url")
-            return
+        val modeReason = when {
+            isYouTubePageUrl(url) -> "external-youtube"
+            isAbsTegoGestureFullscreenContextUrl(url) || isTttTegoContextUrl(url) -> "hostile-web-player"
+            else -> "external-page"
         }
-        if (pointerAssistModeActive) {
-            disablePointerAssistMode(reason = "navigation-focus-first")
-        } else {
-            pointerDirectionKeys.clear()
-            stopPointerRepeater()
-            pointerVisible = false
-            pointerOverlay.setPointerPressed(false)
-            pointerOverlay.hidePointer()
+        if (!pointerAssistModeActive) {
+            enablePointerAssistMode(reason = modeReason, url = url)
+        } else if (!isBrowserFullscreenLikeState()) {
+            ensurePointerVisible()
+        }
+        if (!isBrowserFullscreenLikeState()) {
+            browserFullscreenPointerSleepActive = false
+            browserFullscreenWakeOnlyPendingKeyUp = false
         }
         geckoView.requestFocus()
-        GvLogger.i("GvInput", "external page using focus-first fallback url=$url reason=$reason")
+        if (isYouTubePageUrl(url)) {
+            GvLogger.i("GvInput", "youtube simple policy active url=$url reason=$reason")
+        } else {
+            GvLogger.i("GvInput", "pointer assist auto-enabled reason=$modeReason url=$url")
+        }
     }
 
     private fun isPointerAssistAllowedForUrl(url: String): Boolean {
@@ -6958,370 +8608,6 @@ return changed>0;
         """.trimIndent()
         session.loadUri(script)
     }
-    private fun dispatchYouTubeFocusAction(session: GeckoSession, pageUrl: String, action: String) {
-        val script = """
-            javascript:(function(){
-              try{
-                var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
-                var pageUrl=${JSONObject.quote(pageUrl)};
-                var action=${JSONObject.quote(action)};
-                var styleId='kf-youtube-tv-focus-style';
-                if(!document.getElementById(styleId)){
-                  var style=document.createElement('style');
-                  style.id=styleId;
-                  style.textContent='[data-kf-youtube-focused="1"],[data-kf-youtube-focused="1"]:focus,[data-kf-youtube-focused="1"]:focus-visible{outline:none!important;}[data-kf-youtube-focused="1"]{border-radius:14px!important;box-shadow:0 0 0 5px #fff,0 0 0 9px rgba(8,10,12,.96),0 14px 34px rgba(255,255,255,.18)!important;position:relative!important;z-index:20!important;transform:translateZ(0) scale(1.01)!important;}ytd-thumbnail[data-kf-youtube-focused="1"],a#thumbnail[data-kf-youtube-focused="1"]{display:block!important;overflow:visible!important;}';
-                  document.documentElement.appendChild(style);
-                }
-                var rendererSelector='ytd-rich-item-renderer,ytd-rich-grid-media,ytd-video-renderer,ytd-grid-video-renderer,ytd-compact-video-renderer,ytd-reel-item-renderer,ytd-playlist-video-renderer,ytd-playlist-panel-video-renderer,ytd-playlist-panel-video-renderer #content,ytd-playlist-video-list-renderer ytd-playlist-video-renderer';
-                var selector=[
-                  rendererSelector,
-                  'ytd-rich-grid-media ytd-thumbnail',
-                  'ytd-rich-grid-media a#thumbnail',
-                  'ytd-rich-item-renderer ytd-thumbnail',
-                  'ytd-video-renderer ytd-thumbnail',
-                  'ytd-grid-video-renderer ytd-thumbnail',
-                  'ytd-compact-video-renderer ytd-thumbnail',
-                  'ytd-playlist-video-renderer ytd-thumbnail',
-                  'ytd-playlist-video-renderer a#thumbnail',
-                  'ytd-playlist-panel-video-renderer ytd-thumbnail',
-                  'ytd-playlist-panel-video-renderer a#wc-endpoint',
-                  'ytd-playlist-panel-video-renderer a[href*="/watch"]',
-                  'a#thumbnail[href*="/watch"]',
-                  'a#video-title-link[href*="/watch"]',
-                  'a#video-title[href*="/watch"]',
-                  'a.yt-simple-endpoint[href*="/watch"]',
-                  'ytd-rich-item-renderer a#thumbnail',
-                  'ytd-video-renderer a#thumbnail',
-                  'ytd-grid-video-renderer a#thumbnail',
-                  'ytd-compact-video-renderer a#thumbnail',
-                  'yt-tab-shape',
-                  'yt-tab-shape a[href]',
-                  'tp-yt-paper-tab',
-                  'tp-yt-paper-tab a[href]',
-                  'yt-chip-cloud-chip-renderer',
-                  'yt-chip-cloud-chip-renderer button',
-                  'ytd-feed-filter-chip-bar-renderer yt-chip-cloud-chip-renderer',
-                  'ytd-guide-entry-renderer a[href]',
-                  'ytd-channel-header-renderer a[href]',
-                  'ytd-channel-header-renderer button[aria-label]',
-                  'ytd-c4-tabbed-header-renderer a[href]',
-                  'ytd-c4-tabbed-header-renderer button[aria-label]',
-                  'ytd-subscribe-button-renderer button',
-                  '#tabsContainer a[href]',
-                  '#tabsContainer tp-yt-paper-tab',
-                  '#chips yt-chip-cloud-chip-renderer',
-                  '#chips yt-chip-cloud-chip-renderer button',
-                  'yt-searchbox input',
-                  'yt-searchbox button[aria-label]'
-                ].join(',');
-                var visible=function(el){
-                  try{
-                    if(!el||el.disabled||el.getAttribute('aria-hidden')==='true'){return false;}
-                    var r=el.getBoundingClientRect();
-                    if(r.width<14||r.height<14){return false;}
-                    var s=getComputedStyle(el);
-                    if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity||1)<0.05){return false;}
-                    if(el.closest&&el.closest('yt-tab-shape,tp-yt-paper-tab,#tabsContainer,yt-chip-cloud-chip-renderer,#chips,ytd-feed-filter-chip-bar-renderer')){
-                      return r.bottom>=0&&r.top<window.innerHeight;
-                    }
-                    return r.bottom>=0&&r.right>=0&&r.top<window.innerHeight&&r.left<window.innerWidth;
-                  }catch(_){return false;}
-                };
-                var rendererFor=function(el){
-                  try{return el&&el.closest&&el.closest(rendererSelector);}catch(_){return null;}
-                };
-                var videoHref=function(el){
-                  try{
-                    var renderer=rendererFor(el);
-                    var anchor=(renderer&&renderer.querySelector('a#thumbnail[href],a#wc-endpoint[href],a#video-title-link[href],a#video-title[href],a[href*="/watch"],a[href*="/shorts"]'))||(el&&el.closest&&el.closest('a[href]'))||el;
-                    var href=String((anchor&&anchor.href)||(anchor&&anchor.getAttribute&&anchor.getAttribute('href'))||'');
-                    return (/\/watch|\/shorts/.test(href))?href:'';
-                  }catch(_){return '';}
-                };
-                var visualTarget=function(el){
-                  try{
-                    var renderer=rendererFor(el);
-                    if(renderer){
-                      return renderer;
-                    }
-                    var videoAnchor=el&&el.closest&&el.closest('a[href*="/watch"],a[href*="/shorts"]');
-                    if(videoAnchor){return videoAnchor;}
-                    return el;
-                  }catch(_){return el;}
-                };
-                var normalize=function(el){
-                  try{
-                    if(!el){return null;}
-                    var renderer=rendererFor(el);
-                    if(renderer){return visualTarget(renderer);}
-                    if(el.matches&&el.matches(selector)){return visualTarget(el);}
-                    var closest=el.closest&&el.closest(selector);
-                    return closest?visualTarget(closest):null;
-                  }catch(_){return el;}
-                };
-                var isUseful=function(el){
-                  try{
-                    if(videoHref(el)){return true;}
-                    if(rendererFor(el)){return false;}
-                    var tab=el.closest&&el.closest('yt-tab-shape,tp-yt-paper-tab,yt-chip-cloud-chip-renderer,ytd-channel-header-renderer,ytd-c4-tabbed-header-renderer,ytd-subscribe-button-renderer,yt-searchbox');
-                    var href=String(el.href||el.getAttribute('href')||(tab&&(tab.href||tab.getAttribute('href')))||'');
-                    var label=String(el.getAttribute('aria-label')||el.getAttribute('title')||el.innerText||(tab&&(tab.getAttribute('aria-label')||tab.getAttribute('title')||tab.innerText))||'').trim();
-                    if(tab&&label&&/(videos|live|podcasts|playlist|playlists|shorts|home|community|channels|about|all|music|recently uploaded|popular|subscribe|subscribed|join|search)/i.test(label)){return true;}
-                    if(href&&href.indexOf('javascript:')===0){return false;}
-                    if(href&&(/[?&]pp=/.test(href))){return false;}
-                    if(href&&(/\/playlist|\/@|\/channel|\/c\//.test(href))){return true;}
-                    if(tab&&label&&/(play|search|subscribe|home|videos|shorts|live|channels|back|close|menu)/i.test(label)){return true;}
-                    return false;
-                  }catch(_){return false;}
-                };
-                var nodes=Array.from(document.querySelectorAll(selector)).map(normalize).filter(Boolean);
-                var seen=new Set();
-                var items=nodes.filter(function(el){
-                  if(seen.has(el)||!visible(el)||!isUseful(el)){return false;}
-                  seen.add(el);
-                  return true;
-                });
-                items=items.sort(function(a,b){
-                  var ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
-                  return (ar.top-br.top)||(ar.left-br.left);
-                });
-                var zoneOf=function(el){
-                  try{
-                    if(videoHref(el)){
-                      var renderer=rendererFor(el);
-                      if(renderer&&renderer.matches&&renderer.matches('ytd-playlist-video-renderer,ytd-playlist-panel-video-renderer,ytd-playlist-panel-video-renderer #content,ytd-playlist-video-list-renderer ytd-playlist-video-renderer')){return 'playlist-list';}
-                      return 'video-grid';
-                    }
-                    if(el.closest&&el.closest('yt-tab-shape,tp-yt-paper-tab,#tabsContainer')){return 'tabs';}
-                    if(el.closest&&el.closest('yt-chip-cloud-chip-renderer,#chips,ytd-feed-filter-chip-bar-renderer')){return 'chips';}
-                    if(el.closest&&el.closest('ytd-channel-header-renderer,ytd-c4-tabbed-header-renderer,ytd-subscribe-button-renderer')){return 'channel-header';}
-                    if(el.closest&&el.closest('yt-searchbox')){return 'chrome';}
-                    return 'chrome';
-                  }catch(_){return 'chrome';}
-                };
-                var zoneRank=function(zone){
-                  var rank={'chrome':0,'channel-header':1,'tabs':2,'chips':3,'video-grid':4,'playlist-list':4,'watch-controls':5}[zone];
-                  return rank===undefined?9:rank;
-                };
-                var makeRows=function(){
-                  var rows=[];
-                  var byZone={};
-                  items.forEach(function(el){
-                    var zone=zoneOf(el);
-                    (byZone[zone]||(byZone[zone]=[])).push(el);
-                  });
-                  Object.keys(byZone).forEach(function(zone){
-                    var grouped=[];
-                    byZone[zone].sort(function(a,b){
-                      var ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
-                      return (ar.top-br.top)||(ar.left-br.left);
-                    }).forEach(function(el){
-                      var r=el.getBoundingClientRect();
-                      var centerY=r.top+r.height/2;
-                      var row=grouped.find(function(candidate){
-                        return Math.abs(candidate.centerY-centerY)<Math.max(34,Math.min(86,(r.height||80)*0.48));
-                      });
-                      if(!row){row={zone:zone,centerY:centerY,items:[]};grouped.push(row);}
-                      row.items.push(el);
-                      row.centerY=(row.centerY*(row.items.length-1)+centerY)/row.items.length;
-                    });
-                    grouped.forEach(function(row){
-                      row.items.sort(function(a,b){
-                        return a.getBoundingClientRect().left-b.getBoundingClientRect().left;
-                      });
-                      rows.push(row);
-                    });
-                  });
-                  rows.sort(function(a,b){
-                    var zr=zoneRank(a.zone)-zoneRank(b.zone);
-                    if(zr!==0){return zr;}
-                    return a.centerY-b.centerY;
-                  });
-                  return rows;
-                };
-                var rows=makeRows();
-                var findLocation=function(el){
-                  for(var ri=0;ri<rows.length;ri++){
-                    var ii=rows[ri].items.indexOf(el);
-                    if(ii>=0){return {rowIndex:ri,itemIndex:ii,row:rows[ri],item:el};}
-                  }
-                  return null;
-                };
-                var closestColumnItem=function(row,reference){
-                  if(!row||!row.items.length){return null;}
-                  if(!reference){return row.items[0];}
-                  try{
-                    var rr=reference.getBoundingClientRect();
-                    var rx=rr.left+rr.width/2;
-                    var best=row.items[0],bestScore=Infinity;
-                    row.items.forEach(function(el){
-                      var r=el.getBoundingClientRect();
-                      var x=r.left+r.width/2;
-                      var score=Math.abs(x-rx);
-                      if(score<bestScore){bestScore=score;best=el;}
-                    });
-                    return best;
-                  }catch(_){return row.items[0];}
-                };
-                var clear=function(){
-                  try{document.querySelectorAll('[data-kf-youtube-focused="1"]').forEach(function(el){el.removeAttribute('data-kf-youtube-focused');});}catch(_){}
-                };
-                var summary=function(el){
-                  try{
-                    if(!el){return 'none';}
-                    var tag=(el.tagName||'').toLowerCase();
-                    var id=el.id?('#'+el.id):'';
-                    var renderer=rendererFor(el);
-                    var labelNode=renderer&&renderer.querySelector('#video-title,a#video-title-link,a#video-title,[aria-label]');
-                    var txt=(el.getAttribute('aria-label')||el.getAttribute('title')||(labelNode&&(labelNode.getAttribute('aria-label')||labelNode.getAttribute('title')||labelNode.innerText))||el.innerText||videoHref(el)||'').trim().replace(/\s+/g,' ').slice(0,90);
-                    return tag+id+(txt?(' "'+txt+'"'):'');
-                  }catch(_){return 'unknown';}
-                };
-                var fireThumbnailHover=function(el){
-                  try{
-                    var renderer=rendererFor(el);
-                    var targets=[el];
-                    if(renderer){
-                      var a=renderer.querySelector('a#thumbnail,a#wc-endpoint,a[href*="/watch"]');
-                      var thumb=renderer.querySelector('ytd-thumbnail');
-                      if(a&&targets.indexOf(a)<0){targets.push(a);}
-                      if(thumb&&targets.indexOf(thumb)<0){targets.push(thumb);}
-                      if(targets.indexOf(renderer)<0){targets.push(renderer);}
-                    }
-                    var r=el.getBoundingClientRect();
-                    var x=Math.max(1,Math.min(window.innerWidth-1,r.left+r.width*0.5));
-                    var y=Math.max(1,Math.min(window.innerHeight-1,r.top+r.height*0.5));
-                    ['pointerover','pointerenter','mouseover','mouseenter','mousemove'].forEach(function(type){
-                      targets.forEach(function(t){
-                        try{t.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));}catch(_){}
-                      });
-                    });
-                  }catch(_){}
-                };
-                var fireThumbnailExit=function(el){
-                  try{
-                    if(!el||!videoHref(el)){return;}
-                    var renderer=rendererFor(el);
-                    var targets=[el];
-                    if(renderer){
-                      var a=renderer.querySelector('a#thumbnail,a#wc-endpoint,a[href*="/watch"]');
-                      var thumb=renderer.querySelector('ytd-thumbnail');
-                      if(a&&targets.indexOf(a)<0){targets.push(a);}
-                      if(thumb&&targets.indexOf(thumb)<0){targets.push(thumb);}
-                      if(targets.indexOf(renderer)<0){targets.push(renderer);}
-                      try{renderer.querySelectorAll('video').forEach(function(v){try{v.pause();v.currentTime=0;}catch(_){}});}catch(_){}
-                    }
-                    ['pointerout','pointerleave','mouseout','mouseleave'].forEach(function(type){
-                      targets.forEach(function(t){
-                        try{t.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:1,clientY:1,relatedTarget:document.body}));}catch(_){}
-                      });
-                    });
-                  }catch(_){}
-                };
-                var focusPoint=function(el){
-                  try{
-                    if(!el){return null;}
-                    var r=el.getBoundingClientRect();
-                    return {x:Math.round(Math.max(1,Math.min(window.innerWidth-1,r.left+r.width*0.5))),y:Math.round(Math.max(1,Math.min(window.innerHeight-1,r.top+r.height*0.5))),video:!!videoHref(el)};
-                  }catch(_){return null;}
-                };
-                var ensureVisible=function(el){
-                  try{
-                    if(!el){return;}
-                    var r=el.getBoundingClientRect();
-                    var topSafe=Math.max(74,Math.min(118,(window.innerHeight||720)*0.14));
-                    var bottomSafe=(window.innerHeight||720)-Math.max(72,Math.min(116,(window.innerHeight||720)*0.13));
-                    if(r.top<topSafe||r.bottom>bottomSafe){
-                      try{el.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});}catch(_){try{el.scrollIntoView(false);}catch(__){}}
-                    }
-                  }catch(_){}
-                };
-                var focusTarget=function(target,phase,mode){
-                  if(target){
-                    var previous=normalize(document.querySelector('[data-kf-youtube-focused="1"]'));
-                    if(previous&&previous!==target){fireThumbnailExit(previous);}
-                    clear();
-                    target.setAttribute('data-kf-youtube-focused','1');
-                    if(!target.hasAttribute('tabindex')){target.setAttribute('tabindex','0');}
-                    try{target.focus({preventScroll:true});}catch(_){try{target.focus();}catch(__){}}
-                    ensureVisible(target);
-                    fireThumbnailHover(target);
-                  }
-                  var point=focusPoint(target);
-                  window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:phase,pageUrl:pageUrl,action:action,mode:mode,count:items.length,target:summary(target),hoverX:point&&point.x,hoverY:point&&point.y,thumbnail:point&&point.video}),'');
-                  return target;
-                };
-                var overlaps=function(a1,a2,b1,b2){
-                  return Math.max(a1,b1)<=Math.min(a2,b2);
-                };
-                var directionalCandidate=function(currentItem,direction){
-                  try{
-                    if(!currentItem){return null;}
-                    var loc=findLocation(currentItem);
-                    if(!loc){return null;}
-                    if(direction==='left'||direction==='right'){
-                      var nextItem=loc.itemIndex+(direction==='right'?1:-1);
-                      if(nextItem<0||nextItem>=loc.row.items.length){return null;}
-                      return loc.row.items[nextItem];
-                    }
-                    var step=direction==='down'?1:-1;
-                    var nextRowIndex=loc.rowIndex+step;
-                    if(nextRowIndex<0||nextRowIndex>=rows.length){return null;}
-                    return closestColumnItem(rows[nextRowIndex],currentItem);
-                  }catch(_){return null;}
-                };
-                var current=normalize(document.querySelector('[data-kf-youtube-focused="1"]'))||normalize(document.activeElement);
-                if(!current||items.indexOf(current)<0){current=null;}
-                if(action==='activate'){
-                  var target=current||items[0]||null;
-                  if(target){
-                    focusTarget(target,'activate','tv-spatial');
-                    var renderer=rendererFor(target);
-                    var href=videoHref(target)||target.href||(renderer&&renderer.querySelector('a#thumbnail[href],a#wc-endpoint[href],a#video-title-link[href],a#video-title[href],a[href*="/watch"],a[href*="/shorts"]')&&renderer.querySelector('a#thumbnail[href],a#wc-endpoint[href],a#video-title-link[href],a#video-title[href],a[href*="/watch"],a[href*="/shorts"]').href)||(target.closest&&target.closest('a[href]')&&target.closest('a[href]').href)||'';
-                    if(href&&(/\/watch|\/shorts|\/playlist|\/@|\/channel|\/c\//.test(href))){
-                      window.location.href=href;
-                    }else{
-                      var clickTarget=(renderer&&renderer.querySelector('a#thumbnail,a#wc-endpoint,a[href*="/watch"],button'))||(target.closest&&target.closest('yt-tab-shape,tp-yt-paper-tab,yt-chip-cloud-chip-renderer,button,a[href]'))||target;
-                      try{clickTarget.click();}catch(_){
-                        try{clickTarget.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(__){}
-                      }
-                    }
-                  }
-                  return;
-                }
-                var chosen=null,mode='thumbnail-geometry';
-                if(items.length){
-                  if(!current){
-                    chosen=items[0];
-                    mode='thumbnail-initial';
-                  }else{
-                    chosen=directionalCandidate(current,action);
-                    if(!chosen&&(action==='up'||action==='down')){
-                      var before=Number((document.scrollingElement||document.documentElement||document.body).scrollTop||window.scrollY||0);
-                      var amount=Math.round((window.innerHeight||720)*0.72)*(action==='down'?1:-1);
-                      try{window.scrollBy({top:amount,left:0,behavior:'smooth'});}catch(_){window.scrollBy(0,amount);}
-                      window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'scroll',pageUrl:pageUrl,action:action,mode:'vertical-boundary',count:items.length,target:summary(current),beforeY:before,amount:amount}),'');
-                      return;
-                    }
-                    if(!chosen&&(action==='left'||action==='right')){
-                      window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'boundary',pageUrl:pageUrl,action:action,mode:'horizontal-boundary',count:items.length,target:summary(current)}),'');
-                      return;
-                    }
-                  }
-                }
-                if(chosen){
-                  focusTarget(chosen,'move',mode);
-                  return;
-                }
-                window.prompt(promptPrefix+JSON.stringify({type:'youtube-site-focus',phase:'empty',pageUrl:pageUrl,action:action,mode:mode,count:items.length,target:'none'}),'');
-              }catch(e){
-                try{window.prompt(${JSONObject.quote(PROMPT_PREFIX)}+JSON.stringify({type:'youtube-site-focus',phase:'error',pageUrl:${JSONObject.quote(pageUrl)},action:${JSONObject.quote(action)},error:String(e&&e.message||e)}),'');}catch(_){}
-              }
-            })();
-        """.trimIndent()
-        session.loadUri(script)
-    }
-
     private fun showPointerAt(x: Float, y: Float, reason: String) {
         val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
         val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
@@ -8089,6 +9375,8 @@ return changed>0;
     private fun syncPointerToActivePage(reason: String) {
         if (tabController.getActiveTab() == null) {
             cancelPointerIdleTimeout()
+            browserFullscreenPointerSleepActive = false
+            browserFullscreenWakeOnlyPendingKeyUp = false
             pointerVisible = false
             pointerOverlay.hidePointer()
             GvLogger.i("GvInput", "pointer hidden reason=$reason")
@@ -8107,11 +9395,21 @@ return changed>0;
 
     private fun schedulePointerIdleTimeout() {
         pointerHandler.removeCallbacks(pointerIdleRunnable)
-        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted()) {
+        if (browserFullscreenPointerSleepActive) {
+            pointerHandler.postDelayed(pointerIdleRunnable, BROWSER_FULLSCREEN_POINTER_IDLE_HIDE_MS)
+            return
+        }
+        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        val youtubePointerPolicy = isYouTubePageUrl(activeUrl)
+        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted() && !youtubePointerPolicy) {
             GvLogger.i("GvInput", "pointer idle not scheduled reason=focus-navigation-mode")
             return
         }
-        pointerHandler.postDelayed(pointerIdleRunnable, POINTER_IDLE_HIDE_MS)
+        val delayMs = if (youtubePointerPolicy) YOUTUBE_POINTER_IDLE_HIDE_MS else POINTER_IDLE_HIDE_MS
+        pointerHandler.postDelayed(pointerIdleRunnable, delayMs)
+        if (youtubePointerPolicy) {
+            GvLogger.i("GvInput", "youtube pointer sleep scheduled delayMs=$delayMs")
+        }
     }
 
     private fun cancelPointerIdleTimeout() {
@@ -9021,19 +10319,6 @@ return changed>0;
             )
             return
         }
-        if (type == "youtube-site-focus") {
-            val hoverX = payload.optDouble("hoverX", -1.0).toFloat()
-            val hoverY = payload.optDouble("hoverY", -1.0).toFloat()
-            val thumbnail = payload.optBoolean("thumbnail")
-            if (thumbnail && hoverX > 0f && hoverY > 0f) {
-                dispatchNativeMouseHoverAt(hoverX, hoverY, "youtube-thumbnail-focus")
-            }
-            GvLogger.i(
-                "GvInput",
-                "youtube site focus result phase=${payload.optString("phase")} action=${payload.optString("action")} mode=${payload.optString("mode")} count=${payload.optInt("count")} target=${payload.optString("target")} pageUrl=$pageUrl beforeY=${payload.optDouble("beforeY")} amount=${payload.optInt("amount")} hover=${hoverX.toInt()},${hoverY.toInt()} thumbnail=$thumbnail error=${payload.optString("error")}"
-            )
-            return
-        }
         if (type == "dpad-document-scroll-fallback") {
             GvLogger.i(
                 "GvInput",
@@ -9862,6 +11147,254 @@ return changed>0;
             )
             return
         }
+        if (type == "youtube-quality-helper") {
+            val action = payload.optString("action")
+            val reason = payload.optString("reason")
+            val attempt = payload.optInt("attempt", -1)
+            if (action == "error") {
+                GvLogger.i("GvInput", "youtube-quality-helper error message=$reason")
+                return
+            }
+            val hasPlayer = payload.optBoolean("hasPlayer", false)
+            if (!hasPlayer) {
+                GvLogger.i("GvInput", "youtube-quality-helper skipped reason=no-player")
+                return
+            }
+            val levelsJson = payload.optJSONArray("levels") ?: JSONArray()
+            val levels = mutableListOf<String>()
+            for (index in 0 until levelsJson.length()) {
+                val level = levelsJson.optString(index)
+                if (level.isNotBlank()) {
+                    levels.add(level)
+                }
+            }
+            val levelsSummary = levels.joinToString(",").ifBlank { "none" }
+            val currentBefore = payload.optString("currentBefore")
+            val currentAfter = payload.optString("currentAfter")
+            val videoWidthBefore = payload.optInt("videoWidthBefore", 0)
+            val videoHeightBefore = payload.optInt("videoHeightBefore", 0)
+            val videoWidthAfter = payload.optInt("videoWidthAfter", 0)
+            val videoHeightAfter = payload.optInt("videoHeightAfter", 0)
+            val target = payload.optString("target")
+            val methodsJson = payload.optJSONArray("methodsApplied") ?: JSONArray()
+            val methodsApplied = mutableListOf<String>()
+            for (index in 0 until methodsJson.length()) {
+                val method = methodsJson.optString(index)
+                if (method.isNotBlank()) {
+                    methodsApplied.add(method)
+                }
+            }
+            val methodsSummary = methodsApplied.joinToString(",").ifBlank { "none" }
+            GvLogger.i(
+                "GvInput",
+                "youtube-quality-helper probe levels=$levelsSummary current=$currentBefore videoWidth=$videoWidthBefore videoHeight=$videoHeightBefore"
+            )
+            if (target.isBlank()) {
+                GvLogger.i("GvInput", "youtube-quality-helper skipped reason=no-hd-level levels=$levelsSummary")
+                return
+            }
+            GvLogger.i("GvInput", "youtube-quality-helper target selected=$target reason=available-levels")
+            GvLogger.i("GvInput", "youtube-quality-helper applied target=$target methods=$methodsSummary")
+            val verifyOk = currentAfter == "hd1080" || currentAfter == "hd720" || (videoWidthAfter >= 1280 && videoHeightAfter >= 720)
+            val verifyNoOp = currentAfter == currentBefore &&
+                videoWidthAfter == videoWidthBefore &&
+                videoHeightAfter == videoHeightBefore &&
+                methodsApplied.isNotEmpty()
+            val verifyResult = when {
+                verifyOk -> "ok"
+                verifyNoOp -> "no-op"
+                else -> "not-yet"
+            }
+            GvLogger.i(
+                "GvInput",
+                "youtube-quality-helper verify target=$target current=$currentAfter videoWidth=$videoWidthAfter videoHeight=$videoHeightAfter result=$verifyResult"
+            )
+            if (!verifyOk && attempt in 1 until YOUTUBE_QUALITY_HELPER_MAX_ATTEMPTS_PER_URL) {
+                val queuedUrl = youtubeQualityFollowUpQueuedUrlBySession[session]
+                if (queuedUrl != pageUrl) {
+                    youtubeQualityFollowUpQueuedUrlBySession[session] = pageUrl
+                    maybeScheduleYouTubeQualityHelper(
+                        session = session,
+                        pageUrl = pageUrl,
+                        reason = "verify-followup",
+                        delayMs = YOUTUBE_QUALITY_HELPER_VERIFY_FOLLOW_UP_DELAY_MS,
+                        bypassCooldown = true,
+                    )
+                }
+            }
+            if (verifyOk) {
+                youtubeQualityFollowUpQueuedUrlBySession.remove(session)
+            }
+            return
+        }
+        if (type == "youtube-native-fullscreen-target") {
+            val action = payload.optString("action")
+            val reason = payload.optString("reason")
+            val probeToken = payload.optString("probeToken")
+            val attempt = payload.optInt("attempt", -1)
+            val viewportWidth = payload.optInt("viewportWidth", 0).coerceAtLeast(0)
+            val viewportHeight = payload.optInt("viewportHeight", 0).coerceAtLeast(0)
+            val centerX = payload.optDouble("centerX", -1.0).toFloat()
+            val centerY = payload.optDouble("centerY", -1.0).toFloat()
+            val rectWidth = payload.optInt("width", -1)
+            val rectHeight = payload.optInt("height", -1)
+            val fallbackPair = resolveYouTubeNativeTapPoint(
+                xRatio = YOUTUBE_FULLSCREEN_BUTTON_X_RATIO,
+                yRatio = YOUTUBE_FULLSCREEN_BUTTON_Y_RATIO,
+                fallbackX = YOUTUBE_FULLSCREEN_BUTTON_X_FALLBACK,
+                fallbackY = YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK,
+            )
+            if (action == "measured") {
+                val targetAttempt = attempt.takeIf { it > 0 } ?: (youtubeAutoFsAttemptCountBySession[session] ?: 1)
+                val scaleX = if (viewportWidth > 0 && geckoView.width > 0) geckoView.width.toFloat() / viewportWidth.toFloat() else 1f
+                val scaleY = if (viewportHeight > 0 && geckoView.height > 0) geckoView.height.toFloat() / viewportHeight.toFloat() else 1f
+                val mappedX = centerX * scaleX
+                val mappedY = centerY * scaleY
+                GvLogger.i(
+                    "GvInput",
+                    "youtube-native-fullscreen-target measured x=${mappedX.toInt()} y=${mappedY.toInt()} width=$rectWidth height=$rectHeight viewport=${viewportWidth}x${viewportHeight} attempt=$targetAttempt"
+                )
+                performYouTubeNativeFullscreenButtonTap(
+                    session = session,
+                    pageUrl = pageUrl,
+                    attempt = targetAttempt,
+                    x = mappedX,
+                    y = mappedY,
+                    source = "measured",
+                    token = probeToken,
+                )
+                return
+            }
+
+            val targetAttempt = attempt.takeIf { it > 0 } ?: (youtubeAutoFsAttemptCountBySession[session] ?: 1)
+            val skipReason = when {
+                reason.isNotBlank() -> reason
+                action == "error" -> "probe-error"
+                else -> "no-visible-button"
+            }
+            GvLogger.i(
+                "GvInput",
+                "youtube-native-fullscreen-target skipped reason=$skipReason attempt=$targetAttempt waitingForFallback=false"
+            )
+            performYouTubeNativeFullscreenButtonTap(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = targetAttempt,
+                x = fallbackPair.first,
+                y = fallbackPair.second,
+                source = "fallback",
+                token = probeToken,
+                fallbackReason = skipReason,
+            )
+            return
+        }
+        if (type == "youtube-chat-collapse") {
+            GvLogger.i(
+                "GvInput",
+                "youtube-chat-collapse action=${payload.optString("action")} reason=${payload.optString("reason")} pageUrl=$pageUrl"
+            )
+            return
+        }
+        if (type == "youtube-fullscreen-chat-guard") {
+            val action = payload.optString("action")
+            val reason = payload.optString("reason")
+            val visibleChatCount = payload.optInt("visibleChatCount", -1)
+            val maxChatWidth = payload.optInt("maxChatWidth", -1)
+            val maxChatHeight = payload.optInt("maxChatHeight", -1)
+            val liveChatIframeVisible = payload.optBoolean("liveChatIframeVisible", false)
+            val secondaryWidth = payload.optInt("secondaryWidth", -1)
+            val panelsWidth = payload.optInt("panelsWidth", -1)
+            val viewportWidth = payload.optInt("viewportWidth", -1)
+            val primaryWidth = payload.optInt("primaryWidth", -1)
+            val playerWidth = payload.optInt("playerWidth", -1)
+            val metricSuffix =
+                "visibleChatCount=$visibleChatCount maxChatWidth=$maxChatWidth maxChatHeight=$maxChatHeight " +
+                    "liveChatIframeVisible=$liveChatIframeVisible secondaryWidth=$secondaryWidth panelsWidth=$panelsWidth " +
+                    "playerWidth=$playerWidth primaryWidth=$primaryWidth viewportWidth=$viewportWidth"
+            when (action) {
+                "applied" -> GvLogger.i("GvInput", "youtube-fullscreen-chat-guard applied reason=$reason pageUrl=$pageUrl $metricSuffix")
+                "reapplied" -> GvLogger.i("GvInput", "youtube-fullscreen-chat-guard reapplied reason=$reason pageUrl=$pageUrl $metricSuffix")
+                "removed" -> GvLogger.i("GvInput", "youtube-fullscreen-chat-guard removed reason=$reason pageUrl=$pageUrl $metricSuffix")
+                else -> GvLogger.i("GvInput", "youtube-fullscreen-chat-guard action=$action reason=$reason pageUrl=$pageUrl $metricSuffix")
+            }
+            if (visibleChatCount > 0 && maxChatWidth > 0) {
+                GvLogger.i(
+                    "GvInput",
+                    "youtube-fullscreen-chat-guard visible-chat-remaining count=$visibleChatCount maxChatWidth=$maxChatWidth secondaryWidth=$secondaryWidth panelsWidth=$panelsWidth"
+                )
+            }
+            return
+        }
+        if (type == "youtube-premium-popup") {
+            val action = payload.optString("action")
+            val reason = payload.optString("reason")
+            val checkReason = payload.optString("checkReason")
+            val buttonLabel = payload.optString("buttonLabel")
+            val containerText = payload.optString("containerText")
+            val buttonCenterX = payload.optDouble("buttonCenterX", -1.0).toFloat()
+            val buttonCenterY = payload.optDouble("buttonCenterY", -1.0).toFloat()
+            val viewportWidth = payload.optInt("viewportWidth", 0).coerceAtLeast(0)
+            val viewportHeight = payload.optInt("viewportHeight", 0).coerceAtLeast(0)
+            when (action) {
+                "candidate-buttons" -> {
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup candidate-buttons ${reason.ifBlank { "count=0 negativeCount=0" }} checkReason=$checkReason pageUrl=$pageUrl"
+                    )
+                }
+                "negative-button-found" -> {
+                    val scaleX = if (viewportWidth > 0 && geckoView.width > 0) geckoView.width.toFloat() / viewportWidth.toFloat() else 1f
+                    val scaleY = if (viewportHeight > 0 && geckoView.height > 0) geckoView.height.toFloat() / viewportHeight.toFloat() else 1f
+                    val mappedX = buttonCenterX * scaleX
+                    val mappedY = buttonCenterY * scaleY
+                    val clampedX = mappedX.coerceIn(1f, (geckoView.width - 1).coerceAtLeast(1).toFloat())
+                    val clampedY = mappedY.coerceIn(1f, (geckoView.height - 1).coerceAtLeast(1).toFloat())
+                    val handled = if (buttonCenterX > 0f && buttonCenterY > 0f) {
+                        dispatchNativeMouseTapAt(clampedX, clampedY, "youtube-premium-popup-negative")
+                    } else {
+                        false
+                    }
+                    if (handled) {
+                        recordYouTubePremiumPopupDismiss(session, pageUrl)
+                        GvLogger.i(
+                            "GvInput",
+                            "youtube-premium-popup dismissed reason=$checkReason matchReason=$reason button=\"$buttonLabel\" mode=native-tap x=${clampedX.toInt()} y=${clampedY.toInt()} pageUrl=$pageUrl"
+                        )
+                    } else {
+                        GvLogger.i(
+                            "GvInput",
+                            "youtube-premium-popup skipped reason=native-tap-failed matchReason=$reason checkReason=$checkReason button=\"$buttonLabel\" pageUrl=$pageUrl"
+                        )
+                    }
+                }
+                "dismissed" -> {
+                    recordYouTubePremiumPopupDismiss(session, pageUrl)
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup dismissed reason=$checkReason button=\"$buttonLabel\" containerText=\"${containerText.take(90)}\" pageUrl=$pageUrl"
+                    )
+                }
+                "skipped" -> {
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup skipped reason=$reason checkReason=$checkReason pageUrl=$pageUrl"
+                    )
+                }
+                "error" -> {
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup error reason=$reason checkReason=$checkReason pageUrl=$pageUrl"
+                    )
+                }
+                else -> {
+                    GvLogger.i(
+                        "GvInput",
+                        "youtube-premium-popup action=$action reason=$reason checkReason=$checkReason pageUrl=$pageUrl"
+                    )
+                }
+            }
+            return
+        }
         if (type == "cgtv-play-assist") {
             val active = payload.optBoolean("active")
             val requiresUserAction = payload.optBoolean("requiresUserAction", false)
@@ -10200,6 +11733,34 @@ return changed>0;
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
         private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
         private const val POINTER_IDLE_HIDE_MS = 3500L
+        private const val YOUTUBE_POINTER_IDLE_HIDE_MS = 2500L
+        private const val BROWSER_FULLSCREEN_POINTER_IDLE_HIDE_MS = 2500L
+        private const val YOUTUBE_BACK_DEBOUNCE_MS = 450L
+        private const val YOUTUBE_FULLSCREEN_CHAT_COLLAPSE_MIN_INTERVAL_MS = 900L
+        private const val YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_LOCATION_WINDOW = 3
+        private const val YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_FULLSCREEN_WINDOW = 5
+        private const val YOUTUBE_PREMIUM_POPUP_DISMISS_COOLDOWN_MS = 60_000L
+        private const val YOUTUBE_PREMIUM_POPUP_INTERACTION_BURST_MIN_INTERVAL_MS = 1000L
+        private const val YOUTUBE_QUALITY_HELPER_MAX_ATTEMPTS_PER_URL = 3
+        private const val YOUTUBE_QUALITY_HELPER_COOLDOWN_MS = 12_000L
+        private const val YOUTUBE_QUALITY_HELPER_VERIFY_FOLLOW_UP_DELAY_MS = 4_000L
+        // YouTube smart auto-fullscreen timing constants (media-ready policy)
+        private const val YOUTUBE_AUTO_FULLSCREEN_AFTER_MEDIA_READY_MS = 1500L
+        private const val YOUTUBE_AUTO_FULLSCREEN_RETRY_1_MS = 3000L
+        private const val YOUTUBE_AUTO_FULLSCREEN_RETRY_2_MS = 6000L
+        private const val YOUTUBE_AUTO_FULLSCREEN_ABSOLUTE_FALLBACK_MS = 10000L
+        private const val YOUTUBE_AUTO_FULLSCREEN_CALLBACK_WAIT_MS = 1500L
+        private const val YOUTUBE_AUTO_FULLSCREEN_CONTROLS_REVEAL_TO_BUTTON_DELAY_MS = 650L
+        private const val YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS = 1150L
+        private const val YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS = 3
+        private const val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_RATIO = 620f / 1920f
+        private const val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_RATIO = 420f / 1080f
+        private const val YOUTUBE_FULLSCREEN_BUTTON_X_RATIO = 1210f / 1920f
+        private const val YOUTUBE_FULLSCREEN_BUTTON_Y_RATIO = 760f / 1080f
+        private const val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_FALLBACK = 620f
+        private const val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_FALLBACK = 420f
+        private const val YOUTUBE_FULLSCREEN_BUTTON_X_FALLBACK = 1210f
+        private const val YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK = 760f
         private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
         private const val CGTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
         private const val CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 1
@@ -10281,6 +11842,36 @@ return changed>0;
         }
         val host = uri.host?.lowercase().orEmpty()
         return isYouTubeSurfaceHostForUnifiedCompat(host)
+    }
+
+    private fun isYouTubeConsentPageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty()
+        if (host.startsWith("consent.youtube.com")) {
+            return true
+        }
+        return host.startsWith("consent.google.")
+    }
+
+    private fun isYouTubeWatchOrLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty()
+        if (!isYouTubeSurfaceHostForUnifiedCompat(host)) {
+            return false
+        }
+        val path = uri.path?.lowercase().orEmpty()
+        return path == "/watch" ||
+            path.startsWith("/watch/") ||
+            path == "/live" ||
+            path.startsWith("/live/")
     }
 
     private fun applyMediaSessionDelegateForUrl(

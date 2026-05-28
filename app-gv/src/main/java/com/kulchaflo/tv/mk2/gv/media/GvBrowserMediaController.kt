@@ -9,6 +9,13 @@ import org.mozilla.geckoview.MediaSession
 class GvBrowserMediaController(
     private val tabController: GvTabController,
 ) {
+    /**
+     * Called on the main thread when browser media becomes playing or its feature set indicates
+     * the player is ready (FOCUS feature present = fullscreen control available).
+     * Used by GeckoBrowserActivity to trigger media-ready YouTube auto-fullscreen.
+     */
+    var youtubeMediaReadyListener: ((GeckoSession) -> Unit)? = null
+
     private data class BrowserMediaState(
         val tabId: String,
         val mediaSession: MediaSession,
@@ -58,11 +65,16 @@ class GvBrowserMediaController(
                 TAG,
                 "browser media features tabId=${activeState?.tabId ?: "unknown"} play=${has(features, MediaSession.Feature.PLAY)} pause=${has(features, MediaSession.Feature.PAUSE)} seekForward=${has(features, MediaSession.Feature.SEEK_FORWARD)} seekBackward=${has(features, MediaSession.Feature.SEEK_BACKWARD)} skipAd=${has(features, MediaSession.Feature.SKIP_AD)} fullscreenFocus=${has(features, MediaSession.Feature.FOCUS)}"
             )
+            // FOCUS feature = fullscreen control is ready – signal media-ready to activity.
+            if (has(features, MediaSession.Feature.FOCUS)) {
+                youtubeMediaReadyListener?.invoke(session)
+            }
         }
 
         override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
             activeState = stateFor(session, mediaSession).apply { isPlaying = true }
             GvLogger.i(TAG, "browser media play tabId=${activeState?.tabId ?: "unknown"}")
+            youtubeMediaReadyListener?.invoke(session)
         }
 
         override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
