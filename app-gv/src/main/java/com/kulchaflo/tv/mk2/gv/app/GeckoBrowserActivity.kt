@@ -170,6 +170,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val youtubeAutoFsCallbackCheckRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val youtubeAutoFsTargetProbeTokenBySession = LinkedHashMap<GeckoSession, String>()
     private val youtubeAutoFsTargetProbeFallbackRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeAutoFsTargetProbeRetryRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val youtubeAutoFsTargetProbePassBySession = LinkedHashMap<GeckoSession, Int>()
+    private val youtubeAutoFsOverlayDeferralCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val youtubeFullscreenChatCollapseLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val youtubeQualityTrackedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val youtubeQualityAttemptCountBySession = LinkedHashMap<GeckoSession, Int>()
@@ -6252,6 +6255,9 @@ return changed>0;
         youtubeAutoFsArmedUrlBySession[session] = pageUrl
         youtubeAutoFsAttemptCountBySession[session] = 0
         youtubeAutoFsMediaReadyBySession.remove(session)
+        youtubeAutoFsTargetProbePassBySession.remove(session)
+        youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsOverlayDeferralCountBySession.remove(session)
         GvLogger.i("GvInput", "youtube-native-fullscreen-arm url=$pageUrl reason=watch-live-ready attempt=1")
         val fallback = Runnable {
             if (isFinishing || isDestroyed) return@Runnable
@@ -6285,6 +6291,9 @@ return changed>0;
         youtubeAutoFsCallbackCheckRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
         youtubeAutoFsTargetProbeTokenBySession.remove(session)
         youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsTargetProbePassBySession.remove(session)
+        youtubeAutoFsOverlayDeferralCountBySession.remove(session)
         val msg = buildString {
             append("youtube-native-fullscreen-stop reason=$reason url=$armed")
             if (newUrl != null) append(" newUrl=$newUrl")
@@ -6429,6 +6438,7 @@ return changed>0;
                     session = session,
                     pageUrl = pageUrl,
                     attempt = attempt,
+                    probePass = 1,
                     reason = reason,
                     fallbackX = buttonX,
                     fallbackY = buttonY,
@@ -6442,47 +6452,36 @@ return changed>0;
         session: GeckoSession,
         pageUrl: String,
         attempt: Int,
+        probePass: Int,
         reason: String,
         fallbackX: Float,
         fallbackY: Float,
     ) {
+        youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
         youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
         val probeToken = "fs-$attempt-${SystemClock.uptimeMillis()}"
         youtubeAutoFsTargetProbeTokenBySession[session] = probeToken
+        youtubeAutoFsTargetProbePassBySession[session] = probePass
         val fallbackRunnable = Runnable {
             if (isFinishing || isDestroyed) return@Runnable
             val activeToken = youtubeAutoFsTargetProbeTokenBySession[session] ?: return@Runnable
             if (activeToken != probeToken) return@Runnable
-            if (attempt == 1) {
-                youtubeAutoFsTargetProbeTokenBySession.remove(session)
-                youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)
-                GvLogger.i("GvInput", "youtube-native-fullscreen-target-timeout-retry-no-fallback attempt=$attempt")
-                scheduleYouTubeAutoFullscreenAttempt(
-                    session = session,
-                    pageUrl = pageUrl,
-                    attempt = attempt + 1,
-                    delayMs = 0L,
-                    reason = "retry-after-target-timeout",
-                )
-                return@Runnable
-            }
-            GvLogger.i("GvInput", "youtube-native-fullscreen-target-timeout-fallback attempt=$attempt")
-            performYouTubeNativeFullscreenButtonTap(
+            handleYouTubeNativeFullscreenTargetProbeMiss(
                 session = session,
                 pageUrl = pageUrl,
                 attempt = attempt,
-                x = fallbackX,
-                y = fallbackY,
-                source = "fallback",
+                probePass = probePass,
+                reason = "target-timeout",
                 token = probeToken,
-                fallbackReason = "target-timeout",
+                fallbackX = fallbackX,
+                fallbackY = fallbackY,
             )
         }
         youtubeAutoFsTargetProbeFallbackRunnableBySession[session] = fallbackRunnable
         pointerHandler.postDelayed(fallbackRunnable, YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS)
         GvLogger.i(
             "GvInput",
-            "youtube-native-fullscreen-target-probe-dispatched attempt=$attempt timeoutMs=$YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS reason=$reason"
+            "youtube-native-fullscreen-target probe-dispatched attempt=$attempt probePass=$probePass timeoutMs=$YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS reason=$reason"
         )
 
         val script = """
@@ -6491,6 +6490,7 @@ return changed>0;
                 var promptPrefix=${JSONObject.quote(PROMPT_PREFIX)};
                 var probeToken=${JSONObject.quote(probeToken)};
                 var attempt=${attempt};
+                var probePass=${probePass};
                 var visible=function(node){
                   try{
                     if(!node||node.disabled){return false;}
@@ -6510,6 +6510,131 @@ return changed>0;
                   'button[aria-label*="fullscreen" i]',
                   'button[title*="fullscreen" i]'
                 ];
+                var firstNode=function(selList){
+                  for(var si=0;si<selList.length;si++){
+                    var node=document.querySelector(selList[si]);
+                    if(node){return node;}
+                  }
+                  return null;
+                };
+                var controlsBar=document.querySelector('.ytp-chrome-bottom');
+                var controlsVisible=visible(controlsBar);
+                var skipAdVisible=(
+                  visible(document.querySelector('.ytp-ad-skip-button'))||
+                  visible(document.querySelector('.ytp-ad-skip-button-modern'))||
+                  visible(document.querySelector('button[aria-label*="skip" i]'))||
+                  visible(document.querySelector('[title*="skip" i]'))
+                );
+                var adVisible=(
+                  visible(document.querySelector('.ytp-ad-player-overlay'))||
+                  skipAdVisible||
+                  visible(document.querySelector('.video-ads'))||
+                  visible(document.querySelector('.ytp-ad-module'))
+                );
+                var normalizeLabel=function(value){
+                  return String(value||'').replace(/\\s+/g,' ').trim().toLowerCase();
+                };
+                var collectLabel=function(node){
+                  if(!node){return '';}
+                  var primary='';
+                  var attrs=[node.getAttribute&&node.getAttribute('aria-label'),node.getAttribute&&node.getAttribute('title'),node.getAttribute&&node.getAttribute('value')];
+                  for(var ai=0;ai<attrs.length;ai++){
+                    if(attrs[ai]&&String(attrs[ai]).trim()){
+                      primary=String(attrs[ai]);
+                      break;
+                    }
+                  }
+                  if(!primary){
+                    primary=String(node.innerText||node.textContent||'');
+                  }
+                  if(!primary){
+                    var closest=node.closest&&node.closest('button,[role="button"],tp-yt-paper-button,yt-button-shape,a[role="button"]');
+                    if(closest&&closest!==node){
+                      primary=String(closest.innerText||closest.textContent||closest.getAttribute&&closest.getAttribute('aria-label')||'');
+                    }
+                  }
+                  return primary;
+                };
+                var collectContextText=function(node){
+                  var cursor=node;
+                  for(var depth=0;cursor&&depth<8;depth++){
+                    if(visible(cursor)){
+                      var txt=String(cursor.innerText||cursor.textContent||'').replace(/\\s+/g,' ').trim();
+                      if(txt.length>0){return txt.slice(0,320);}
+                    }
+                    cursor=cursor.parentElement;
+                  }
+                  return '';
+                };
+                var premiumVisible=(function(){
+                  var premiumSelectors=[
+                    'ytd-mealbar-promo-renderer',
+                    'tp-yt-paper-dialog',
+                    'ytd-popup-container',
+                    '.ytp-paid-content-overlay'
+                  ];
+                  for(var pi=0;pi<premiumSelectors.length;pi++){
+                    var pn=document.querySelector(premiumSelectors[pi]);
+                    if(!visible(pn)){continue;}
+                    var txt=((pn.innerText||pn.textContent||'').replace(/\\s+/g,' ').trim()).toLowerCase();
+                    if(txt.indexOf('youtube premium')>=0||txt.indexOf('without the ads')>=0||txt.indexOf('get premium')>=0){
+                      return true;
+                    }
+                  }
+                  return false;
+                })();
+                var premiumNegativeButtonFound=false;
+                var premiumNegativeButtonCenterX=-1;
+                var premiumNegativeButtonCenterY=-1;
+                var premiumNegativeButtonLabel='';
+                var premiumNegativeButtonReason='';
+                var premiumContextText='';
+                var negativeMatchers=['no thanks','not now','maybe later','dismiss'];
+                var positiveMatchers=['1 month free','try it free','start trial','subscribe','premium','get premium','buy','join','skip','skip ads'];
+                var premiumContextRe=/(youtube premium|get youtube without the ads|without the ads|premium)/i;
+                var clickableSelector='button,[role="button"],tp-yt-paper-button,yt-button-shape button,yt-button-shape,a[role="button"],.yt-spec-button-shape-next,.yt-spec-button-shape-next__button-text-content';
+                var rawButtons=Array.from(document.querySelectorAll(clickableSelector));
+                for(var bi=0;bi<rawButtons.length;bi++){
+                  var raw=rawButtons[bi];
+                  var btn=(raw.closest&&raw.closest('button,[role="button"],tp-yt-paper-button,yt-button-shape,a[role="button"]'))||raw;
+                  if(!visible(btn)){continue;}
+                  var labelRaw=collectLabel(btn);
+                  var label=normalizeLabel(labelRaw);
+                  if(!label){continue;}
+                  var negative=false;
+                  for(var ni=0;ni<negativeMatchers.length;ni++){
+                    if(label===negativeMatchers[ni]||label.indexOf(negativeMatchers[ni])>=0){
+                      negative=true;
+                      break;
+                    }
+                  }
+                  if(!negative){continue;}
+                  var positive=false;
+                  for(var pi=0;pi<positiveMatchers.length;pi++){
+                    if(label===positiveMatchers[pi]||label.indexOf(positiveMatchers[pi])>=0){
+                      positive=true;
+                      break;
+                    }
+                  }
+                  if(positive){continue;}
+                  var br=btn.getBoundingClientRect();
+                  if(!br||br.width<12||br.height<12){continue;}
+                  var bx=Math.round((br.left+br.right)/2);
+                  var by=Math.round((br.top+br.bottom)/2);
+                  var contextText=collectContextText(btn);
+                  var contextMatch=premiumContextRe.test(contextText||'');
+                  var zoneMatch=(label==='no thanks'&&bx<Math.round((window.innerWidth||0)*0.45)&&by>Math.round((window.innerHeight||0)*0.50));
+                  if(!contextMatch&&!zoneMatch){continue;}
+                  premiumNegativeButtonFound=true;
+                  premiumNegativeButtonCenterX=bx;
+                  premiumNegativeButtonCenterY=by;
+                  premiumNegativeButtonLabel=labelRaw||label;
+                  premiumNegativeButtonReason=contextMatch?'context-match':'zone-match';
+                  premiumContextText=(contextText||'').slice(0,200);
+                  break;
+                }
+                if(premiumNegativeButtonFound){premiumVisible=true;}
+                var buttonExists=!!firstNode(selectors);
                 var target=null;
                 for(var s=0;s<selectors.length;s++){
                   var nodes=Array.from(document.querySelectorAll(selectors[s]));
@@ -6519,6 +6644,9 @@ return changed>0;
                   }
                   if(target){break;}
                 }
+                var buttonVisible=!!target;
+                var debugButton=target||firstNode(selectors);
+                var debugRect=debugButton?debugButton.getBoundingClientRect():null;
                 if(!target){
                   window.prompt(promptPrefix+JSON.stringify({
                     type:'youtube-native-fullscreen-target',
@@ -6526,9 +6654,27 @@ return changed>0;
                     reason:'no-visible-button',
                     probeToken:probeToken,
                     attempt:attempt,
+                    probePass:probePass,
                     pageUrl:window.location.href,
                     centerX:-1,centerY:-1,
-                    left:-1,top:-1,right:-1,bottom:-1,width:-1,height:-1,
+                    left:debugRect?Math.round(debugRect.left):-1,
+                    top:debugRect?Math.round(debugRect.top):-1,
+                    right:debugRect?Math.round(debugRect.right):-1,
+                    bottom:debugRect?Math.round(debugRect.bottom):-1,
+                    width:debugRect?Math.round(debugRect.width):-1,
+                    height:debugRect?Math.round(debugRect.height):-1,
+                    buttonExists:buttonExists,
+                    buttonVisible:buttonVisible,
+                    controlsVisible:controlsVisible,
+                    adVisible:adVisible,
+                    skipAdVisible:skipAdVisible,
+                    premiumVisible:premiumVisible,
+                    premiumNegativeButtonFound:premiumNegativeButtonFound,
+                    premiumNegativeButtonCenterX:premiumNegativeButtonCenterX,
+                    premiumNegativeButtonCenterY:premiumNegativeButtonCenterY,
+                    premiumNegativeButtonLabel:premiumNegativeButtonLabel,
+                    premiumNegativeButtonReason:premiumNegativeButtonReason,
+                    premiumContextText:premiumContextText,
                     viewportWidth:Math.round(window.innerWidth||0),
                     viewportHeight:Math.round(window.innerHeight||0),
                     devicePixelRatio:Number(window.devicePixelRatio||1)
@@ -6544,10 +6690,23 @@ return changed>0;
                   reason:${JSONObject.quote(reason)},
                   probeToken:probeToken,
                   attempt:attempt,
+                  probePass:probePass,
                   pageUrl:window.location.href,
                   centerX:cx,centerY:cy,
                   left:Math.round(r.left),top:Math.round(r.top),right:Math.round(r.right),bottom:Math.round(r.bottom),
                   width:Math.round(r.width),height:Math.round(r.height),
+                  buttonExists:true,
+                  buttonVisible:true,
+                  controlsVisible:controlsVisible,
+                  adVisible:adVisible,
+                  skipAdVisible:skipAdVisible,
+                  premiumVisible:premiumVisible,
+                  premiumNegativeButtonFound:premiumNegativeButtonFound,
+                  premiumNegativeButtonCenterX:premiumNegativeButtonCenterX,
+                  premiumNegativeButtonCenterY:premiumNegativeButtonCenterY,
+                  premiumNegativeButtonLabel:premiumNegativeButtonLabel,
+                  premiumNegativeButtonReason:premiumNegativeButtonReason,
+                  premiumContextText:premiumContextText,
                   viewportWidth:Math.round(window.innerWidth||0),
                   viewportHeight:Math.round(window.innerHeight||0),
                   devicePixelRatio:Number(window.devicePixelRatio||1)
@@ -6560,9 +6719,22 @@ return changed>0;
                     reason:String(error&&error.message||error),
                     probeToken:${JSONObject.quote(probeToken)},
                     attempt:${attempt},
+                    probePass:${probePass},
                     pageUrl:window.location.href,
                     centerX:-1,centerY:-1,
                     left:-1,top:-1,right:-1,bottom:-1,width:-1,height:-1,
+                    buttonExists:false,
+                    buttonVisible:false,
+                    controlsVisible:false,
+                    adVisible:false,
+                    skipAdVisible:false,
+                    premiumVisible:false,
+                    premiumNegativeButtonFound:false,
+                    premiumNegativeButtonCenterX:-1,
+                    premiumNegativeButtonCenterY:-1,
+                    premiumNegativeButtonLabel:'',
+                    premiumNegativeButtonReason:'',
+                    premiumContextText:'',
                     viewportWidth:Math.round(window.innerWidth||0),
                     viewportHeight:Math.round(window.innerHeight||0),
                     devicePixelRatio:Number(window.devicePixelRatio||1)
@@ -6572,6 +6744,233 @@ return changed>0;
             })();
         """.trimIndent()
         session.loadUri(script)
+    }
+
+    private fun scheduleYouTubeNativeFullscreenTargetReprobe(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        nextProbePass: Int,
+        reason: String,
+        fallbackX: Float,
+        fallbackY: Float,
+        delayMs: Long = YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_RETRY_DELAY_MS,
+    ) {
+        youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        val r = Runnable {
+            youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)
+            if (isFinishing || isDestroyed) return@Runnable
+            val tab = tabController.findTabBySession(session) ?: return@Runnable
+            val activeUrl = tab.url
+            if (youtubeAutoFsArmedUrlBySession[session] != pageUrl || activeUrl != pageUrl) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=url-changed expected=$pageUrl actual=$activeUrl")
+                return@Runnable
+            }
+            if (!isYouTubeWatchOrLivePageUrl(activeUrl)) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=not-watch-live url=$activeUrl")
+                return@Runnable
+            }
+            if (youtubeFullscreenStateBySession[session] == true || isBrowserFullscreenLikeState(tab)) {
+                GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$activeUrl")
+                stopYouTubeAutoFullscreen(session, reason = "already-fullscreen")
+                return@Runnable
+            }
+            val (controlsX, controlsY) = resolveYouTubeNativeTapPoint(
+                xRatio = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_RATIO,
+                yRatio = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_RATIO,
+                fallbackX = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_FALLBACK,
+                fallbackY = YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_FALLBACK,
+            )
+            val revealHandled = dispatchNativeMouseHoverAt(controlsX, controlsY, "youtube-native-fullscreen-controls-reveal")
+            GvLogger.i(
+                "GvInput",
+                "youtube-native-fullscreen-controls-hover x=${controlsX.toInt()} y=${controlsY.toInt()} attempt=$attempt reason=$reason handled=$revealHandled"
+            )
+            dispatchYouTubeNativeFullscreenTargetProbe(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = attempt,
+                probePass = nextProbePass,
+                reason = reason,
+                fallbackX = fallbackX,
+                fallbackY = fallbackY,
+            )
+        }
+        youtubeAutoFsTargetProbeRetryRunnableBySession[session] = r
+        pointerHandler.postDelayed(r, delayMs)
+    }
+
+    private fun handleYouTubeNativeFullscreenTargetProbeMiss(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        probePass: Int,
+        reason: String,
+        token: String,
+        fallbackX: Float,
+        fallbackY: Float,
+    ) {
+        val activeToken = youtubeAutoFsTargetProbeTokenBySession[session] ?: return
+        if (activeToken != token) {
+            return
+        }
+        val maxProbePasses = YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_MAX_PASSES_PER_ATTEMPT.coerceAtLeast(1)
+        val normalizedPass = probePass.coerceAtLeast(1)
+        if (normalizedPass < maxProbePasses) {
+            val nextProbePass = normalizedPass + 1
+            youtubeAutoFsTargetProbeTokenBySession.remove(session)
+            youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+            youtubeAutoFsTargetProbePassBySession[session] = nextProbePass
+            GvLogger.i(
+                "GvInput",
+                "youtube-native-fullscreen-target retry-probe reason=$reason attempt=$attempt nextProbePass=$nextProbePass"
+            )
+            scheduleYouTubeNativeFullscreenTargetReprobe(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = attempt,
+                nextProbePass = nextProbePass,
+                reason = "retry-after-$reason",
+                fallbackX = fallbackX,
+                fallbackY = fallbackY,
+                delayMs = YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_RETRY_DELAY_MS,
+            )
+            return
+        }
+        if (attempt == 1) {
+            youtubeAutoFsTargetProbeTokenBySession.remove(session)
+            youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+            youtubeAutoFsTargetProbePassBySession.remove(session)
+            GvLogger.i("GvInput", "youtube-native-fullscreen-target-timeout-retry-no-fallback attempt=$attempt")
+            scheduleYouTubeAutoFullscreenAttempt(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = attempt + 1,
+                delayMs = 0L,
+                reason = "retry-after-target-probe-exhausted",
+            )
+            return
+        }
+        GvLogger.i("GvInput", "youtube-native-fullscreen-target-timeout-fallback attempt=$attempt probePass=$normalizedPass")
+        performYouTubeNativeFullscreenButtonTap(
+            session = session,
+            pageUrl = pageUrl,
+            attempt = attempt,
+            x = fallbackX,
+            y = fallbackY,
+            source = "fallback",
+            token = token,
+            fallbackReason = "probe-exhausted",
+        )
+    }
+
+    private fun clearYouTubeNativeFullscreenTargetProbeState(session: GeckoSession, token: String? = null): Boolean {
+        val activeToken = youtubeAutoFsTargetProbeTokenBySession[session] ?: return false
+        if (!token.isNullOrBlank() && activeToken != token) {
+            return false
+        }
+        youtubeAutoFsTargetProbeTokenBySession.remove(session)
+        youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsTargetProbePassBySession.remove(session)
+        return true
+    }
+
+    private fun maybeHandleYouTubeFullscreenOverlayBlocker(
+        session: GeckoSession,
+        pageUrl: String,
+        attempt: Int,
+        probePass: Int,
+        probeToken: String,
+        viewportWidth: Int,
+        viewportHeight: Int,
+        premiumVisible: Boolean,
+        premiumNegativeButtonFound: Boolean,
+        premiumNegativeButtonCenterX: Float,
+        premiumNegativeButtonCenterY: Float,
+        premiumNegativeButtonLabel: String,
+        premiumNegativeButtonReason: String,
+        adVisible: Boolean,
+        skipAdVisible: Boolean,
+        fallbackX: Float,
+        fallbackY: Float,
+    ): Boolean {
+        GvLogger.i(
+            "GvInput",
+            "youtube-overlay-blocker check reason=fullscreen-gate attempt=$attempt probePass=$probePass premiumVisible=$premiumVisible adVisible=$adVisible skipAdVisible=$skipAdVisible"
+        )
+        val currentDeferrals = youtubeAutoFsOverlayDeferralCountBySession[session] ?: 0
+        if (currentDeferrals >= YOUTUBE_AUTO_FULLSCREEN_MAX_OVERLAY_DEFERRALS) {
+            GvLogger.i("GvInput", "youtube-overlay-blocker skipped reason=max-deferrals attempt=$attempt deferrals=$currentDeferrals")
+            clearYouTubeNativeFullscreenTargetProbeState(session, probeToken)
+            stopYouTubeAutoFullscreen(session, reason = "overlay-max-deferrals", oldUrl = pageUrl)
+            return true
+        }
+        val nextProbePass = (probePass + 1).coerceAtLeast(1)
+
+        if (premiumNegativeButtonFound && premiumNegativeButtonCenterX >= 0f && premiumNegativeButtonCenterY >= 0f) {
+            val widthScale = if (viewportWidth > 0 && geckoView.width > 0) geckoView.width.toFloat() / viewportWidth.toFloat() else 1f
+            val heightScale = if (viewportHeight > 0 && geckoView.height > 0) geckoView.height.toFloat() / viewportHeight.toFloat() else 1f
+            val tapX = premiumNegativeButtonCenterX * widthScale
+            val tapY = premiumNegativeButtonCenterY * heightScale
+            val viewWidth = geckoView.width.takeIf { it > 0 } ?: 1920
+            val viewHeight = geckoView.height.takeIf { it > 0 } ?: 1080
+            val clampedX = tapX.coerceIn(1f, (viewWidth - 1).coerceAtLeast(1).toFloat())
+            val clampedY = tapY.coerceIn(1f, (viewHeight - 1).coerceAtLeast(1).toFloat())
+            GvLogger.i(
+                "GvInput",
+                "youtube-overlay-blocker premium-negative-found reason=${premiumNegativeButtonReason.ifBlank { "context-match" }} button=\"$premiumNegativeButtonLabel\" x=${clampedX.toInt()} y=${clampedY.toInt()}"
+            )
+            if (!clearYouTubeNativeFullscreenTargetProbeState(session, probeToken)) {
+                return true
+            }
+            val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "youtube-premium-popup-negative")
+            GvLogger.i("GvInput", "youtube-overlay-blocker premium-dismiss-tap x=${clampedX.toInt()} y=${clampedY.toInt()} handled=$handled")
+            val nextDeferrals = currentDeferrals + 1
+            youtubeAutoFsOverlayDeferralCountBySession[session] = nextDeferrals
+            GvLogger.i(
+                "GvInput",
+                "youtube-overlay-blocker defer-fullscreen reason=premium-dismissed delayMs=$YOUTUBE_AUTO_FULLSCREEN_OVERLAY_RETRY_DELAY_MS deferrals=$nextDeferrals"
+            )
+            scheduleYouTubeNativeFullscreenTargetReprobe(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = attempt,
+                nextProbePass = nextProbePass,
+                reason = "overlay-premium-dismissed",
+                fallbackX = fallbackX,
+                fallbackY = fallbackY,
+                delayMs = YOUTUBE_AUTO_FULLSCREEN_OVERLAY_RETRY_DELAY_MS,
+            )
+            return true
+        }
+
+        if (adVisible || skipAdVisible) {
+            if (!clearYouTubeNativeFullscreenTargetProbeState(session, probeToken)) {
+                return true
+            }
+            val nextDeferrals = currentDeferrals + 1
+            youtubeAutoFsOverlayDeferralCountBySession[session] = nextDeferrals
+            GvLogger.i(
+                "GvInput",
+                "youtube-overlay-blocker defer-fullscreen reason=ad-visible skipAdVisible=$skipAdVisible delayMs=$YOUTUBE_AUTO_FULLSCREEN_AD_DEFER_DELAY_MS deferrals=$nextDeferrals"
+            )
+            scheduleYouTubeNativeFullscreenTargetReprobe(
+                session = session,
+                pageUrl = pageUrl,
+                attempt = attempt,
+                nextProbePass = nextProbePass,
+                reason = "overlay-ad-visible",
+                fallbackX = fallbackX,
+                fallbackY = fallbackY,
+                delayMs = YOUTUBE_AUTO_FULLSCREEN_AD_DEFER_DELAY_MS,
+            )
+            return true
+        }
+
+        youtubeAutoFsOverlayDeferralCountBySession.remove(session)
+        GvLogger.i("GvInput", "youtube-overlay-blocker skipped reason=no-blocker")
+        return false
     }
 
     private fun performYouTubeNativeFullscreenButtonTap(
@@ -6589,7 +6988,10 @@ return changed>0;
             return
         }
         youtubeAutoFsTargetProbeTokenBySession.remove(session)
+        youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
         youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+        youtubeAutoFsTargetProbePassBySession.remove(session)
+        youtubeAutoFsOverlayDeferralCountBySession.remove(session)
 
         val tab = tabController.findTabBySession(session) ?: return
         val activeUrl = tab.url
@@ -11234,27 +11636,62 @@ return changed>0;
             val reason = payload.optString("reason")
             val probeToken = payload.optString("probeToken")
             val attempt = payload.optInt("attempt", -1)
+            val probePass = payload.optInt("probePass", 1).coerceAtLeast(1)
             val viewportWidth = payload.optInt("viewportWidth", 0).coerceAtLeast(0)
             val viewportHeight = payload.optInt("viewportHeight", 0).coerceAtLeast(0)
             val centerX = payload.optDouble("centerX", -1.0).toFloat()
             val centerY = payload.optDouble("centerY", -1.0).toFloat()
             val rectWidth = payload.optInt("width", -1)
             val rectHeight = payload.optInt("height", -1)
+            val buttonExists = payload.optBoolean("buttonExists", false)
+            val buttonVisible = payload.optBoolean("buttonVisible", false)
+            val controlsVisible = payload.optBoolean("controlsVisible", false)
+            val adVisible = payload.optBoolean("adVisible", false)
+            val skipAdVisible = payload.optBoolean("skipAdVisible", false)
+            val premiumVisible = payload.optBoolean("premiumVisible", false)
+            val premiumNegativeButtonFound = payload.optBoolean("premiumNegativeButtonFound", false)
+            val premiumNegativeButtonCenterX = payload.optDouble("premiumNegativeButtonCenterX", -1.0).toFloat()
+            val premiumNegativeButtonCenterY = payload.optDouble("premiumNegativeButtonCenterY", -1.0).toFloat()
+            val premiumNegativeButtonLabel = payload.optString("premiumNegativeButtonLabel").ifBlank { "No thanks" }
+            val premiumNegativeButtonReason = payload.optString("premiumNegativeButtonReason")
             val fallbackPair = resolveYouTubeNativeTapPoint(
                 xRatio = YOUTUBE_FULLSCREEN_BUTTON_X_RATIO,
                 yRatio = YOUTUBE_FULLSCREEN_BUTTON_Y_RATIO,
                 fallbackX = YOUTUBE_FULLSCREEN_BUTTON_X_FALLBACK,
                 fallbackY = YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK,
             )
+            val targetAttempt = attempt.takeIf { it > 0 } ?: (youtubeAutoFsAttemptCountBySession[session] ?: 1)
+            if (
+                maybeHandleYouTubeFullscreenOverlayBlocker(
+                    session = session,
+                    pageUrl = pageUrl,
+                    attempt = targetAttempt,
+                    probePass = probePass,
+                    probeToken = probeToken,
+                    viewportWidth = viewportWidth,
+                    viewportHeight = viewportHeight,
+                    premiumVisible = premiumVisible,
+                    premiumNegativeButtonFound = premiumNegativeButtonFound,
+                    premiumNegativeButtonCenterX = premiumNegativeButtonCenterX,
+                    premiumNegativeButtonCenterY = premiumNegativeButtonCenterY,
+                    premiumNegativeButtonLabel = premiumNegativeButtonLabel,
+                    premiumNegativeButtonReason = premiumNegativeButtonReason,
+                    adVisible = adVisible,
+                    skipAdVisible = skipAdVisible,
+                    fallbackX = fallbackPair.first,
+                    fallbackY = fallbackPair.second,
+                )
+            ) {
+                return
+            }
             if (action == "measured") {
-                val targetAttempt = attempt.takeIf { it > 0 } ?: (youtubeAutoFsAttemptCountBySession[session] ?: 1)
                 val scaleX = if (viewportWidth > 0 && geckoView.width > 0) geckoView.width.toFloat() / viewportWidth.toFloat() else 1f
                 val scaleY = if (viewportHeight > 0 && geckoView.height > 0) geckoView.height.toFloat() / viewportHeight.toFloat() else 1f
                 val mappedX = centerX * scaleX
                 val mappedY = centerY * scaleY
                 GvLogger.i(
                     "GvInput",
-                    "youtube-native-fullscreen-target measured x=${mappedX.toInt()} y=${mappedY.toInt()} width=$rectWidth height=$rectHeight viewport=${viewportWidth}x${viewportHeight} attempt=$targetAttempt"
+                    "youtube-native-fullscreen-target measured x=${mappedX.toInt()} y=${mappedY.toInt()} width=$rectWidth height=$rectHeight viewport=${viewportWidth}x${viewportHeight} attempt=$targetAttempt probePass=$probePass"
                 )
                 performYouTubeNativeFullscreenButtonTap(
                     session = session,
@@ -11268,7 +11705,6 @@ return changed>0;
                 return
             }
 
-            val targetAttempt = attempt.takeIf { it > 0 } ?: (youtubeAutoFsAttemptCountBySession[session] ?: 1)
             val skipReason = when {
                 reason.isNotBlank() -> reason
                 action == "error" -> "probe-error"
@@ -11276,17 +11712,17 @@ return changed>0;
             }
             GvLogger.i(
                 "GvInput",
-                "youtube-native-fullscreen-target skipped reason=$skipReason attempt=$targetAttempt waitingForFallback=false"
+                "youtube-native-fullscreen-target skipped reason=$skipReason buttonExists=$buttonExists buttonVisible=$buttonVisible controlsVisible=$controlsVisible adVisible=$adVisible skipAdVisible=$skipAdVisible premiumVisible=$premiumVisible premiumNegativeButtonFound=$premiumNegativeButtonFound attempt=$targetAttempt probePass=$probePass"
             )
-            performYouTubeNativeFullscreenButtonTap(
+            handleYouTubeNativeFullscreenTargetProbeMiss(
                 session = session,
                 pageUrl = pageUrl,
                 attempt = targetAttempt,
-                x = fallbackPair.first,
-                y = fallbackPair.second,
-                source = "fallback",
+                probePass = probePass,
+                reason = skipReason,
                 token = probeToken,
-                fallbackReason = skipReason,
+                fallbackX = fallbackPair.first,
+                fallbackY = fallbackPair.second,
             )
             return
         }
@@ -11754,6 +12190,11 @@ return changed>0;
         private val YOUTUBE_AUTO_FULLSCREEN_CALLBACK_WAIT_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_CALLBACK_WAIT_MS
         private val YOUTUBE_AUTO_FULLSCREEN_CONTROLS_REVEAL_TO_BUTTON_DELAY_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_CONTROLS_REVEAL_TO_BUTTON_DELAY_MS
         private val YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_TIMEOUT_MS
+        private val YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_RETRY_DELAY_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_RETRY_DELAY_MS
+        private val YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_MAX_PASSES_PER_ATTEMPT = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_TARGET_PROBE_MAX_PASSES_PER_ATTEMPT
+        private val YOUTUBE_AUTO_FULLSCREEN_OVERLAY_RETRY_DELAY_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_OVERLAY_RETRY_DELAY_MS
+        private val YOUTUBE_AUTO_FULLSCREEN_AD_DEFER_DELAY_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_AD_DEFER_DELAY_MS
+        private val YOUTUBE_AUTO_FULLSCREEN_MAX_OVERLAY_DEFERRALS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_MAX_OVERLAY_DEFERRALS
         private val YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_MAX_ATTEMPTS
         private val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_RATIO = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_X_RATIO
         private val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_RATIO = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_RATIO
