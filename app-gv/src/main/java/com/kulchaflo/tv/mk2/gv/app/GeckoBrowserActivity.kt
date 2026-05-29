@@ -29,6 +29,7 @@ import com.kulchaflo.tv.mk2.gv.tabs.GvTab
 import com.kulchaflo.tv.mk2.gv.tabs.GvTabController
 import com.kulchaflo.tv.mk2.gv.ui.pointer.PointerOverlayView
 import com.kulchaflo.tv.mk2.gv.youtube.YouTubePolicyConstants
+import com.kulchaflo.tv.mk2.gv.youtube.YouTubeUrlPolicy
 import com.kulchaflo.tv.mk2.gv.util.GvLogger
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11836,43 +11837,15 @@ return changed>0;
     }
 
     private fun isYouTubePageUrl(url: String): Boolean {
-        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
-        val scheme = uri.scheme?.lowercase().orEmpty()
-        if (scheme != "http" && scheme != "https") {
-            return false
-        }
-        val host = uri.host?.lowercase().orEmpty()
-        return isYouTubeSurfaceHostForUnifiedCompat(host)
+        return YouTubeUrlPolicy.isYouTubePageUrl(url)
     }
 
     private fun isYouTubeConsentPageUrl(url: String): Boolean {
-        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
-        val scheme = uri.scheme?.lowercase().orEmpty()
-        if (scheme != "http" && scheme != "https") {
-            return false
-        }
-        val host = uri.host?.lowercase().orEmpty()
-        if (host.startsWith("consent.youtube.com")) {
-            return true
-        }
-        return host.startsWith("consent.google.")
+        return YouTubeUrlPolicy.isYouTubeConsentPageUrl(url)
     }
 
     private fun isYouTubeWatchOrLivePageUrl(url: String): Boolean {
-        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
-        val scheme = uri.scheme?.lowercase().orEmpty()
-        if (scheme != "http" && scheme != "https") {
-            return false
-        }
-        val host = uri.host?.lowercase().orEmpty()
-        if (!isYouTubeSurfaceHostForUnifiedCompat(host)) {
-            return false
-        }
-        val path = uri.path?.lowercase().orEmpty()
-        return path == "/watch" ||
-            path.startsWith("/watch/") ||
-            path == "/live" ||
-            path.startsWith("/live/")
+        return YouTubeUrlPolicy.isYouTubeWatchOrLivePageUrl(url)
     }
 
     private fun applyMediaSessionDelegateForUrl(
