@@ -174,6 +174,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val youtubeAutoFsTargetProbeRetryRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val youtubeAutoFsTargetProbePassBySession = LinkedHashMap<GeckoSession, Int>()
     private val youtubeAutoFsOverlayDeferralCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val youtubeAutoFsSuppressedUrlBySession = LinkedHashMap<GeckoSession, String>()
+    private val youtubeAutoFsSuppressedUntilBySession = LinkedHashMap<GeckoSession, Long>()
     private val youtubeFullscreenChatCollapseLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val youtubeQualityTrackedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val youtubeQualityAttemptCountBySession = LinkedHashMap<GeckoSession, Int>()
@@ -204,7 +206,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var browserFullscreenWakeOnlyPendingKeyUp = false
     private var lastBackToExitAtMs = 0L
     private var lastBackToHomeAtMs = 0L
-    private var lastYouTubeBackAtMs = 0L
     private var lastInteractionWakePulseMs = 0L
     private var lastDpadDocumentScrollFallbackMs = 0L
     private var lastKulchaFloRailHoverScrollMs = 0L
@@ -357,9 +358,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         hideTabsOverlay()
                         return
                     }
-                    if (shouldDebounceYouTubeBack()) {
-                        return
-                    }
                     if (maybeHandleBrowserFullscreenBackPolicy()) {
                         return
                     }
@@ -508,27 +506,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 }
             },
         )
-    }
-
-    private fun shouldDebounceYouTubeBack(): Boolean {
-        if (promotedMediaPlayer.isPromoted() || tabsOverlay.visibility == View.VISIBLE) {
-            return false
-        }
-        val activeUrl = tabController.getActiveTab()?.url.orEmpty()
-        if (!isYouTubePageUrl(activeUrl)) {
-            return false
-        }
-        val now = SystemClock.elapsedRealtime()
-        val elapsedMs = now - lastYouTubeBackAtMs
-        if (elapsedMs in 0 until YOUTUBE_BACK_DEBOUNCE_MS) {
-            GvLogger.i(
-                "GvInput",
-                "youtube back throttled reason=debounce elapsedMs=$elapsedMs windowMs=$YOUTUBE_BACK_DEBOUNCE_MS url=$activeUrl"
-            )
-            return true
-        }
-        lastYouTubeBackAtMs = now
-        return false
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -6242,6 +6219,13 @@ return changed>0;
             GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=not-watch-live url=$pageUrl")
             return
         }
+        if (isYouTubeAutoFullscreenSuppressed(session, pageUrl)) {
+            if (currentArmed != null) {
+                stopYouTubeAutoFullscreen(session, reason = "suppressed-after-back", oldUrl = currentArmed)
+            }
+            GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=suppressed-after-back url=$pageUrl")
+            return
+        }
         if (youtubeFullscreenStateBySession[session] == true) {
             stopYouTubeAutoFullscreen(session, reason = "already-fullscreen", oldUrl = currentArmed)
             GvLogger.i("GvInput", "youtube-native-fullscreen-skipped reason=already-fullscreen url=$pageUrl")
@@ -6276,6 +6260,80 @@ return changed>0;
         }
         youtubeAutoFsFallbackRunnableBySession[session] = fallback
         pointerHandler.postDelayed(fallback, YOUTUBE_AUTO_FULLSCREEN_ABSOLUTE_FALLBACK_MS)
+    }
+
+    private fun isYouTubeAutoFullscreenSuppressed(session: GeckoSession, pageUrl: String): Boolean {
+        val suppressedUrl = youtubeAutoFsSuppressedUrlBySession[session] ?: return false
+        val suppressedUntil = youtubeAutoFsSuppressedUntilBySession[session] ?: return false
+        val now = SystemClock.uptimeMillis()
+        if (suppressedUntil <= now) {
+            youtubeAutoFsSuppressedUrlBySession.remove(session)
+            youtubeAutoFsSuppressedUntilBySession.remove(session)
+            return false
+        }
+        if (suppressedUrl != pageUrl) {
+            return false
+        }
+        return true
+    }
+
+    private fun suppressYouTubeAutoFullscreenAfterBack(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+        durationMs: Long = YOUTUBE_AUTO_FULLSCREEN_SUPPRESS_AFTER_BACK_MS,
+    ) {
+        if (!isYouTubeWatchOrLivePageUrl(pageUrl)) {
+            return
+        }
+        val untilMs = SystemClock.uptimeMillis() + durationMs
+        youtubeAutoFsSuppressedUrlBySession[session] = pageUrl
+        youtubeAutoFsSuppressedUntilBySession[session] = untilMs
+        GvLogger.i(
+            "GvInput",
+            "youtube-back-suppress-autofullscreen reason=$reason url=$pageUrl durationMs=$durationMs"
+        )
+    }
+
+    private fun cancelPendingYouTubeHelpersForBack(session: GeckoSession, pageUrl: String): String {
+        val cancelled = mutableListOf<String>()
+        fun cancelRunnable(name: String, runnable: Runnable?) {
+            if (runnable != null) {
+                pointerHandler.removeCallbacks(runnable)
+                cancelled.add(name)
+            }
+        }
+
+        cancelRunnable("auto-pending", youtubeAutoFsPendingRunnableBySession.remove(session))
+        cancelRunnable("auto-fallback", youtubeAutoFsFallbackRunnableBySession.remove(session))
+        cancelRunnable("auto-callback-check", youtubeAutoFsCallbackCheckRunnableBySession.remove(session))
+        cancelRunnable("auto-target-fallback", youtubeAutoFsTargetProbeFallbackRunnableBySession.remove(session))
+        cancelRunnable("auto-target-retry", youtubeAutoFsTargetProbeRetryRunnableBySession.remove(session))
+        if (youtubeAutoFsTargetProbeTokenBySession.remove(session) != null) cancelled.add("auto-target-token")
+        if (youtubeAutoFsTargetProbePassBySession.remove(session) != null) cancelled.add("auto-target-pass")
+        if (youtubeAutoFsOverlayDeferralCountBySession.remove(session) != null) cancelled.add("auto-overlay-deferrals")
+        if (youtubeAutoFsArmedUrlBySession.remove(session) != null) cancelled.add("auto-armed-url")
+        if (youtubeAutoFsAttemptCountBySession.remove(session) != null) cancelled.add("auto-attempt-count")
+        if (youtubeAutoFsMediaReadyBySession.remove(session)) cancelled.add("auto-media-ready")
+
+        cancelRunnable("quality-pending", youtubeQualityPendingRunnableBySession.remove(session))
+        if (youtubeQualityFollowUpQueuedUrlBySession.remove(session) != null) cancelled.add("quality-followup")
+
+        val premiumPending = youtubePremiumPopupPendingRunnablesBySession.remove(session)
+        if (!premiumPending.isNullOrEmpty()) {
+            premiumPending.forEach { pointerHandler.removeCallbacks(it) }
+            cancelled.add("premium-pending-${premiumPending.size}")
+        }
+        if (youtubePremiumPopupPendingWindowBySession.remove(session) != null) cancelled.add("premium-window")
+        if (youtubePremiumPopupCheckCountBySessionWindow.remove(session) != null) cancelled.add("premium-window-counts")
+        if (youtubePremiumPopupLastInteractionBurstMsBySession.remove(session) != null) cancelled.add("premium-burst")
+
+        if (cancelled.isEmpty()) {
+            cancelled.add("none")
+        }
+        val cancelledValue = cancelled.joinToString(",")
+        GvLogger.i("GvInput", "youtube-back-cancel helpers reason=back-pressed url=$pageUrl cancelled=$cancelledValue")
+        return cancelledValue
     }
 
     private fun stopYouTubeAutoFullscreen(
@@ -8259,9 +8317,33 @@ return changed>0;
         }
         val activeTab = tabController.getActiveTab() ?: return false
         val activeUrl = activeTab.url
+        val youtubePage = isYouTubePageUrl(activeUrl)
         val fullscreenActive = isBrowserFullscreenLikeState(activeTab)
+        if (youtubePage && !fullscreenActive) {
+            browserFullscreenPointerSleepActive = false
+            return false
+        }
         if (!fullscreenActive && !browserFullscreenPointerSleepActive) {
             return false
+        }
+        if (youtubePage && fullscreenActive) {
+            val activeSession = activeTab.session
+            cancelPendingYouTubeHelpersForBack(activeSession, activeUrl)
+            suppressYouTubeAutoFullscreenAfterBack(activeSession, activeUrl, reason = "back-pressed")
+            hideBrowserFullscreenPointer(reason = "back-fullscreen-exit")
+            val eventTime = SystemClock.uptimeMillis()
+            val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0)
+            val up = KeyEvent(eventTime, eventTime + 20L, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE, 0)
+            val downHandled = geckoView.dispatchKeyEvent(down)
+            val upHandled = geckoView.dispatchKeyEvent(up)
+            activeSession.loadUri(
+                "javascript:(function(){try{if(document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen();}}catch(_){}})();"
+            )
+            GvLogger.i(
+                "GvInput",
+                "youtube back consumed reason=exit-fullscreen url=$activeUrl downHandled=$downHandled upHandled=$upHandled"
+            )
+            return true
         }
         if (pointerVisible && pointerOverlay.isPointerVisible()) {
             hideBrowserFullscreenPointer(reason = "back")
@@ -8302,7 +8384,10 @@ return changed>0;
         // Cancel any pending auto-fullscreen attempt when user presses Back.
         val activeSession = activeTab.session
         if (isYouTubeWatchOrLivePageUrl(activeUrl)) {
-            stopYouTubeAutoFullscreen(activeSession, reason = "back")
+            cancelPendingYouTubeHelpersForBack(activeSession, activeUrl)
+            suppressYouTubeAutoFullscreenAfterBack(activeSession, activeUrl, reason = "back-pressed")
+        } else {
+            cancelPendingYouTubeHelpersForBack(activeSession, activeUrl)
         }
         val pointerMissing = !pointerAssistModeActive || !pointerVisible || !pointerOverlay.isPointerVisible()
         if (pointerMissing) {
@@ -8311,8 +8396,8 @@ return changed>0;
             } else {
                 ensurePointerVisible()
             }
-            GvLogger.i("GvInput", "youtube back consumed reason=restore-pointer url=$activeUrl")
-            return true
+            GvLogger.i("GvInput", "youtube back not-consumed reason=restore-pointer-while-allowing-history url=$activeUrl")
+            return false
         }
         GvLogger.i("GvInput", "youtube back allowed reason=normal-history url=$activeUrl")
         return false
@@ -12086,7 +12171,7 @@ return changed>0;
         private const val POINTER_IDLE_HIDE_MS = 3500L
         private val YOUTUBE_POINTER_IDLE_HIDE_MS = YouTubePolicyConstants.YOUTUBE_POINTER_IDLE_HIDE_MS
         private val BROWSER_FULLSCREEN_POINTER_IDLE_HIDE_MS = YouTubePolicyConstants.BROWSER_FULLSCREEN_POINTER_IDLE_HIDE_MS
-        private val YOUTUBE_BACK_DEBOUNCE_MS = YouTubePolicyConstants.YOUTUBE_BACK_DEBOUNCE_MS
+        private val YOUTUBE_AUTO_FULLSCREEN_SUPPRESS_AFTER_BACK_MS = YouTubePolicyConstants.YOUTUBE_AUTO_FULLSCREEN_SUPPRESS_AFTER_BACK_MS
         private val YOUTUBE_FULLSCREEN_CHAT_COLLAPSE_MIN_INTERVAL_MS = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_CHAT_COLLAPSE_MIN_INTERVAL_MS
         private val YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_LOCATION_WINDOW = YouTubePolicyConstants.YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_LOCATION_WINDOW
         private val YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_FULLSCREEN_WINDOW = YouTubePolicyConstants.YOUTUBE_PREMIUM_POPUP_MAX_CHECKS_FULLSCREEN_WINDOW
