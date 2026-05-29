@@ -2122,6 +2122,88 @@
     }, 600);
   }
 
+  function emitTttTegoTransportReveal(reason, handled, controlBarVisibleBefore, controlBarVisibleAfter, target, rect, container) {
+    promptPayload({
+      type: "ttt-tego-transport-reveal",
+      phase: "content-ttt-tego-transport-reveal",
+      pageUrl: window.location.href,
+      reason: String(reason || ""),
+      handled: !!handled,
+      controlBarVisibleBefore: !!controlBarVisibleBefore,
+      controlBarVisibleAfter: !!controlBarVisibleAfter,
+      target: summarizeNode(target),
+      rect: rectAsText(rect || { left: 0, top: 0, width: 0, height: 0 }),
+      containerClassList: shortText(container && container.className ? String(container.className) : "", 220),
+      hiddenState: !!absTegoChromeHidden
+    });
+  }
+
+  function revealTttTegoTransport(reason) {
+    if (!isSupportedTegoFrame()) return false;
+    const container = document.querySelector(".rmp-container,#rmpPlayer,#rmp");
+    const controlBar = document.querySelector(".rmp-control-bar,.rmp-controls");
+    const target = controlBar || container || document.body;
+    const controlBarVisibleBefore = !!(controlBar && isVisible(controlBar));
+    setAbsTegoChromeHidden(false, reason || "external-reveal");
+    let handled = false;
+    const rect = controlRect(target);
+    const clientX = Math.round(rect.left + Math.max(1, rect.width) * 0.5);
+    const clientY = Math.round(rect.top + Math.max(1, rect.height) * (target === controlBar ? 0.5 : 0.84));
+    const mouseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      clientY,
+      screenX: clientX,
+      screenY: clientY,
+      buttons: 0,
+      button: 0,
+      relatedTarget: null,
+      view: window
+    };
+    ["mouseover", "mouseenter", "mousemove"].forEach((eventName) => {
+      try {
+        target.dispatchEvent(new MouseEvent(eventName, mouseEventInit));
+        handled = true;
+      } catch (_) {}
+    });
+    if (typeof window.PointerEvent === "function") {
+      ["pointerover", "pointerenter", "pointermove"].forEach((eventName) => {
+        try {
+          target.dispatchEvent(new PointerEvent(eventName, Object.assign({ pointerType: "mouse", isPrimary: true }, mouseEventInit)));
+          handled = true;
+        } catch (_) {}
+      });
+    }
+    try {
+      document.dispatchEvent(new MouseEvent("mousemove", mouseEventInit));
+      handled = true;
+    } catch (_) {}
+    scheduleAbsTegoChromeHide("interaction-idle");
+    const controlBarVisibleAfter = !!(controlBar && isVisible(controlBar));
+    emitTttTegoTransportReveal(
+      reason,
+      handled || controlBarVisibleAfter,
+      controlBarVisibleBefore,
+      controlBarVisibleAfter,
+      target,
+      rect,
+      container
+    );
+    return handled || controlBarVisibleAfter;
+  }
+
+  function setupTttTegoTransportRevealBridge() {
+    if (window.__kfTttTegoTransportRevealBridgeInstalled) return;
+    window.__kfTttTegoTransportRevealBridgeInstalled = true;
+    window.addEventListener("message", (event) => {
+      const data = event && event.data;
+      if (!data || data.type !== "kf-tego-transport-reveal") return;
+      if (!isSupportedTegoFrame()) return;
+      revealTttTegoTransport(String(data.reason || "bridge"));
+    });
+  }
+
   function scheduleAbsTegoPageFullscreenLike() {
     if (!ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE) return;
     if (absTegoPageFullscreenLikeStarted || !activeTegoTopProfile()) return;
@@ -3364,6 +3446,45 @@
     }
   }
 
+  function maybePostTttTegoLoadingNativePlayRequest(snapshot, attemptAtMs, reason, allowRetry) {
+    if (!isTttTegoFrame() || window.parent === window) return false;
+    if (tttTegoStartupNativePlayRequestPosted && !allowRetry) return false;
+    if (!snapshot) return false;
+    if (snapshotHasPlayingVideo(snapshot) || snapshot.playbackProgressed || snapshot.playable) return false;
+    if (!snapshot.missingHlsLevels && !snapshot.readyZeroPaused) return false;
+    let target = null;
+    let targetRect = null;
+    try {
+      target = Array.from(document.querySelectorAll("video")).find((node) => {
+        if (!node || !isVisible(node)) return false;
+        const rect = node.getBoundingClientRect();
+        return !!rect && rect.width >= 160 && rect.height >= 90;
+      }) || null;
+      if (!target) {
+        target = document.querySelector(".rmp-container,#rmpPlayer,#rmp");
+      }
+      if (!target || !isVisible(target)) return false;
+      targetRect = target.getBoundingClientRect();
+      if (!targetRect || targetRect.width < 80 || targetRect.height < 60) return false;
+    } catch (_) {
+      target = null;
+      targetRect = null;
+    }
+    if (!target || !targetRect) return false;
+    const centerX = targetRect.left + Math.max(1, Math.floor(targetRect.width / 2));
+    const centerY = targetRect.top + Math.max(1, Math.floor(targetRect.height / 2));
+    const rectText = `${Math.round(targetRect.left)},${Math.round(targetRect.top)} ${Math.round(targetRect.width)}x${Math.round(targetRect.height)}`;
+    return postTttTegoStartupNativePlayRequest(
+      attemptAtMs,
+      summarizeNode(target),
+      rectText,
+      centerX,
+      centerY,
+      String(reason || "ttt-loading-center"),
+      !!allowRetry
+    );
+  }
+
   function emitTttTegoPlayAssist(active, reason, attemptAtMs) {
     if (!isTttTegoFrame()) return;
     const reasonText = String(reason || (active ? "paused-ready" : "playing"));
@@ -3863,6 +3984,14 @@
             attemptAbsTegoStartupWake(delayMs);
             if (tttFrame) {
               emitTttStartupState(snapshot, delayMs, "content-ttt-tego-startup-base", true, "");
+              if (delayMs >= TTT_TEGO_STARTUP_WAKE_MAX_DELAY_MS) {
+                maybePostTttTegoLoadingNativePlayRequest(
+                  snapshot,
+                  delayMs + 350,
+                  "ttt-loading-hls-levels-center",
+                  false
+                );
+              }
             }
           } else if (tttFrame) {
             emitTttStartupState(snapshot, delayMs, "content-ttt-tego-startup-base", false, "wake-capped");
@@ -3900,6 +4029,15 @@
               ? "loading-hls-levels"
               : "loading-video-readiness";
           emitTttTegoPlayAssist(true, reason, delayMs);
+        }
+        if (!tttTegoStartupNativePlayRetryPosted && delayMs >= TTT_TEGO_STARTUP_EXTRA_REPROBE_DELAYS_MS[0]) {
+          const posted = maybePostTttTegoLoadingNativePlayRequest(
+            snapshot,
+            delayMs + 500,
+            "ttt-loading-hls-levels-retry",
+            true
+          );
+          if (posted) tttTegoStartupNativePlayRetryPosted = true;
         }
         if (ENABLE_TTT_TEGO_AUTOSTART_HACKS && !tttTegoStartupNativePlayRetryPosted) {
           setTimeout(() => {
@@ -4008,6 +4146,7 @@
   scheduleCbcLiveHlsReady();
   scheduleCaribVisionLiveHlsReady();
   maybeAttachAbsTegoTopPlaybackListener();
+  setupTttTegoTransportRevealBridge();
   setupAbsTegoFullscreenNativeBridge();
   window.addEventListener("load", publish, { once: true });
   window.addEventListener("load", applyTegoQualityPolicy, { once: true });
@@ -4019,6 +4158,7 @@
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
   window.addEventListener("load", scheduleCaribVisionLiveHlsReady, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
+  window.addEventListener("load", setupTttTegoTransportRevealBridge, { once: true });
   document.addEventListener("visibilitychange", publish);
   document.addEventListener("visibilitychange", applyTegoQualityPolicy);
   setInterval(publish, 2000);

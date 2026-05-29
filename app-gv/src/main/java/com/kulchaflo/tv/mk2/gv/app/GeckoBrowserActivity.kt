@@ -75,7 +75,24 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var requiresUserAction: Boolean = false,
         var centerX: Float = -1f,
         var centerY: Float = -1f,
+        var targetKind: String = "",
+        var readyState: Int = 0,
+        var paused: Boolean = true,
+        var playClickConsumed: Boolean = false,
         var reason: String = "",
+    )
+
+    private data class TttTransportRevealTarget(
+        val x: Float,
+        val y: Float,
+        val restoredStoredPointer: Boolean,
+    )
+
+    private data class TttTransportRevealResult(
+        val x: Float,
+        val y: Float,
+        val handled: Boolean,
+        val restoredStoredPointer: Boolean,
     )
 
     private data class NovusTelearubaPlayAssistState(
@@ -161,6 +178,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val absTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val tttTegoPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val tttTegoPlayAssistBySession = LinkedHashMap<GeckoSession, TttTegoPlayAssistState>()
+    private val tttTegoStartupNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val tttTegoLastControlInteractionAtBySession = LinkedHashMap<GeckoSession, Long>()
     private val novusTelearubaProfileBySession = LinkedHashMap<GeckoSession, NovusTelearubaProfileState>()
     private val novusTelearubaPlayerFirstReturnUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val novusTelearubaPlayAssistBySession = LinkedHashMap<GeckoSession, NovusTelearubaPlayAssistState>()
@@ -228,6 +247,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             return@Runnable
         }
         val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        val pointerIdleSleepAllowed = shouldPointerAssistIdleSleep(activeUrl)
         if (browserFullscreenPointerSleepActive) {
             if (!pointerVisible || !pointerOverlay.isPointerVisible()) {
                 return@Runnable
@@ -238,8 +258,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             GvLogger.i("GvInput", "browser fullscreen pointer slept reason=idle")
             return@Runnable
         }
-        val youtubePointerPolicy = isYouTubePageUrl(activeUrl)
-        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted() && !youtubePointerPolicy) {
+        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted() && !pointerIdleSleepAllowed) {
             cancelPointerIdleTimeout()
             GvLogger.i("GvInput", "pointer idle suppressed reason=focus-navigation-mode")
             return@Runnable
@@ -249,8 +268,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
         pointerVisible = false
         pointerOverlay.hidePointer()
-        if (youtubePointerPolicy) {
+        if (isYouTubePageUrl(activeUrl)) {
             GvLogger.i("GvInput", "youtube pointer slept reason=idle")
+        } else if (pointerIdleSleepAllowed) {
+            GvLogger.i("GvInput", "pointer slept reason=idle url=$activeUrl")
         } else {
             GvLogger.i("GvInput", "pointer auto-hidden reason=idle-timeout")
         }
@@ -376,14 +397,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     if (maybeHandleYouTubeBackPolicy()) {
                         return
                     }
-                    if (!promotedMediaPlayer.isPromoted() &&
-                        pointerAssistModeActive &&
-                        !isYouTubePageUrl(tabController.getActiveTab()?.url.orEmpty()) &&
-                        !isFacebookUrl(tabController.getActiveTab()?.url.orEmpty())
-                    ) {
-                        disablePointerAssistMode(reason = "back-to-focus-mode")
-                        return
-                    }
                     if (promotedMediaPlayer.isPromoted()) {
                         val promotedSourceUrl = promotedMediaPlayer.currentSourceUrl().orEmpty()
                         promotedMediaPlayer.currentSourceUrl()?.let { sourceUrl ->
@@ -400,8 +413,23 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     }
                     val activeTab = tabController.getActiveTab()
                     val activeSession = activeTab?.session
-                    val absPlayerFirstReturnUrl = activeSession?.let { absTegoPlayerFirstReturnUrlBySession[it] }
-                    val tttPlayerFirstReturnUrl = activeSession?.let { tttTegoPlayerFirstReturnUrlBySession[it] }
+                    val activeUrl = activeTab?.url.orEmpty()
+                    if (maybeHandleAbsBackExit(activeTab, activeSession, activeUrl)) {
+                        return
+                    }
+                    if (maybeHandleTttBackExit(activeTab, activeSession, activeUrl)) {
+                        return
+                    }
+                    if (!promotedMediaPlayer.isPromoted() &&
+                        pointerAssistModeActive &&
+                        !isYouTubePageUrl(activeUrl) &&
+                        !isFacebookUrl(activeUrl) &&
+                        !isAbsTegoGestureFullscreenContextUrl(activeUrl) &&
+                        !isTttOrTegoLivePlayerUrl(activeUrl)
+                    ) {
+                        disablePointerAssistMode(reason = "back-to-focus-mode")
+                        return
+                    }
                     val novusPlayerFirstReturnUrl = activeSession?.let { novusTelearubaPlayerFirstReturnUrlBySession[it] }
                     val novusProfile = activeSession?.let { novusTelearubaProfileBySession[it] }
                     if (!novusPlayerFirstReturnUrl.isNullOrBlank()) {
@@ -428,42 +456,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                             if (activeTabId != null) {
                                 tabController.closeTab(activeTabId)
                             }
-                        }
-                        return
-                    }
-                    if (!absPlayerFirstReturnUrl.isNullOrBlank()) {
-                        absTegoPlayerFirstReturnUrlBySession.remove(activeSession)
-                        tttTegoPlayAssistBySession.remove(activeSession)
-                        GvLogger.i(
-                            "GvNav",
-                            "abs tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$absPlayerFirstReturnUrl"
-                        )
-                        val targetTab = tabController.getTabs().firstOrNull { tab ->
-                            tab.id != activeTab?.id && tab.url.startsWith(absPlayerFirstReturnUrl)
-                        }
-                        if (targetTab != null && activeTab != null) {
-                            tabController.activateTab(targetTab.id)
-                            tabController.closeTab(activeTab.id)
-                        } else {
-                            activeSession.loadUri(absPlayerFirstReturnUrl)
-                        }
-                        return
-                    }
-                    if (!tttPlayerFirstReturnUrl.isNullOrBlank()) {
-                        tttTegoPlayerFirstReturnUrlBySession.remove(activeSession)
-                        tttTegoPlayAssistBySession.remove(activeSession)
-                        GvLogger.i(
-                            "GvNav",
-                            "ttt tego player-first back exit to kulcha flo activeUrl=${activeTab?.url.orEmpty()} returnUrl=$tttPlayerFirstReturnUrl"
-                        )
-                        val targetTab = tabController.getTabs().firstOrNull { tab ->
-                            tab.id != activeTab?.id && tab.url.startsWith(tttPlayerFirstReturnUrl)
-                        }
-                        if (targetTab != null && activeTab != null) {
-                            tabController.activateTab(targetTab.id)
-                            tabController.closeTab(activeTab.id)
-                        } else {
-                            activeSession.loadUri(tttPlayerFirstReturnUrl)
                         }
                         return
                     }
@@ -588,44 +580,198 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             return false
         }
         val activeTab = tabController.getActiveTab() ?: return false
+        if (!isTttOrTegoLivePlayerUrl(activeTab.url)) return false
         val session = activeTab.session
-        val state = tttTegoPlayAssistBySession[session] ?: return false
-        if (!state.active) return false
-        if (!state.requiresUserAction) return false
-        if (!isTttTegoContextUrl(activeTab.url)) return false
+        val state = tttTegoPlayAssistBySession[session]
+        val pointerShown = pointerVisible && pointerOverlay.isPointerVisible()
+        val allowTransportClickPassthrough = pointerShown &&
+            state?.requiresUserAction != true &&
+            isTttSafePointerControlZone()
+        val allowMenuClickPassthrough = pointerShown &&
+            state?.requiresUserAction != true &&
+            hasRecentTttControlInteraction(session) &&
+            isTttCenteredMenuPointerZone()
         if (event.action == KeyEvent.ACTION_UP) {
-            return true
+            return !(allowTransportClickPassthrough || allowMenuClickPassthrough)
         }
         if (event.action != KeyEvent.ACTION_DOWN) return false
-        val hasAssistTarget = state.centerX >= 0f && state.centerY >= 0f
-        val useCurrentPointer = !hasAssistTarget && pointerVisible && pointerOverlay.isPointerVisible()
-        val x: Float
-        val y: Float
-        val handled: Boolean
-        val mode: String
-        if (hasAssistTarget) {
-            x = state.centerX.takeIf { it >= 0f } ?: (geckoView.width * 0.5f)
-            y = state.centerY.takeIf { it >= 0f } ?: (geckoView.height * 0.5f)
+        if (allowTransportClickPassthrough || allowMenuClickPassthrough) {
+            tttTegoLastControlInteractionAtBySession[session] = SystemClock.uptimeMillis()
+            GvLogger.i(
+                "GvMedia",
+                "ttt transport click passthrough reason=${if (allowMenuClickPassthrough) "centered-menu-zone" else "visible-transport-zone"} x=${pointerX.toInt()} y=${pointerY.toInt()} pageUrl=${activeTab.url}"
+            )
+            return false
+        }
+        val pausedConfirmed = state?.active == true &&
+            state.requiresUserAction &&
+            state.paused &&
+            state.readyState >= 1 &&
+            state.centerX >= 0f &&
+            state.centerY >= 0f
+        if (pausedConfirmed) {
+            val playState = state ?: return true
+            if (playState.playClickConsumed) {
+                GvLogger.i(
+                    "GvMedia",
+                    "ttt play assist skipped reason=paused-confirmed-already-clicked pageUrl=${activeTab.url}"
+                )
+                val reveal = revealTttTransportBar(
+                    reason = "ok-playing-no-click",
+                    preferStoredPointer = true,
+                )
+                GvLogger.i(
+                    "GvMedia",
+                    "ttt transport reveal hover reason=ok-playing-no-click x=${reveal.x.toInt()} y=${reveal.y.toInt()} handled=${reveal.handled} pageUrl=${activeTab.url}"
+                )
+                return true
+            }
+            val x = playState.centerX
+            val y = playState.centerY
             showPointerAt(x, y, reason = "ttt-play-assist")
-            handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
-            mode = "assist-target"
-        } else if (useCurrentPointer) {
-            x = pointerX
-            y = pointerY
-            handled = dispatchPointerClick()
-            mode = "current-pointer"
-        } else {
-            x = geckoView.width * 0.5f
-            y = geckoView.height * 0.5f
-            showPointerAt(x, y, reason = "ttt-play-assist")
-            handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
-            mode = "viewport-center"
+            val handled = dispatchNativeMouseTapAt(x, y, reason = "ttt-play-assist-ok")
+            playState.playClickConsumed = true
+            GvLogger.i(
+                "GvMedia",
+                "ttt play assist click reason=paused-confirmed handled=$handled targetKind=${playState.targetKind} x=${x.toInt()} y=${y.toInt()} ready=${playState.readyState} pageUrl=${activeTab.url}"
+            )
+            return true
+        }
+        val revealReason = if (pointerShown) "ok-playing-no-click" else "ok-no-click"
+        val reveal = revealTttTransportBar(
+            reason = revealReason,
+            preferStoredPointer = true,
+        )
+        if (!pointerShown) {
+            GvLogger.i(
+                "GvMedia",
+                "ttt pointer restored reason=ok-no-click x=${reveal.x.toInt()} y=${reveal.y.toInt()} reusedStored=${reveal.restoredStoredPointer} pageUrl=${activeTab.url}"
+            )
         }
         GvLogger.i(
             "GvMedia",
-            "ttt tego play assist ok dispatched handled=$handled mode=$mode x=${x.toInt()} y=${y.toInt()} reason=${state.reason} pageUrl=${activeTab.url}"
+            "ttt play assist skipped reason=${state?.reason?.ifBlank { "already-playing" } ?: "already-playing"} pageUrl=${activeTab.url}"
+        )
+        GvLogger.i(
+            "GvMedia",
+            "ttt transport reveal hover reason=$revealReason x=${reveal.x.toInt()} y=${reveal.y.toInt()} handled=${reveal.handled} pageUrl=${activeTab.url}"
         )
         return true
+    }
+
+    private fun revealTttTransportBar(
+        reason: String,
+        preferStoredPointer: Boolean,
+    ): TttTransportRevealResult {
+        val target = resolveTttTransportRevealTarget(preferStoredPointer = preferStoredPointer)
+        val activeSession = tabController.getActiveTab()?.session
+        positionTttPointerForReveal(target.x, target.y)
+        val bridgeHandled = activeSession?.let { dispatchTttTegoTransportRevealBridge(it, reason) } ?: false
+        val hoverHandled = dispatchNativeMouseHoverAt(target.x, target.y, "ttt-transport-reveal-$reason")
+        val handled = bridgeHandled || hoverHandled
+        return TttTransportRevealResult(
+            x = target.x,
+            y = target.y,
+            handled = handled,
+            restoredStoredPointer = target.restoredStoredPointer,
+        )
+    }
+
+    private fun dispatchTttTegoTransportRevealBridge(session: GeckoSession, reason: String): Boolean {
+        val script = """
+            javascript:(function(){
+              try{
+                var message={type:"kf-tego-transport-reveal",reason:${JSONObject.quote(reason)}};
+                try{window.postMessage(message,"*");}catch(_){}
+                try{
+                  var frames=window.frames||[];
+                  for(var i=0;i<frames.length;i+=1){
+                    try{frames[i].postMessage(message,"*");}catch(_){}
+                  }
+                }catch(_){}
+              }catch(_){}
+            })();
+        """.trimIndent()
+        return runCatching {
+            session.loadUri(script)
+            true
+        }.getOrElse { error ->
+            GvLogger.w(
+                "GvMedia",
+                "ttt tego transport reveal bridge failed reason=$reason error=${error.message}"
+            )
+            false
+        }
+    }
+
+    private fun positionTttPointerForReveal(x: Float, y: Float) {
+        val pointerShown = pointerVisible && pointerOverlay.isPointerVisible()
+        if (!pointerShown) {
+            showPointerAt(x, y, reason = "ttt-transport-reveal")
+            return
+        }
+        pointerX = x
+        pointerY = y
+        pointerOverlay.updatePosition(pointerX, pointerY)
+        schedulePointerIdleTimeout()
+    }
+
+    private fun resolveTttTransportRevealTarget(preferStoredPointer: Boolean): TttTransportRevealTarget {
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val inset = pointerBoundsInsetPx()
+        val minX = inset
+        val maxX = maxWidth - inset
+        val minY = inset
+        val maxY = maxHeight - inset
+        val hasStoredPosition = pointerX in minX..maxX && pointerY in minY..maxY
+        if (preferStoredPointer && hasStoredPosition) {
+            return TttTransportRevealTarget(
+                x = pointerX.coerceIn(minX, maxX),
+                y = pointerY.coerceIn(minY, maxY),
+                restoredStoredPointer = true,
+            )
+        }
+        return TttTransportRevealTarget(
+            x = (maxWidth * 0.5f).coerceIn(minX, maxX),
+            y = (maxHeight * 0.84f).coerceIn(minY, maxY),
+            restoredStoredPointer = false,
+        )
+    }
+
+    private fun isTttSafePointerControlZone(): Boolean {
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val inset = pointerBoundsInsetPx()
+        val minX = inset
+        val maxX = maxWidth - inset
+        if (pointerX !in minX..maxX) return false
+        val topControlMaxY = (maxHeight * 0.18f).coerceIn(inset, maxHeight - inset)
+        val bottomControlMinY = (maxHeight * 0.68f).coerceIn(inset, maxHeight - inset)
+        val bottomControlMaxY = maxHeight - inset
+        val edgeBandWidth = (maxWidth * 0.15f).coerceAtLeast(inset)
+        val leftEdgeMaxX = (inset + edgeBandWidth).coerceAtMost(maxX)
+        val rightEdgeMinX = (maxWidth - edgeBandWidth).coerceAtLeast(minX)
+        return pointerY <= topControlMaxY ||
+            pointerY in bottomControlMinY..bottomControlMaxY ||
+            pointerX <= leftEdgeMaxX ||
+            pointerX >= rightEdgeMinX
+    }
+
+    private fun isTttCenteredMenuPointerZone(): Boolean {
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val inset = pointerBoundsInsetPx()
+        val minX = (maxWidth * 0.32f).coerceIn(inset, maxWidth - inset)
+        val maxX = (maxWidth * 0.68f).coerceIn(inset, maxWidth - inset)
+        val minY = (maxHeight * 0.06f).coerceIn(inset, maxHeight - inset)
+        val maxY = (maxHeight * 0.58f).coerceIn(inset, maxHeight - inset)
+        return pointerX in minX..maxX && pointerY in minY..maxY
+    }
+
+    private fun hasRecentTttControlInteraction(session: GeckoSession): Boolean {
+        val lastInteractionAt = tttTegoLastControlInteractionAtBySession[session] ?: return false
+        return SystemClock.uptimeMillis() - lastInteractionAt <= 15_000L
     }
 
     private fun maybeHandleNovusTelearubaPlayAssistOk(event: KeyEvent): Boolean {
@@ -8920,9 +9066,23 @@ return changed>0;
                     KeyEvent.KEYCODE_DPAD_DOWN -> {
                         val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
                         val wasHidden = !pointerVisible || !pointerOverlay.isPointerVisible()
-                        ensurePointerVisible()
+                        if (isTttOrTegoLivePlayerUrl(activeUrl)) {
+                            val revealReason = if (wasHidden) "dpad-wake" else "dpad-move"
+                            val reveal = revealTttTransportBar(
+                                reason = revealReason,
+                                preferStoredPointer = !wasHidden,
+                            )
+                            GvLogger.i(
+                                "GvMedia",
+                                "ttt transport reveal hover reason=$revealReason x=${reveal.x.toInt()} y=${reveal.y.toInt()} handled=${reveal.handled} pageUrl=$activeUrl"
+                            )
+                        } else {
+                            ensurePointerVisible()
+                        }
                         if (wasHidden && isYouTubePageUrl(activeUrl)) {
                             GvLogger.i("GvInput", "youtube pointer woke reason=dpad-move")
+                        } else if (wasHidden && shouldPointerAssistIdleSleep(activeUrl)) {
+                            GvLogger.i("GvInput", "pointer woke reason=dpad-move url=$activeUrl")
                         }
                         val firstPress = pointerDirectionKeys.add(event.keyCode)
                         if (firstPress) {
@@ -9327,6 +9487,130 @@ return changed>0;
         return false
     }
 
+    private fun maybeHandleAbsBackExit(
+        activeTab: GvTab?,
+        activeSession: GeckoSession?,
+        activeUrl: String,
+    ): Boolean {
+        if (activeTab == null || activeSession == null) {
+            return false
+        }
+        if (!isAbsTegoGestureFullscreenContextUrl(activeUrl)) {
+            return false
+        }
+        val returnUrl = absTegoPlayerFirstReturnUrlBySession[activeSession].orEmpty()
+        val targetTab = returnUrl.takeIf { it.isNotBlank() }?.let { url ->
+            tabController.getTabs().firstOrNull { tab ->
+                tab.id != activeTab.id && tab.url.startsWith(url)
+            }
+        }
+        if (targetTab == null && !activeTab.canGoBack && returnUrl.isBlank()) {
+            return false
+        }
+        absTegoPlayerFirstReturnUrlBySession.remove(activeSession)
+        browserFullscreenPointerSleepActive = false
+        browserFullscreenWakeOnlyPendingKeyUp = false
+        if (pointerAssistModeActive || pointerVisible || pointerOverlay.isPointerVisible()) {
+            disablePointerAssistMode(reason = "abs-back-exit")
+        }
+        when {
+            targetTab != null -> {
+                GvLogger.i(
+                    "GvNav",
+                    "abs back consumed reason=exit-hostile-player mode=existing-tab url=$activeUrl returnUrl=$returnUrl tabId=${targetTab.id}"
+                )
+                tabController.activateTab(targetTab.id)
+                tabController.closeTab(activeTab.id)
+            }
+            activeTab.canGoBack -> {
+                GvLogger.i(
+                    "GvNav",
+                    "abs back consumed reason=exit-hostile-player mode=history-back url=$activeUrl returnUrl=$returnUrl"
+                )
+                activeSession.goBack()
+            }
+            returnUrl.isNotBlank() -> {
+                GvLogger.i(
+                    "GvNav",
+                    "abs back consumed reason=exit-hostile-player mode=replace-history url=$activeUrl returnUrl=$returnUrl"
+                )
+                activeSession.load(
+                    GeckoSession.Loader()
+                        .uri(returnUrl)
+                        .flags(GeckoSession.LOAD_FLAGS_REPLACE_HISTORY)
+                )
+            }
+            else -> return false
+        }
+        return true
+    }
+
+    private fun maybeHandleTttBackExit(
+        activeTab: GvTab?,
+        activeSession: GeckoSession?,
+        activeUrl: String,
+    ): Boolean {
+        if (activeTab == null || activeSession == null) {
+            return false
+        }
+        if (!isTttOrTegoLivePlayerUrl(activeUrl)) {
+            return false
+        }
+        val returnUrl = tttTegoPlayerFirstReturnUrlBySession[activeSession].orEmpty()
+        val targetTab = returnUrl.takeIf { it.isNotBlank() }?.let { url ->
+            tabController.getTabs().firstOrNull { tab ->
+                tab.id != activeTab.id && tab.url.startsWith(url)
+            }
+        }
+        if (targetTab == null && !activeTab.canGoBack && returnUrl.isBlank()) {
+            return false
+        }
+        tttTegoPlayerFirstReturnUrlBySession.remove(activeSession)
+        tttTegoPlayAssistBySession.remove(activeSession)
+        browserFullscreenPointerSleepActive = false
+        browserFullscreenWakeOnlyPendingKeyUp = false
+        if (pointerAssistModeActive || pointerVisible || pointerOverlay.isPointerVisible()) {
+            disablePointerAssistMode(reason = "ttt-back-exit")
+        }
+        when {
+            targetTab != null -> {
+                GvLogger.i(
+                    "GvNav",
+                    "ttt back consumed reason=exit-live-player mode=existing-tab url=$activeUrl returnUrl=$returnUrl tabId=${targetTab.id}"
+                )
+                tabController.activateTab(targetTab.id)
+                tabController.closeTab(activeTab.id)
+            }
+            isTttLivePlayerUrl(activeUrl) && activeTab.canGoBack -> {
+                GvLogger.i(
+                    "GvNav",
+                    "ttt back consumed reason=exit-live-player mode=history-back url=$activeUrl returnUrl=$returnUrl"
+                )
+                activeSession.goBack()
+            }
+            returnUrl.isNotBlank() -> {
+                GvLogger.i(
+                    "GvNav",
+                    "ttt back consumed reason=exit-live-player mode=replace-history url=$activeUrl returnUrl=$returnUrl"
+                )
+                activeSession.load(
+                    GeckoSession.Loader()
+                        .uri(returnUrl)
+                        .flags(GeckoSession.LOAD_FLAGS_REPLACE_HISTORY)
+                )
+            }
+            activeTab.canGoBack -> {
+                GvLogger.i(
+                    "GvNav",
+                    "ttt back consumed reason=exit-live-player mode=history-back-fallback url=$activeUrl returnUrl=$returnUrl"
+                )
+                activeSession.goBack()
+            }
+            else -> return false
+        }
+        return true
+    }
+
     private fun ensurePointerVisible() {
         if (pointerVisible && pointerOverlay.isPointerVisible()) {
             schedulePointerIdleTimeout()
@@ -9412,6 +9696,12 @@ return changed>0;
             isAbsTegoChannel10ContextUrl(url) ||
             isTttTegoContextUrl(url) ||
             isNovusTelearubaContextUrl(url)
+    }
+
+    private fun shouldPointerAssistIdleSleep(url: String): Boolean {
+        return isYouTubePageUrl(url) ||
+            isAbsTegoGestureFullscreenContextUrl(url) ||
+            isTttTegoContextUrl(url)
     }
 
     private fun isKulchaFloGeneralSiteFocusUrl(url: String): Boolean {
@@ -10606,15 +10896,17 @@ return changed>0;
             return
         }
         val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
-        val youtubePointerPolicy = isYouTubePageUrl(activeUrl)
-        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted() && !youtubePointerPolicy) {
+        val pointerIdleSleepAllowed = shouldPointerAssistIdleSleep(activeUrl)
+        if (pointerAssistModeActive && !promotedMediaPlayer.isPromoted() && !pointerIdleSleepAllowed) {
             GvLogger.i("GvInput", "pointer idle not scheduled reason=focus-navigation-mode")
             return
         }
-        val delayMs = if (youtubePointerPolicy) YOUTUBE_POINTER_IDLE_HIDE_MS else POINTER_IDLE_HIDE_MS
+        val delayMs = if (isYouTubePageUrl(activeUrl)) YOUTUBE_POINTER_IDLE_HIDE_MS else POINTER_IDLE_HIDE_MS
         pointerHandler.postDelayed(pointerIdleRunnable, delayMs)
-        if (youtubePointerPolicy) {
+        if (isYouTubePageUrl(activeUrl)) {
             GvLogger.i("GvInput", "youtube pointer sleep scheduled delayMs=$delayMs")
+        } else if (pointerIdleSleepAllowed) {
+            GvLogger.i("GvInput", "pointer idle scheduled delayMs=$delayMs url=$activeUrl")
         }
     }
 
@@ -11013,6 +11305,67 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "abs tego fullscreen native tap dispatched x=${clampedX.toInt()} y=${clampedY.toInt()} rawCenter=${centerX.toInt()},${centerY.toInt()} " +
+                        "viewport=${viewportWidth.toInt()}x${viewportHeight.toInt()} view=${geckoView.width}x${geckoView.height} scale=$scaleX,$scaleY " +
+                        "handled=$handled activeUrl=$activeUrl playerUrl=$playerUrl"
+                )
+            },
+            140L,
+        )
+    }
+
+    private fun maybeDispatchTttTegoStartupNativePlayTap(
+        session: GeckoSession,
+        payload: JSONObject,
+    ) {
+        val playerUrl = payload.optString("playerUrl").ifBlank { payload.optString("pageUrl") }
+        if (!isTttTegoPlayerUrl(playerUrl)) {
+            return
+        }
+        if (!payload.optBoolean("translated", true)) {
+            return
+        }
+        val attemptCount = tttTegoStartupNativeTapCountBySession[session] ?: 0
+        if (attemptCount >= 2) {
+            return
+        }
+        val centerX = payload.optDouble("centerX", -1.0).toFloat()
+        val centerY = payload.optDouble("centerY", -1.0).toFloat()
+        if (centerX <= 0f || centerY <= 0f) {
+            return
+        }
+        val viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat()
+        val viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat()
+        val scaleX = if (viewportWidth > 0f && geckoView.width > 0) {
+            geckoView.width.toFloat() / viewportWidth
+        } else {
+            1f
+        }
+        val scaleY = if (viewportHeight > 0f && geckoView.height > 0) {
+            geckoView.height.toFloat() / viewportHeight
+        } else {
+            1f
+        }
+        val clampedX = (centerX * scaleX).coerceIn(1f, (geckoView.width - 1).coerceAtLeast(1).toFloat())
+        val clampedY = (centerY * scaleY).coerceIn(1f, (geckoView.height - 1).coerceAtLeast(1).toFloat())
+        tttTegoStartupNativeTapCountBySession[session] = attemptCount + 1
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+                if (!isTttOrTegoLivePlayerUrl(activeUrl)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "ttt tego startup native play tap skipped reason=active-url-mismatch activeUrl=$activeUrl playerUrl=$playerUrl"
+                    )
+                    return@postDelayed
+                }
+                val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "ttt-tego-startup-native-play")
+                GvLogger.i(
+                    "GvMedia",
+                    "ttt tego startup native play tap dispatched attempt=${attemptCount + 1} reason=${payload.optString("reason")} " +
+                        "x=${clampedX.toInt()} y=${clampedY.toInt()} rawCenter=${centerX.toInt()},${centerY.toInt()} " +
                         "viewport=${viewportWidth.toInt()}x${viewportHeight.toInt()} view=${geckoView.width}x${geckoView.height} scale=$scaleX,$scaleY " +
                         "handled=$handled activeUrl=$activeUrl playerUrl=$playerUrl"
                 )
@@ -11605,6 +11958,9 @@ return changed>0;
                     requiresUserAction = requiresUserAction,
                     centerX = payload.optDouble("centerX", -1.0).toFloat(),
                     centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                    targetKind = payload.optString("targetKind"),
+                    readyState = payload.optInt("readyState"),
+                    paused = payload.optBoolean("paused", true),
                     reason = payload.optString("reason"),
                 )
             } else {
@@ -11616,6 +11972,19 @@ return changed>0;
                     "targetKind=${payload.optString("targetKind")} target=${payload.optString("targetSummary")} " +
                     "center=${payload.optInt("centerX")},${payload.optInt("centerY")} ready=${payload.optInt("readyState")} paused=${payload.optBoolean("paused")} " +
                     "size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")}"
+            )
+            if (!active) {
+                tttTegoStartupNativeTapCountBySession.remove(session)
+            }
+            return
+        }
+        if (type == "ttt-tego-transport-reveal") {
+            GvLogger.i(
+                "GvMedia",
+                "ttt tego transport reveal phase=${payload.optString("phase")} pageUrl=$pageUrl reason=${payload.optString("reason")} " +
+                    "handled=${payload.optBoolean("handled")} visibleBefore=${payload.optBoolean("controlBarVisibleBefore")} visibleAfter=${payload.optBoolean("controlBarVisibleAfter")} " +
+                    "target=${payload.optString("target")} rect=${payload.optString("rect")} hiddenState=${payload.optBoolean("hiddenState")} " +
+                    "containerClass=${payload.optString("containerClassList")}"
             )
             return
         }
@@ -11674,6 +12043,7 @@ return changed>0;
                 "tego quality pageUrl=$pageUrl applied=${payload.optBoolean("applied")} playerCount=${payload.optInt("playerCount")} results=${resultSummary.ifBlank { "none" }} videos=${videoSummary.ifBlank { "none" }}"
             )
             if (isTttTegoContextUrl(pageUrl) && hasPlayingTegoVideo(videos)) {
+                tttTegoStartupNativeTapCountBySession.remove(session)
                 if (tttTegoPlayAssistBySession.remove(session) != null) {
                     GvLogger.i("GvMedia", "ttt tego play assist active=false reason=playback-started pageUrl=$pageUrl")
                 }
@@ -11705,6 +12075,7 @@ return changed>0;
                     "results=$resultSummary videos=$videoSummary"
             )
             if (isTttTegoContextUrl(pageUrl) && hasPlayingTegoVideo(videos)) {
+                tttTegoStartupNativeTapCountBySession.remove(session)
                 if (tttTegoPlayAssistBySession.remove(session) != null) {
                     GvLogger.i("GvMedia", "ttt tego play assist active=false reason=playback-started pageUrl=$pageUrl")
                 }
@@ -11869,7 +12240,11 @@ return changed>0;
                     "viewport=${payload.optInt("viewportWidth")}x${payload.optInt("viewportHeight")} dpr=${payload.optDouble("devicePixelRatio")} " +
                     "controlSummary=${payload.optString("controlSummary")}"
             )
-            maybeDispatchAbsTegoFullscreenControlNativeTap(session, payload)
+            if (isTttTegoPlayerUrl(payload.optString("playerUrl").ifBlank { pageUrl })) {
+                maybeDispatchTttTegoStartupNativePlayTap(session, payload)
+            } else {
+                maybeDispatchAbsTegoFullscreenControlNativeTap(session, payload)
+            }
             return
         }
         if (type == "abs-tego-fullscreen-native-hover") {
@@ -13496,6 +13871,17 @@ return changed>0;
         return host == "ttt.live" || host.endsWith(".ttt.live")
     }
 
+    private fun isTttLivePlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "ttt.live" && path.startsWith("/stream")
+    }
+
     private fun isTegoPlayerUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -13505,6 +13891,24 @@ return changed>0;
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return host == "player.tegotv.com" || path.contains("/player.php")
+    }
+
+    private fun isTttTegoPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host != "player.tegotv.com" || !path.contains("/player.php")) {
+            return false
+        }
+        return uri.getQueryParameter("channel")?.trim().orEmpty() == "1"
+    }
+
+    private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
+        return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
     }
 
     private fun isAbsTegoAutoplayContextUrl(url: String): Boolean {
