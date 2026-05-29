@@ -146,6 +146,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val facebookVideoHelperLastAttemptAtBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookVideoHelperPendingRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val facebookVideoHelperMuteTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookVideoHelperVolumeBoostCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookVideoHelperFullscreenTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookVideoHelperControlsHoverCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookVideoHelperFullscreenCheckCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val facebookVideoHelperStageBySession = LinkedHashMap<GeckoSession, String>()
+    private val facebookVideoHelperLastFullscreenTargetXBySession = LinkedHashMap<GeckoSession, Float>()
+    private val facebookVideoHelperLastFullscreenTargetYBySession = LinkedHashMap<GeckoSession, Float>()
     private val amazonConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val tttConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val kulchaFloCookieConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -1004,13 +1011,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 maybeDispatchYouTubeChatCollapseForFullscreen(session, pageUrl, reason = "fullscreen-enter", delayMs = 260L)
                 maybeScheduleYouTubePremiumPopupChecks(session, pageUrl, reason = "fullscreen-enter")
                 if (isFacebookUrl(pageUrl)) {
-                    maybeScheduleFacebookVideoHelper(
-                        session = session,
-                        pageUrl = pageUrl,
-                        reason = "fullscreen-enter",
-                        delayMs = 300L,
-                        bypassCooldown = true,
+                    val fullscreenCheckAttempt =
+                        ((facebookVideoHelperFullscreenCheckCountBySession[session] ?: 0) + 1)
+                            .coerceAtMost(FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_CALLBACK_CHECKS_PER_URL)
+                    facebookVideoHelperFullscreenCheckCountBySession[session] = fullscreenCheckAttempt
+                    markFacebookVideoHelperSequenceComplete(session, pageUrl)
+                    GvLogger.i(
+                        "GvInput",
+                        "facebook-video-helper fullscreen-check result=entered attempt=$fullscreenCheckAttempt pageUrl=$pageUrl"
                     )
+                    GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$pageUrl")
                 }
                 enterBrowserFullscreenPointerSleep(reason = "fullscreen-enter")
             } else {
@@ -3274,8 +3284,16 @@ return changed>0;
                         if(!visibleNode(node)){return '';}
                         var role=lowerText((node.getAttribute&&node.getAttribute('role'))||'',32);
                         var ariaModal=lowerText((node.getAttribute&&node.getAttribute('aria-modal'))||'',16);
-                        if(role!=='dialog'&&role!=='alertdialog'&&ariaModal!=='true'){return '';}
-                        if(node.querySelector&&node.querySelector('video,source,canvas,iframe')){return '';}
+                        var r=rectOf(node);
+                        var centeredLarge=!!r&&
+                          r.width>=Math.max(360,(window.innerWidth||0)*0.36)&&
+                          r.height>=260&&
+                          r.left>=(window.innerWidth||0)*0.08&&
+                          r.right<=(window.innerWidth||0)*0.94&&
+                          r.top>=(window.innerHeight||0)*0.05&&
+                          r.bottom<=(window.innerHeight||0)*0.96;
+                        if(role!=='dialog'&&role!=='alertdialog'&&ariaModal!=='true'&&!centeredLarge){return '';}
+                        if(node.querySelector&&node.querySelector('video,source,iframe')){return '';}
                         var text=loginModalText(node);
                         if(text.indexOf('cookie')>=0||text.indexOf('cookies')>=0||text.indexOf('optional cookies')>=0||text.indexOf('essential cookies')>=0||text.indexOf('allow the use of cookies')>=0){return '';}
                         var portrait=text.indexOf('see more on facebook')>=0&&
@@ -3292,6 +3310,47 @@ return changed>0;
                         if(text.indexOf('see more on facebook')>=0){signals+=1;}
                         return signals>=2?'qr':'';
                       }catch(_){return '';}
+                    };
+                    var addUniqueNode=function(list,node){
+                      try{
+                        if(!node||list.indexOf(node)>=0){return;}
+                        list.push(node);
+                      }catch(_){}
+                    };
+                    var facebookLoginModalCandidates=function(){
+                      var out=[];
+                      try{
+                        Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')).slice(0,40).forEach(function(node){addUniqueNode(out,node);});
+                      }catch(_){}
+                      try{
+                        var points=[
+                          [Math.round((window.innerWidth||0)*0.50),Math.round((window.innerHeight||0)*0.50)],
+                          [Math.round((window.innerWidth||0)*0.50),Math.round((window.innerHeight||0)*0.34)],
+                          [Math.round((window.innerWidth||0)*0.74),Math.round((window.innerHeight||0)*0.50)]
+                        ];
+                        for(var p=0;p<points.length;p++){
+                          var stack=Array.from(document.elementsFromPoint(points[p][0],points[p][1])||[]).slice(0,12);
+                          for(var s=0;s<stack.length;s++){
+                            var cur=stack[s];
+                            for(var depth=0;depth<8&&cur&&cur!==document.documentElement;depth++){
+                              addUniqueNode(out,cur);
+                              cur=cur.parentElement;
+                            }
+                          }
+                        }
+                      }catch(_){}
+                      try{
+                        Array.from(document.querySelectorAll('div,section,form')).slice(0,260).forEach(function(node){
+                          try{
+                            if(!visibleNode(node)){return;}
+                            var text=loginModalText(node);
+                            if(text.indexOf('see more on facebook')>=0&&(text.indexOf('password')>=0||text.indexOf('qr code')>=0||text.indexOf('scan the qr')>=0)){
+                              addUniqueNode(out,node);
+                            }
+                          }catch(_){}
+                        });
+                      }catch(_){}
+                      return out.slice(0,90);
                     };
                     var closeButtonSummary=function(node){
                       try{
@@ -3328,7 +3387,7 @@ return changed>0;
                           emitLoginModalClose(phase,false,'no-primary-attached-video',null,null,'',false,'unknown');
                           return;
                         }
-                        var dialogs=Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')).slice(0,40);
+                        var dialogs=facebookLoginModalCandidates();
                         var modal=null;
                         var modalVariant='unknown';
                         for(var d=0;d<dialogs.length;d++){
@@ -4531,12 +4590,173 @@ return changed>0;
         session.loadUri(script)
     }
 
-    private fun clearFacebookVideoHelperTracking(session: GeckoSession) {
+    private fun cancelFacebookVideoHelperPending(session: GeckoSession) {
         facebookVideoHelperPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
+    }
+
+    private fun currentFacebookVideoHelperStage(session: GeckoSession): String {
+        return facebookVideoHelperStageBySession[session] ?: FACEBOOK_VIDEO_HELPER_STAGE_SOUND
+    }
+
+    private fun postFacebookVideoHelperPending(
+        session: GeckoSession,
+        delayMs: Long,
+        runnable: Runnable,
+    ) {
+        cancelFacebookVideoHelperPending(session)
+        facebookVideoHelperPendingRunnableBySession[session] = runnable
+        pointerHandler.postDelayed(runnable, delayMs.coerceAtLeast(0L))
+    }
+
+    private fun markFacebookVideoHelperSequenceComplete(session: GeckoSession, pageUrl: String) {
+        facebookVideoHelperStageBySession[session] = FACEBOOK_VIDEO_HELPER_STAGE_SEQUENCE_COMPLETE
+        cancelFacebookVideoHelperPending(session)
+        logFacebookVideoHelperSequenceState(session, pageUrl)
+    }
+
+    private fun logFacebookVideoHelperSequenceState(session: GeckoSession, pageUrl: String) {
+        val normalizedUrl = normalizeFacebookPassiveReentryUrl(pageUrl).ifBlank { pageUrl }
+        GvLogger.i(
+            "GvInput",
+            "facebook-video-helper sequence-state url=$normalizedUrl stage=${currentFacebookVideoHelperStage(session)} muteTaps=${facebookVideoHelperMuteTapCountBySession[session] ?: 0} volumeBoosts=${facebookVideoHelperVolumeBoostCountBySession[session] ?: 0} fullscreenTaps=${facebookVideoHelperFullscreenTapCountBySession[session] ?: 0} hoverCount=${facebookVideoHelperControlsHoverCountBySession[session] ?: 0} callbackChecks=${facebookVideoHelperFullscreenCheckCountBySession[session] ?: 0}"
+        )
+    }
+
+    private fun clearFacebookVideoHelperTracking(session: GeckoSession) {
+        cancelFacebookVideoHelperPending(session)
         facebookVideoHelperTrackedUrlBySession.remove(session)
         facebookVideoHelperAttemptCountBySession.remove(session)
         facebookVideoHelperLastAttemptAtBySession.remove(session)
         facebookVideoHelperMuteTapCountBySession.remove(session)
+        facebookVideoHelperVolumeBoostCountBySession.remove(session)
+        facebookVideoHelperFullscreenTapCountBySession.remove(session)
+        facebookVideoHelperControlsHoverCountBySession.remove(session)
+        facebookVideoHelperFullscreenCheckCountBySession.remove(session)
+        facebookVideoHelperStageBySession.remove(session)
+        facebookVideoHelperLastFullscreenTargetXBySession.remove(session)
+        facebookVideoHelperLastFullscreenTargetYBySession.remove(session)
+    }
+
+    private fun scheduleFacebookVideoHelperFullscreenCheck(
+        session: GeckoSession,
+        pageUrl: String,
+    ) {
+        val normalizedUrl = normalizeFacebookPassiveReentryUrl(pageUrl)
+        val runnable = Runnable {
+            if (isFinishing || isDestroyed) return@Runnable
+            facebookVideoHelperPendingRunnableBySession.remove(session)
+            val tab = tabController.findTabBySession(session) ?: return@Runnable
+            val activeUrl = tab.url
+            if (normalizeFacebookPassiveReentryUrl(activeUrl) != normalizedUrl) {
+                return@Runnable
+            }
+            val nextCheckAttempt = (facebookVideoHelperFullscreenCheckCountBySession[session] ?: 0) + 1
+            facebookVideoHelperFullscreenCheckCountBySession[session] = nextCheckAttempt
+            if (browserFullscreenStateBySession[session] == true) {
+                markFacebookVideoHelperSequenceComplete(session, activeUrl)
+                GvLogger.i(
+                    "GvInput",
+                    "facebook-video-helper fullscreen-check result=entered attempt=$nextCheckAttempt pageUrl=$activeUrl"
+                )
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$activeUrl")
+                return@Runnable
+            }
+            GvLogger.i(
+                "GvInput",
+                "facebook-video-helper fullscreen-check result=not-entered attempt=$nextCheckAttempt pageUrl=$activeUrl"
+            )
+            val retryX = facebookVideoHelperLastFullscreenTargetXBySession[session]
+            val retryY = facebookVideoHelperLastFullscreenTargetYBySession[session]
+            val retryAvailable =
+                (facebookVideoHelperFullscreenTapCountBySession[session] ?: 0) < FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_TAPS_PER_URL &&
+                    nextCheckAttempt < FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_CALLBACK_CHECKS_PER_URL &&
+                    retryX != null &&
+                    retryY != null
+            if (!retryAvailable) {
+                markFacebookVideoHelperSequenceComplete(session, activeUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-retry-budget pageUrl=$activeUrl")
+                return@Runnable
+            }
+            GvLogger.i(
+                "GvInput",
+                "facebook-video-helper fullscreen-retry reason=no-callback pageUrl=$activeUrl attempt=${(facebookVideoHelperFullscreenTapCountBySession[session] ?: 0) + 1}"
+            )
+            scheduleFacebookVideoHelperFullscreenAttempt(
+                session = session,
+                pageUrl = activeUrl,
+                mappedX = retryX,
+                mappedY = retryY,
+                source = "coordinate-controlbar-fullscreen",
+                label = "stored-controlbar-coordinate",
+                rect = "stored-controlbar-coordinate",
+                viewportWidth = 0,
+                viewportHeight = 0,
+                attempt = (facebookVideoHelperAttemptCountBySession[session] ?: 0).coerceAtLeast(1),
+            )
+        }
+        postFacebookVideoHelperPending(session, FACEBOOK_VIDEO_HELPER_FULLSCREEN_CHECK_DELAY_MS, runnable)
+    }
+
+    private fun scheduleFacebookVideoHelperFullscreenAttempt(
+        session: GeckoSession,
+        pageUrl: String,
+        mappedX: Float,
+        mappedY: Float,
+        source: String,
+        label: String,
+        rect: String,
+        viewportWidth: Int,
+        viewportHeight: Int,
+        attempt: Int,
+    ) {
+        val normalizedUrl = normalizeFacebookPassiveReentryUrl(pageUrl)
+        facebookVideoHelperStageBySession[session] = FACEBOOK_VIDEO_HELPER_STAGE_FULLSCREEN_PENDING
+        GvLogger.i(
+            "GvInput",
+            "facebook-video-helper fullscreen-target measured source=$source x=${mappedX.toInt()} y=${mappedY.toInt()} label=$label rect=$rect viewport=${viewportWidth}x${viewportHeight} attempt=$attempt"
+        )
+        val currentHoverCount = facebookVideoHelperControlsHoverCountBySession[session] ?: 0
+        if (currentHoverCount >= FACEBOOK_VIDEO_HELPER_MAX_CONTROLS_HOVER_ATTEMPTS_PER_URL) {
+            markFacebookVideoHelperSequenceComplete(session, pageUrl)
+            GvLogger.i("GvInput", "facebook-video-helper skipped reason=hover-budget pageUrl=$pageUrl attempt=$attempt")
+            return
+        }
+        facebookVideoHelperControlsHoverCountBySession[session] = currentHoverCount + 1
+        logFacebookVideoHelperSequenceState(session, pageUrl)
+        val hoverHandled = dispatchNativeMouseHoverAt(mappedX, mappedY, "facebook-video-helper-fullscreen-reveal")
+        GvLogger.i(
+            "GvInput",
+            "facebook-video-helper controls-hover x=${mappedX.toInt()} y=${mappedY.toInt()} handled=$hoverHandled pageUrl=$pageUrl attempt=$attempt"
+        )
+        val runnable = Runnable {
+            if (isFinishing || isDestroyed) return@Runnable
+            facebookVideoHelperPendingRunnableBySession.remove(session)
+            val tab = tabController.findTabBySession(session) ?: return@Runnable
+            val activeUrl = tab.url
+            if (normalizeFacebookPassiveReentryUrl(activeUrl) != normalizedUrl) {
+                return@Runnable
+            }
+            if (browserFullscreenStateBySession[session] == true) {
+                markFacebookVideoHelperSequenceComplete(session, activeUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$activeUrl")
+                return@Runnable
+            }
+            val nextTapCount = (facebookVideoHelperFullscreenTapCountBySession[session] ?: 0) + 1
+            if (nextTapCount > FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_TAPS_PER_URL) {
+                markFacebookVideoHelperSequenceComplete(session, activeUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-retry-budget pageUrl=$activeUrl")
+                return@Runnable
+            }
+            facebookVideoHelperFullscreenTapCountBySession[session] = nextTapCount
+            logFacebookVideoHelperSequenceState(session, activeUrl)
+            val handled = dispatchNativeMouseTapAt(mappedX, mappedY, "facebook-video-helper-fullscreen")
+            GvLogger.i(
+                "GvInput",
+                "facebook-video-helper fullscreen-tap x=${mappedX.toInt()} y=${mappedY.toInt()} handled=$handled pageUrl=$activeUrl attempt=$attempt"
+            )
+            scheduleFacebookVideoHelperFullscreenCheck(session, activeUrl)
+        }
+        postFacebookVideoHelperPending(session, FACEBOOK_VIDEO_HELPER_FULLSCREEN_HOVER_SETTLE_DELAY_MS, runnable)
     }
 
     private fun maybeScheduleFacebookVideoHelperFromPayload(
@@ -4602,6 +4822,29 @@ return changed>0;
             facebookVideoHelperAttemptCountBySession[session] = 0
             facebookVideoHelperLastAttemptAtBySession.remove(session)
             facebookVideoHelperMuteTapCountBySession[session] = 0
+            facebookVideoHelperVolumeBoostCountBySession[session] = 0
+            facebookVideoHelperFullscreenTapCountBySession[session] = 0
+            facebookVideoHelperControlsHoverCountBySession[session] = 0
+            facebookVideoHelperFullscreenCheckCountBySession[session] = 0
+            facebookVideoHelperStageBySession[session] = FACEBOOK_VIDEO_HELPER_STAGE_SOUND
+            facebookVideoHelperLastFullscreenTargetXBySession.remove(session)
+            facebookVideoHelperLastFullscreenTargetYBySession.remove(session)
+        }
+        logFacebookVideoHelperSequenceState(session, normalizedUrl)
+        if (browserFullscreenStateBySession[session] == true || currentFacebookVideoHelperStage(session) == FACEBOOK_VIDEO_HELPER_STAGE_SEQUENCE_COMPLETE) {
+            markFacebookVideoHelperSequenceComplete(session, normalizedUrl)
+            GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$normalizedUrl")
+            return
+        }
+        if (currentFacebookVideoHelperStage(session) == FACEBOOK_VIDEO_HELPER_STAGE_FULLSCREEN_PENDING) {
+            GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-pending pageUrl=$normalizedUrl")
+            return
+        }
+        val fullscreenTapCount = facebookVideoHelperFullscreenTapCountBySession[session] ?: 0
+        if (fullscreenTapCount >= FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_TAPS_PER_URL) {
+            markFacebookVideoHelperSequenceComplete(session, normalizedUrl)
+            GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-retry-budget pageUrl=$normalizedUrl")
+            return
         }
         val attemptCount = facebookVideoHelperAttemptCountBySession[session] ?: 0
         if (attemptCount >= FACEBOOK_VIDEO_HELPER_MAX_ATTEMPTS_PER_URL) {
@@ -4619,7 +4862,6 @@ return changed>0;
         if (!bypassCooldown && facebookVideoHelperPendingRunnableBySession.containsKey(session)) {
             return
         }
-        facebookVideoHelperPendingRunnableBySession.remove(session)?.also { pointerHandler.removeCallbacks(it) }
         val runnable = Runnable {
             if (isFinishing || isDestroyed) return@Runnable
             facebookVideoHelperPendingRunnableBySession.remove(session)
@@ -4629,6 +4871,21 @@ return changed>0;
                 return@Runnable
             }
             if (!isFacebookUrl(activeUrl) || !isFacebookWatchOrVideoPageUrl(activeUrl) || promotedMediaPlayer.isPromoted()) {
+                return@Runnable
+            }
+            if (browserFullscreenStateBySession[session] == true || currentFacebookVideoHelperStage(session) == FACEBOOK_VIDEO_HELPER_STAGE_SEQUENCE_COMPLETE) {
+                markFacebookVideoHelperSequenceComplete(session, activeUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$activeUrl")
+                return@Runnable
+            }
+            if (currentFacebookVideoHelperStage(session) == FACEBOOK_VIDEO_HELPER_STAGE_FULLSCREEN_PENDING) {
+                logFacebookVideoHelperSequenceState(session, activeUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-pending pageUrl=$activeUrl")
+                return@Runnable
+            }
+            if ((facebookVideoHelperFullscreenTapCountBySession[session] ?: 0) >= FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_TAPS_PER_URL) {
+                markFacebookVideoHelperSequenceComplete(session, activeUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-retry-budget pageUrl=$activeUrl")
                 return@Runnable
             }
             val nextAttempt = (facebookVideoHelperAttemptCountBySession[session] ?: 0) + 1
@@ -4641,8 +4898,7 @@ return changed>0;
                 attempt = nextAttempt,
             )
         }
-        facebookVideoHelperPendingRunnableBySession[session] = runnable
-        pointerHandler.postDelayed(runnable, delayMs.coerceAtLeast(0L))
+        postFacebookVideoHelperPending(session, delayMs, runnable)
         GvLogger.i(
             "GvInput",
             "facebook-video-helper scheduled reason=$reason delayMs=${delayMs.coerceAtLeast(0L)} pageUrl=$pageUrl attempt=${attemptCount + 1}/$FACEBOOK_VIDEO_HELPER_MAX_ATTEMPTS_PER_URL"
@@ -4724,21 +4980,33 @@ return changed>0;
                     return out;
                   }catch(_){return [];}
                 };
-                var isRejectedBlob=function(blob){
-                  if(!blob){return false;}
-                  var reject=['login','log in','sign up','signup','create account','create new account','join facebook','share','comment','reaction','like','menu','more','close','follow','save','report'];
-                  for(var i=0;i<reject.length;i++){
-                    if(blob.indexOf(reject[i])>=0){return true;}
+                var hardRejectTerms=['create new account','create account','log in','login','sign up','signup','join facebook','unmute','mute','volume','change volume','audio','sound','speaker','share','comment','reaction','like','menu','more','close','follow','save','report'];
+                var criticalRejectTerms=['create new account','create account','log in','login','sign up','signup','join facebook','share','comment','reaction','like','menu','more','close','follow','save','report'];
+                var hasRejectTerm=function(blob){
+                  if(!blob){return '';}
+                  for(var i=0;i<hardRejectTerms.length;i++){
+                    if(blob.indexOf(hardRejectTerms[i])>=0){return hardRejectTerms[i];}
                   }
-                  return false;
+                  return '';
                 };
-                var isStrictFullscreenRejectedBlob=function(blob){
-                  if(!blob){return false;}
-                  var reject=['create new account','create account','sign up','signup','join facebook','unmute','change volume'];
-                  for(var i=0;i<reject.length;i++){
-                    if(blob.indexOf(reject[i])>=0){return true;}
+                var hasCriticalRejectTerm=function(blob){
+                  if(!blob){return '';}
+                  for(var i=0;i<criticalRejectTerms.length;i++){
+                    if(blob.indexOf(criticalRejectTerms[i])>=0){return criticalRejectTerms[i];}
                   }
-                  return false;
+                  return '';
+                };
+                var isRejectedBlob=function(blob){
+                  return hasRejectTerm(blob)!=='';
+                };
+                var isStrongUnmuteBlob=function(blob){
+                  if(!blob){return false;}
+                  return blob.indexOf('unmute')>=0||
+                    blob.indexOf('turn on sound')>=0||
+                    blob.indexOf('sound on')>=0||
+                    blob.indexOf('audio on')>=0||
+                    blob.indexOf('muted')>=0||
+                    blob.indexOf('speaker off')>=0;
                 };
                 var zoneMatch=function(cx,cy,videoRect,zone){
                   if(!videoRect){return false;}
@@ -4750,7 +5018,16 @@ return changed>0;
                   if(zone==='lower-left'){
                     return cx<=videoRect.left+(videoRect.width*0.42)&&cy>=videoRect.top+(videoRect.height*0.58);
                   }
+                  if(zone==='controlbar'){
+                    return cy>=videoRect.top+(videoRect.height*0.70);
+                  }
                   return true;
+                };
+                var zoneName=function(cx,videoRect){
+                  if(cx>=videoRect.left+(videoRect.width*0.92)){return 'far-right';}
+                  if(cx>=videoRect.left+(videoRect.width*0.72)){return 'lower-right';}
+                  if(cx<=videoRect.left+(videoRect.width*0.28)){return 'lower-left';}
+                  return 'lower-center';
                 };
                 var asCandidate=function(node,zone,videoRect,preferAudio){
                   try{
@@ -4765,16 +5042,19 @@ return changed>0;
                         if(zoneMatch(cx,cy,videoRect,zone)){
                           var tag=((climb.tagName||'')+'').toLowerCase();
                           var role=((climb.getAttribute&&climb.getAttribute('role'))||'').toLowerCase();
-                          var aria=((climb.getAttribute&&climb.getAttribute('aria-label'))||'');
-                          var title=((climb.getAttribute&&climb.getAttribute('title'))||'');
-                          var testid=((climb.getAttribute&&climb.getAttribute('data-testid'))||'');
+                           var aria=((climb.getAttribute&&climb.getAttribute('aria-label'))||'');
+                           var title=((climb.getAttribute&&climb.getAttribute('title'))||'');
+                           var testid=((climb.getAttribute&&climb.getAttribute('data-testid'))||'');
                            var tabindex=((climb.getAttribute&&climb.getAttribute('tabindex'))||'');
                            var cls=((typeof climb.className==='string')?climb.className:'');
                            var blob=(lowerBlob(climb)+' '+(aria||'').toLowerCase()+' '+(title||'').toLowerCase()+' '+(testid||'').toLowerCase()+' '+(cls||'').toLowerCase()).replace(/\s+/g,' ').trim();
-                           if(isRejectedBlob(blob)){depth++;climb=climb.parentElement;continue;}
+                           var audioIntent=isStrongUnmuteBlob(blob);
+                           if(preferAudio){
+                             if(!audioIntent){depth++;climb=climb.parentElement;continue;}
+                             if(hasCriticalRejectTerm(blob)){depth++;climb=climb.parentElement;continue;}
+                           }else if(isRejectedBlob(blob)){depth++;climb=climb.parentElement;continue;}
                            var fullscreenIntent=(blob.indexOf('full screen')>=0||blob.indexOf('fullscreen')>=0||blob.indexOf('expand')>=0||blob.indexOf('maximize')>=0);
-                           if(zone==='lower-right'&&isStrictFullscreenRejectedBlob(blob)){depth++;climb=climb.parentElement;continue;}
-                           if(zone==='lower-right'&&!fullscreenIntent){depth++;climb=climb.parentElement;continue;}
+                           if(zone==='lower-right'&&!fullscreenIntent&&!preferAudio){depth++;climb=climb.parentElement;continue;}
                            var clickable=(tag==='button'||role==='button'||role==='link'||(tag==='a'&&!!(climb.getAttribute&&climb.getAttribute('href')))||
                              (!!tabindex&&tabindex!=='-1')||(aria||'').length>0||(title||'').length>0||(testid||'').length>0||
                              ((window.getComputedStyle(climb).cursor||'').toLowerCase().indexOf('pointer')>=0));
@@ -4784,7 +5064,7 @@ return changed>0;
                            if(zone==='lower-right'){score+=120;}
                            if(zone==='lower-left'){score+=115;}
                            if(fullscreenIntent){score+=220;}
-                           if(blob.indexOf('mute')>=0||blob.indexOf('unmute')>=0||blob.indexOf('volume')>=0||blob.indexOf('audio')>=0||blob.indexOf('sound')>=0||blob.indexOf('speaker')>=0){score+=220;}
+                           if(audioIntent){score+=260;}
                            if(blob.indexOf('skip')>=0&&blob.indexOf('ad')>=0){score-=260;}
                            if(blob.indexOf('theater')>=0||blob.indexOf('mini')>=0||blob.indexOf('picture')>=0||blob.indexOf('pip')>=0){score-=150;}
                            if(zone==='lower-right'&&cx>=videoRect.left+(videoRect.width*0.80)){score+=60;}
@@ -4828,6 +5108,39 @@ return changed>0;
                         if(out.summaries.length<5){out.summaries.push(cand.summary);}
                       }
                       if(!out.best||cand.score>out.best.score){out.best=cand;}
+                    }
+                  }catch(_){}
+                  return out;
+                };
+                var buildControlbarCandidates=function(videoRect){
+                  var out=[];
+                  try{
+                    var fx=[0.10,0.18,0.26,0.34,0.42,0.50,0.58,0.66,0.74,0.82,0.90,0.96];
+                    var fy=[0.74,0.82,0.90];
+                    var seen=new Set();
+                    for(var xi=0;xi<fx.length;xi++){
+                      for(var yi=0;yi<fy.length;yi++){
+                        var px=Math.round(videoRect.left+Math.max(12,Math.min(videoRect.width-12,videoRect.width*fx[xi])));
+                        var py=Math.round(videoRect.top+Math.max(12,Math.min(videoRect.height-12,videoRect.height*fy[yi])));
+                        var stack=Array.from(document.elementsFromPoint(px,py)||[]).slice(0,6);
+                        for(var si=0;si<stack.length;si++){
+                          var cand=asCandidate(stack[si],'controlbar',videoRect,false);
+                          if(!cand){continue;}
+                          var blob=(cand.label||'').toLowerCase();
+                          var reject=hasRejectTerm(blob);
+                          var key=(cand.rect||'')+'|'+(cand.label||'');
+                          if(seen.has(key)){continue;}
+                          seen.add(key);
+                          var rectParts=(cand.rect||'0,0,0,0').split(',');
+                          var cw=Number(rectParts[2]||0);
+                          var ch=Number(rectParts[3]||0);
+                          var zone=zoneName(cand.cx,videoRect);
+                          var summary='x='+cand.cx+' y='+cand.cy+' rect='+cand.rect+' zone='+zone+' label='+clip(cand.label,54)+' reject='+(reject||'none');
+                          out.push({
+                            x:cand.cx,y:cand.cy,rect:cand.rect,label:cand.label,blob:blob,zone:zone,width:cw,height:ch,reject:reject,summary:summary
+                          });
+                        }
+                      }
                     }
                   }catch(_){}
                   return out;
@@ -4887,7 +5200,8 @@ return changed>0;
                   lowerRightStack:[],
                   lowerLeftStack:[],
                   lowerRightCandidates:[],
-                  lowerLeftCandidates:[]
+                  lowerLeftCandidates:[],
+                  controlbarCandidates:[]
                 };
                 if(primaryVideo){
                   result.pausedBefore=!!primaryVideo.paused;
@@ -4919,113 +5233,41 @@ return changed>0;
                     result.controlsRevealStack=elementsSummaryAt(result.controlsRevealX,result.controlsRevealY);
                     result.lowerRightStack=elementsSummaryAt(lowerRightX,lowerRightY);
                     result.lowerLeftStack=elementsSummaryAt(lowerLeftX,lowerLeftY);
-                    var mutedNeedsTap=!!(result.mutedBefore||result.mutedAfter||result.volumeAfter<0.95);
-                    var selectors=[
-                      'button[aria-label*="full screen" i]',
-                      '[role="button"][aria-label*="full screen" i]',
-                      'button[aria-label*="fullscreen" i]',
-                      '[role="button"][aria-label*="fullscreen" i]',
-                      'button[title*="full screen" i]',
-                      '[role="button"][title*="full screen" i]',
-                      '[data-testid*="fullscreen" i]'
-                    ];
-                    var pool=[];
-                    for(var s=0;s<selectors.length;s++){
-                      var nodes=Array.from(document.querySelectorAll(selectors[s])).slice(0,40);
-                      for(var n=0;n<nodes.length;n++){pool.push(nodes[n]);}
-                    }
-                    var generic=Array.from(document.querySelectorAll('button,[role="button"],div[role="button"],a[role="button"]')).slice(0,260);
-                    for(var g=0;g<generic.length;g++){pool.push(generic[g]);}
-                    var seen=new Set();
-                    var best=null;
-                    var bestScore=-9999;
-                    for(var p=0;p<pool.length;p++){
-                      var node=pool[p];
-                      if(!node||seen.has(node)){continue;}
-                       seen.add(node);
-                       if(!visible(node)){continue;}
-                       var blob=lowerBlob(node);
-                       if(isStrictFullscreenRejectedBlob(blob)){continue;}
-                       if(blob.indexOf('full screen')<0&&blob.indexOf('fullscreen')<0){continue;}
-                       if(blob.indexOf('exit full screen')>=0||blob.indexOf('exit fullscreen')>=0){continue;}
-                       var rr=node.getBoundingClientRect();
-                      if(rr.width<12||rr.height<12||rr.width>240||rr.height>140){continue;}
-                      var cx=(rr.left+rr.right)/2;
-                      var cy=(rr.top+rr.bottom)/2;
-                      var nearVideo=(cx>=videoRect.left-140&&cx<=videoRect.right+140&&cy>=videoRect.top-140&&cy<=videoRect.bottom+160);
-                      var rightBias=(videoRect.right-cx);
-                      var bottomBias=(videoRect.bottom-cy);
-                      var score=0;
-                      if(nearVideo){score+=120;}
-                      if(blob.indexOf('full screen')>=0){score+=90;}
-                      if(blob.indexOf('fullscreen')>=0){score+=70;}
-                      if(rightBias>=-160&&rightBias<=420){score+=Math.max(0,220-Math.abs(rightBias));}
-                      if(bottomBias>=-180&&bottomBias<=260){score+=Math.max(0,180-Math.abs(bottomBias));}
-                      if(blob.indexOf('mini')>=0||blob.indexOf('theater')>=0||blob.indexOf('picture')>=0){score-=180;}
-                      if(score>bestScore){
-                        bestScore=score;
-                        best={node:node,rect:rr,cx:cx,cy:cy,label:textBlob(node)};
-                      }
-                    }
-                    if(best){
-                      var br=best.rect;
+                    var controlbarCandidates=buildControlbarCandidates(videoRect);
+                    var controlbarSummaries=[];
+                    for(var cb=0;cb<controlbarCandidates.length&&cb<12;cb++){controlbarSummaries.push(controlbarCandidates[cb].summary);}
+                    result.controlbarCandidates=controlbarSummaries;
+                    if(!result.pausedAfter&&controlbarCandidates.length>0){
                       result.fullscreenTargetFound=true;
-                      result.fullscreenTargetX=Math.round(best.cx);
-                      result.fullscreenTargetY=Math.round(best.cy);
-                      result.fullscreenTargetRect=[Math.round(br.left),Math.round(br.top),Math.round(br.width),Math.round(br.height)].join(',');
-                      result.fullscreenTargetLabel=(best.label||'').slice(0,120);
-                      result.fullscreenTargetReason='measured-target';
-                    }else{
-                      var rightPointsX=[0.88,0.92,0.96];
-                      var rightPointsY=[0.82,0.88,0.94];
-                      var bestRight=null;
-                      var rightSummaries=[];
-                      for(var rx=0;rx<rightPointsX.length;rx++){
-                        for(var ry=0;ry<rightPointsY.length;ry++){
-                          var px=Math.round(videoRect.left+Math.max(12,Math.min(videoRect.width-12,videoRect.width*rightPointsX[rx])));
-                          var py=Math.round(videoRect.top+Math.max(12,Math.min(videoRect.height-12,videoRect.height*rightPointsY[ry])));
-                          var hit=findClickableFromPoint(px,py,'lower-right',videoRect,false);
-                          for(var hs=0;hs<hit.summaries.length&&rightSummaries.length<7;hs++){
-                            if(rightSummaries.indexOf(hit.summaries[hs])<0){rightSummaries.push(hit.summaries[hs]);}
-                          }
-                          if(hit.best&&(!bestRight||hit.best.score>bestRight.score)){bestRight=hit.best;}
+                      result.fullscreenTargetX=Math.round(videoRect.left+(videoRect.width*0.918));
+                      result.fullscreenTargetY=Math.round(videoRect.top+(videoRect.height*0.950));
+                      result.fullscreenTargetRect='video-rect:'+result.videoRect;
+                      result.fullscreenTargetLabel='video-rect-controlbar-coordinate';
+                      result.fullscreenTargetReason='coordinate-controlbar-fullscreen';
+                    }
+                    var audioPointsX=[0.04,0.08,0.12,0.18,0.26,0.34,0.50,0.66,0.78,0.88,0.94,0.97];
+                    var audioPointsY=[0.74,0.82,0.88,0.94];
+                    var bestAudio=null;
+                    var audioSummaries=[];
+                    for(var ax=0;ax<audioPointsX.length;ax++){
+                      for(var ay=0;ay<audioPointsY.length;ay++){
+                        var apx=Math.round(videoRect.left+Math.max(12,Math.min(videoRect.width-12,videoRect.width*audioPointsX[ax])));
+                        var apy=Math.round(videoRect.top+Math.max(12,Math.min(videoRect.height-12,videoRect.height*audioPointsY[ay])));
+                        var ahit=findClickableFromPoint(apx,apy,'controlbar',videoRect,true);
+                        for(var as=0;as<ahit.summaries.length&&audioSummaries.length<7;as++){
+                          if(audioSummaries.indexOf(ahit.summaries[as])<0){audioSummaries.push(ahit.summaries[as]);}
                         }
-                      }
-                      result.lowerRightCandidates=rightSummaries;
-                      if(bestRight){
-                        result.fullscreenTargetFound=true;
-                        result.fullscreenTargetX=bestRight.cx;
-                        result.fullscreenTargetY=bestRight.cy;
-                        result.fullscreenTargetRect=bestRight.rect;
-                        result.fullscreenTargetLabel=(bestRight.label||'').slice(0,120);
-                        result.fullscreenTargetReason='hotspot-lower-right';
+                        if(ahit.best&&(!bestAudio||ahit.best.score>bestAudio.score)){bestAudio=ahit.best;}
                       }
                     }
-                    if(mutedNeedsTap){
-                      var leftPointsX=[0.04,0.08,0.12,0.16];
-                      var leftPointsY=[0.82,0.88,0.94];
-                      var bestLeft=null;
-                      var leftSummaries=[];
-                      for(var lx=0;lx<leftPointsX.length;lx++){
-                        for(var ly=0;ly<leftPointsY.length;ly++){
-                          var lpx=Math.round(videoRect.left+Math.max(12,Math.min(videoRect.width-12,videoRect.width*leftPointsX[lx])));
-                          var lpy=Math.round(videoRect.top+Math.max(12,Math.min(videoRect.height-12,videoRect.height*leftPointsY[ly])));
-                          var lhit=findClickableFromPoint(lpx,lpy,'lower-left',videoRect,true);
-                          for(var ls=0;ls<lhit.summaries.length&&leftSummaries.length<7;ls++){
-                            if(leftSummaries.indexOf(lhit.summaries[ls])<0){leftSummaries.push(lhit.summaries[ls]);}
-                          }
-                          if(lhit.best&&(!bestLeft||lhit.best.score>bestLeft.score)){bestLeft=lhit.best;}
-                        }
-                      }
-                      result.lowerLeftCandidates=leftSummaries;
-                      if(bestLeft){
+                    result.lowerLeftCandidates=audioSummaries;
+                    if(bestAudio){
                         result.muteTargetFound=true;
-                        result.muteTargetX=bestLeft.cx;
-                        result.muteTargetY=bestLeft.cy;
-                        result.muteTargetRect=bestLeft.rect;
-                        result.muteTargetLabel=(bestLeft.label||'').slice(0,120);
-                        result.muteTargetReason='hotspot-lower-left';
-                      }
+                        result.muteTargetX=bestAudio.cx;
+                        result.muteTargetY=bestAudio.cy;
+                        result.muteTargetRect=bestAudio.rect;
+                        result.muteTargetLabel=(bestAudio.label||'').slice(0,120);
+                        result.muteTargetReason='semantic-unmute-control';
                     }
                   }
                 }
@@ -12128,10 +12370,46 @@ return changed>0;
             val videoHeightBefore = payload.optInt("videoHeightBefore", 0)
             val videoReady = payload.optBoolean("videoReady", false)
             val normalizedAttempt = attempt.coerceAtLeast(1)
+            val fullscreenActive = payload.optBoolean("fullscreenActive", false)
+            fun muteTapCount(): Int = facebookVideoHelperMuteTapCountBySession[session] ?: 0
+            fun volumeBoostCount(): Int = facebookVideoHelperVolumeBoostCountBySession[session] ?: 0
+            fun fullscreenTapCount(): Int = facebookVideoHelperFullscreenTapCountBySession[session] ?: 0
+            fun controlsHoverCount(): Int = facebookVideoHelperControlsHoverCountBySession[session] ?: 0
+            fun fullscreenCheckCount(): Int = facebookVideoHelperFullscreenCheckCountBySession[session] ?: 0
+            fun stage(): String = currentFacebookVideoHelperStage(session)
+            fun logSequenceState() = logFacebookVideoHelperSequenceState(session, pageUrl)
             GvLogger.i(
                 "GvInput",
                 "facebook-video-helper unmute-result reason=$helperReason pageUrl=$pageUrl mutedBefore=$mutedBefore mutedAfter=$mutedAfter defaultMutedBefore=$defaultMutedBefore defaultMutedAfter=$defaultMutedAfter volumeBefore=${String.format(java.util.Locale.US, "%.3f", volumeBefore)} volumeAfter=${String.format(java.util.Locale.US, "%.3f", volumeAfter)} paused=$pausedAfter readyState=$readyStateBefore currentTime=${String.format(java.util.Locale.US, "%.3f", currentTimeBefore)} videoWidth=$videoWidthBefore videoHeight=$videoHeightBefore"
             )
+            logSequenceState()
+            if (browserFullscreenStateBySession[session] == true || fullscreenActive) {
+                if (stage() != FACEBOOK_VIDEO_HELPER_STAGE_SEQUENCE_COMPLETE) {
+                    val enteredAttempt =
+                        (fullscreenCheckCount() + 1).coerceAtMost(FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_CALLBACK_CHECKS_PER_URL)
+                    facebookVideoHelperFullscreenCheckCountBySession[session] = enteredAttempt
+                    GvLogger.i(
+                        "GvInput",
+                        "facebook-video-helper fullscreen-check result=entered attempt=$enteredAttempt pageUrl=$pageUrl"
+                    )
+                }
+                markFacebookVideoHelperSequenceComplete(session, pageUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$pageUrl")
+                return
+            }
+            if (stage() == FACEBOOK_VIDEO_HELPER_STAGE_SEQUENCE_COMPLETE) {
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$pageUrl")
+                return
+            }
+            if (stage() == FACEBOOK_VIDEO_HELPER_STAGE_FULLSCREEN_PENDING) {
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-pending pageUrl=$pageUrl")
+                return
+            }
+            if (fullscreenTapCount() >= FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_TAPS_PER_URL) {
+                markFacebookVideoHelperSequenceComplete(session, pageUrl)
+                GvLogger.i("GvInput", "facebook-video-helper skipped reason=fullscreen-retry-budget pageUrl=$pageUrl")
+                return
+            }
             fun summarizePointStack(array: JSONArray?, limit: Int = 5): String {
                 if (array == null || array.length() == 0) return "none"
                 return buildString {
@@ -12157,11 +12435,11 @@ return changed>0;
             var muteTapHandled = false
             val muteTargetFound = payload.optBoolean("muteTargetFound", false)
             if (muteTargetFound) {
-                val muteTapCount = facebookVideoHelperMuteTapCountBySession[session] ?: 0
-                if (muteTapCount >= FACEBOOK_VIDEO_HELPER_MAX_MUTE_TAPS_PER_URL) {
+                val currentMuteTapCount = muteTapCount()
+                if (currentMuteTapCount >= FACEBOOK_VIDEO_HELPER_MAX_MUTE_TAPS_PER_URL) {
                     GvLogger.i(
                         "GvInput",
-                        "facebook-video-helper mute-target skipped reason=tap-budget pageUrl=$pageUrl attempt=$attempt taps=$muteTapCount/$FACEBOOK_VIDEO_HELPER_MAX_MUTE_TAPS_PER_URL"
+                        "facebook-video-helper mute-target skipped reason=single-toggle-protection pageUrl=$pageUrl attempt=$attempt taps=$currentMuteTapCount"
                     )
                 } else {
                     val muteX = payload.optDouble("muteTargetX", -1.0).toFloat()
@@ -12173,13 +12451,40 @@ return changed>0;
                             "GvInput",
                             "facebook-video-helper mute-target measured source=${payload.optString("muteTargetReason")} x=${mappedMuteX.toInt()} y=${mappedMuteY.toInt()} label=${payload.optString("muteTargetLabel")} rect=${payload.optString("muteTargetRect")} viewport=${viewportWidth}x${viewportHeight} attempt=$attempt"
                         )
+                        facebookVideoHelperMuteTapCountBySession[session] = currentMuteTapCount + 1
+                        logSequenceState()
                         muteTapHandled = dispatchNativeMouseTapAt(mappedMuteX, mappedMuteY, "facebook-video-helper-mute")
                         GvLogger.i(
                             "GvInput",
                             "facebook-video-helper mute-tap x=${mappedMuteX.toInt()} y=${mappedMuteY.toInt()} handled=$muteTapHandled pageUrl=$pageUrl attempt=$attempt"
                         )
-                        if (muteTapHandled) {
-                            facebookVideoHelperMuteTapCountBySession[session] = muteTapCount + 1
+                        if (muteTapHandled && volumeBoostCount() < FACEBOOK_VIDEO_HELPER_MAX_VOLUME_BOOST_TAPS_PER_URL) {
+                            val normalizedPageUrl = normalizeFacebookPassiveReentryUrl(pageUrl)
+                            val volumeBoostDomY = (muteY - 80f).coerceAtLeast(1f)
+                            val mappedVolumeBoostY = mapDomToNativeY(volumeBoostDomY)
+                            pointerHandler.postDelayed(
+                                {
+                                    if (isFinishing || isDestroyed) return@postDelayed
+                                    val tab = tabController.findTabBySession(session) ?: return@postDelayed
+                                    if (normalizeFacebookPassiveReentryUrl(tab.url) != normalizedPageUrl) return@postDelayed
+                                    if (browserFullscreenStateBySession[session] == true) {
+                                        GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$pageUrl")
+                                        return@postDelayed
+                                    }
+                                    val currentVolumeBoostCount = volumeBoostCount()
+                                    if (currentVolumeBoostCount >= FACEBOOK_VIDEO_HELPER_MAX_VOLUME_BOOST_TAPS_PER_URL) {
+                                        return@postDelayed
+                                    }
+                                    facebookVideoHelperVolumeBoostCountBySession[session] = currentVolumeBoostCount + 1
+                                    logSequenceState()
+                                    val handled = dispatchNativeMouseTapAt(mappedMuteX, mappedVolumeBoostY, "facebook-video-helper-volume-boost")
+                                    GvLogger.i(
+                                        "GvInput",
+                                        "facebook-video-helper volume-boost-tap x=${mappedMuteX.toInt()} y=${mappedVolumeBoostY.toInt()} handled=$handled pageUrl=$pageUrl attempt=$attempt"
+                                    )
+                                },
+                                250L,
+                            )
                         }
                     } else {
                         GvLogger.i(
@@ -12198,29 +12503,17 @@ return changed>0;
                     bypassCooldown = true,
                 )
             }
-            val fullscreenActive = payload.optBoolean("fullscreenActive", false)
             val fullscreenTargetFound = payload.optBoolean("fullscreenTargetFound", false)
-            if (fullscreenActive) {
-                GvLogger.i(
-                    "GvInput",
-                    "facebook-video-helper fullscreen-target skipped reason=already-fullscreen pageUrl=$pageUrl attempt=$attempt"
-                )
-                return
-            }
             if (muteTapHandled && normalizedAttempt < FACEBOOK_VIDEO_HELPER_MAX_ATTEMPTS_PER_URL) {
                 maybeScheduleFacebookVideoHelper(
                     session = session,
                     pageUrl = pageUrl,
                     reason = "mute-tap-followup",
-                    delayMs = FACEBOOK_VIDEO_HELPER_REVEAL_RETRY_DELAY_MS,
+                    delayMs = FACEBOOK_VIDEO_HELPER_POST_VOLUME_BOOST_DELAY_MS,
                     bypassCooldown = true,
                 )
                 return
             }
-            GvLogger.i(
-                "GvInput",
-                "facebook-video-helper fullscreen-automation skipped reason=disabled pageUrl=$pageUrl attempt=$attempt targetFound=$fullscreenTargetFound targetReason=${payload.optString("fullscreenTargetReason")} targetLabel=${payload.optString("fullscreenTargetLabel")}"
-            )
             if (!fullscreenTargetFound) {
                 val visualViewportWidth = payload.optInt("visualViewportWidth", 0).coerceAtLeast(0)
                 val visualViewportHeight = payload.optInt("visualViewportHeight", 0).coerceAtLeast(0)
@@ -12233,11 +12526,16 @@ return changed>0;
                 val controlsRevealStack = summarizePointStack(payload.optJSONArray("controlsRevealStack"))
                 val lowerRightCandidates = summarizePointStack(payload.optJSONArray("lowerRightCandidates"), 4)
                 val lowerLeftCandidates = summarizePointStack(payload.optJSONArray("lowerLeftCandidates"), 4)
+                val controlbarCandidates = summarizePointStack(payload.optJSONArray("controlbarCandidates"), 8)
                 val mappedHoverX = if (controlsRevealX > 0f) (controlsRevealX * scaleX).toInt() else -1
                 val mappedHoverY = if (controlsRevealY > 0f) (controlsRevealY * scaleY).toInt() else -1
                 GvLogger.i(
                     "GvInput",
                     "facebook-video-helper no-visible-fullscreen-target reason=${payload.optString("fullscreenTargetReason")} pageUrl=$pageUrl attempt=$attempt"
+                )
+                GvLogger.i(
+                    "GvInput",
+                    "facebook-video-helper controlbar-candidates count=${payload.optJSONArray("controlbarCandidates")?.length() ?: 0} items=$controlbarCandidates pageUrl=$pageUrl attempt=$attempt"
                 )
                 GvLogger.i(
                     "GvInput",
@@ -12248,15 +12546,37 @@ return changed>0;
                     "facebook-video-helper elementsFromPoint point=controls-reveal dom=${controlsRevealX.toInt()},${controlsRevealY.toInt()} stack=$controlsRevealStack"
                 )
                 if (videoReady && controlsRevealSuggested && controlsRevealX > 0f && controlsRevealY > 0f) {
+                    val currentHoverCount = controlsHoverCount()
+                    if (currentHoverCount >= FACEBOOK_VIDEO_HELPER_MAX_CONTROLS_REVEAL_HOVERS_BEFORE_FULLSCREEN) {
+                        GvLogger.i("GvInput", "facebook-video-helper skipped reason=hover-budget pageUrl=$pageUrl attempt=$attempt")
+                        return
+                    }
+                    facebookVideoHelperControlsHoverCountBySession[session] = currentHoverCount + 1
+                    logSequenceState()
+                    val mappedHoverXFloat = mapDomToNativeX(controlsRevealX)
+                    val mappedHoverYFloat = mapDomToNativeY(controlsRevealY)
+                    val hoverHandled = dispatchNativeMouseHoverAt(mappedHoverXFloat, mappedHoverYFloat, "facebook-video-helper-controls-reveal")
                     GvLogger.i(
                         "GvInput",
-                        "facebook-video-helper controls-hover skipped reason=fullscreen-disabled pageUrl=$pageUrl attempt=$normalizedAttempt"
+                        "facebook-video-helper controls-hover x=${mappedHoverXFloat.toInt()} y=${mappedHoverYFloat.toInt()} handled=$hoverHandled pageUrl=$pageUrl attempt=$normalizedAttempt"
+                    )
+                    maybeScheduleFacebookVideoHelper(
+                        session = session,
+                        pageUrl = pageUrl,
+                        reason = "controls-reveal-reprobe",
+                        delayMs = FACEBOOK_VIDEO_HELPER_REVEAL_RETRY_DELAY_MS,
+                        bypassCooldown = true,
                     )
                 }
                 return
             }
             val centerX = payload.optDouble("fullscreenTargetX", -1.0).toFloat()
             val centerY = payload.optDouble("fullscreenTargetY", -1.0).toFloat()
+            val controlbarCandidates = summarizePointStack(payload.optJSONArray("controlbarCandidates"), 8)
+            GvLogger.i(
+                "GvInput",
+                "facebook-video-helper controlbar-candidates count=${payload.optJSONArray("controlbarCandidates")?.length() ?: 0} items=$controlbarCandidates pageUrl=$pageUrl attempt=$attempt"
+            )
             if (centerX <= 0f || centerY <= 0f) {
                 GvLogger.i(
                     "GvInput",
@@ -12266,13 +12586,28 @@ return changed>0;
             }
             val mappedX = mapDomToNativeX(centerX)
             val mappedY = mapDomToNativeY(centerY)
-            GvLogger.i(
-                "GvInput",
-                "facebook-video-helper fullscreen-target measured source=${payload.optString("fullscreenTargetReason")} x=${mappedX.toInt()} y=${mappedY.toInt()} label=${payload.optString("fullscreenTargetLabel")} rect=${payload.optString("fullscreenTargetRect")} viewport=${viewportWidth}x${viewportHeight} attempt=$attempt"
-            )
-            GvLogger.i(
-                "GvInput",
-                "facebook-video-helper fullscreen-tap skipped reason=fullscreen-disabled x=${mappedX.toInt()} y=${mappedY.toInt()} pageUrl=$pageUrl attempt=$attempt"
+            val fullscreenReason = payload.optString("fullscreenTargetReason")
+            val controlbarCandidateCount = payload.optJSONArray("controlbarCandidates")?.length() ?: 0
+            if (fullscreenReason != "coordinate-controlbar-fullscreen" || controlbarCandidateCount <= 0) {
+                GvLogger.i(
+                    "GvInput",
+                    "facebook-video-helper fullscreen-target skipped reason=unsafe-candidate pageUrl=$pageUrl attempt=$attempt source=$fullscreenReason label=${payload.optString("fullscreenTargetLabel")} rect=${payload.optString("fullscreenTargetRect")}"
+                )
+                return
+            }
+            facebookVideoHelperLastFullscreenTargetXBySession[session] = mappedX
+            facebookVideoHelperLastFullscreenTargetYBySession[session] = mappedY
+            scheduleFacebookVideoHelperFullscreenAttempt(
+                session = session,
+                pageUrl = pageUrl,
+                mappedX = mappedX,
+                mappedY = mappedY,
+                source = fullscreenReason,
+                label = payload.optString("fullscreenTargetLabel"),
+                rect = payload.optString("fullscreenTargetRect"),
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                attempt = attempt,
             )
             return
         }
@@ -12898,10 +13233,21 @@ return changed>0;
         private const val FACEBOOK_PASSIVE_MAX_ATTEMPTS = 6
         private const val FACEBOOK_PASSIVE_REENTRY_MIN_ADVANCED_TIME_SECONDS = 0.25
         private const val FACEBOOK_VIDEO_HELPER_MAX_ATTEMPTS_PER_URL = 6
-        private const val FACEBOOK_VIDEO_HELPER_MAX_MUTE_TAPS_PER_URL = 2
+        private const val FACEBOOK_VIDEO_HELPER_MAX_MUTE_TAPS_PER_URL = 1
+        private const val FACEBOOK_VIDEO_HELPER_MAX_VOLUME_BOOST_TAPS_PER_URL = 1
+        private const val FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_TAPS_PER_URL = 2
+        private const val FACEBOOK_VIDEO_HELPER_MAX_CONTROLS_HOVER_ATTEMPTS_PER_URL = 3
+        private const val FACEBOOK_VIDEO_HELPER_MAX_CONTROLS_REVEAL_HOVERS_BEFORE_FULLSCREEN = 1
+        private const val FACEBOOK_VIDEO_HELPER_MAX_FULLSCREEN_CALLBACK_CHECKS_PER_URL = 2
         private const val FACEBOOK_VIDEO_HELPER_COOLDOWN_MS = 1600L
         private const val FACEBOOK_VIDEO_HELPER_RETRY_DELAY_MS = 1500L
         private const val FACEBOOK_VIDEO_HELPER_REVEAL_RETRY_DELAY_MS = 700L
+        private const val FACEBOOK_VIDEO_HELPER_POST_VOLUME_BOOST_DELAY_MS = 1_000L
+        private const val FACEBOOK_VIDEO_HELPER_FULLSCREEN_HOVER_SETTLE_DELAY_MS = 320L
+        private const val FACEBOOK_VIDEO_HELPER_FULLSCREEN_CHECK_DELAY_MS = 1_400L
+        private const val FACEBOOK_VIDEO_HELPER_STAGE_SOUND = "sound"
+        private const val FACEBOOK_VIDEO_HELPER_STAGE_FULLSCREEN_PENDING = "fullscreen-pending"
+        private const val FACEBOOK_VIDEO_HELPER_STAGE_SEQUENCE_COMPLETE = "sequence-complete"
         private const val POINTER_INITIAL_REPEAT_DELAY_MS = 110L
         private const val POINTER_REPEAT_FRAME_MS = 16L
         private const val POINTER_MOVE_STEP_PX = 18f
