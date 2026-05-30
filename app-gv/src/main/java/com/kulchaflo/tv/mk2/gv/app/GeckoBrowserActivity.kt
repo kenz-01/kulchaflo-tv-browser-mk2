@@ -162,6 +162,57 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var clicked: Boolean = false,
     )
 
+    private data class CaribvisionSessionState(
+        var loginRequired: Boolean = false,
+        var playerVisible: Boolean = false,
+        var pageUrl: String = "",
+        var reason: String = "",
+    )
+
+    private data class CaribvisionPlayAssistState(
+        var active: Boolean = false,
+        var requiresUserAction: Boolean = false,
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var xRatio: Float = -1f,
+        var yRatio: Float = -1f,
+        var reason: String = "",
+        var targetKind: String = "",
+        var targetLabel: String = "",
+        var pageUrl: String = "",
+        var viewportWidth: Float = 0f,
+        var viewportHeight: Float = 0f,
+        var hasVideo: Boolean = false,
+        var paused: Boolean = true,
+        var muted: Boolean = false,
+        var volume: Float = 1f,
+        var readyState: Int = 0,
+        var currentTime: Double = 0.0,
+        var videoWidth: Int = 0,
+        var videoHeight: Int = 0,
+    )
+
+    private data class CaribvisionFullscreenAssistState(
+        var active: Boolean = false,
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var xRatio: Float = -1f,
+        var yRatio: Float = -1f,
+        var audioCenterX: Float = -1f,
+        var audioCenterY: Float = -1f,
+        var audioXRatio: Float = -1f,
+        var audioYRatio: Float = -1f,
+        var reason: String = "",
+        var targetKind: String = "",
+        var targetLabel: String = "",
+        var audioTargetKind: String = "",
+        var audioTargetLabel: String = "",
+        var pageUrl: String = "",
+        var viewportWidth: Float = 0f,
+        var viewportHeight: Float = 0f,
+        var fullscreenActive: Boolean = false,
+    )
+
     private data class CgtvCandidateSelection(
         val sourceUrl: String,
         val mimeType: String?,
@@ -230,6 +281,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val chtvFullscreenAssistBySession = LinkedHashMap<GeckoSession, ChtvFullscreenAssistState>()
     private val chtvFullscreenAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val chtvFullscreenAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val caribvisionSessionStateBySession = LinkedHashMap<GeckoSession, CaribvisionSessionState>()
+    private val caribvisionPlayAssistBySession = LinkedHashMap<GeckoSession, CaribvisionPlayAssistState>()
+    private val caribvisionPlayAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val caribvisionPlayAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val caribvisionFullscreenAssistBySession = LinkedHashMap<GeckoSession, CaribvisionFullscreenAssistState>()
+    private val caribvisionFullscreenAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val caribvisionFullscreenAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val caribvisionFullscreenCheckRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val caribvisionFullscreenStageBySession = LinkedHashMap<GeckoSession, String>()
+    private val caribvisionFullscreenAssistSuppressedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val cgtvBrowserPlaybackActiveBySession = LinkedHashSet<GeckoSession>()
     // Fallback release runnables scheduled after the first assisted native tap to ensure
     // play-assist state does not permanently suppress user interaction when page-side
@@ -580,6 +641,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
+        if (maybeHandleCaribVisionPlayAssistOk(event)) {
+            return true
+        }
         if (maybeHandleChtvPlayAssistOk(event)) {
             return true
         }
@@ -906,6 +970,28 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         return true
     }
 
+    private fun maybeHandleCaribVisionPlayAssistOk(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        if (!isCaribvisionPlayerActive(activeTab.session, activeTab.url)) {
+            return false
+        }
+        val state = caribvisionPlayAssistBySession[activeTab.session] ?: return false
+        if (!state.active || !state.requiresUserAction) {
+            return false
+        }
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        dispatchCaribvisionPlayAssistNativeTap(activeTab.session, state, trigger = "ok")
+        return true
+    }
+
     override fun onDestroy() {
         stopPointerRepeater()
         pointerHandler.removeCallbacksAndMessages(null)
@@ -1052,6 +1138,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 resetChtvPlayAssistAttempt(session, reason = "page", pageUrl = url.orEmpty(), logWhenEmpty = true)
             } else {
                 resetChtvPlayAssistAttempt(session, reason = "leave-context", pageUrl = url.orEmpty())
+            }
+            if (isCaribVisionAppUrl(url.orEmpty())) {
+                resetCaribvisionHelperAttempt(session, reason = "page", pageUrl = url.orEmpty(), logWhenEmpty = true)
+            } else {
+                resetCaribvisionHelperAttempt(session, reason = "leave-context", pageUrl = url.orEmpty())
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -1240,6 +1331,18 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     )
                     GvLogger.i("GvInput", "facebook-video-helper skipped reason=sequence-complete pageUrl=$pageUrl")
                 }
+                if (isCaribvisionPlayerActive(session, pageUrl)) {
+                    cancelCaribvisionFullscreenCheck(session)
+                    caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_ENTERED
+                    val attempt = caribvisionFullscreenAssistNativeTapCountBySession[session] ?: 0
+                    caribvisionFullscreenAssistNativeTapCountBySession.remove(session)
+                    caribvisionFullscreenAssistNativeTapLastMsBySession.remove(session)
+                    GvLogger.i(
+                        "GvMedia",
+                        "caribvision fullscreen check result=entered attempt=$attempt pageUrl=$pageUrl"
+                    )
+                    GvLogger.i("GvMedia", "caribvision fullscreen complete pageUrl=$pageUrl")
+                }
                 enterBrowserFullscreenPointerSleep(reason = "fullscreen-enter")
             } else {
                 maybeDispatchYouTubeFullscreenChatGuardRemove(session, pageUrl, reason = "fullscreen-exit")
@@ -1300,6 +1403,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         chtvFullscreenAssistNativeTapCountBySession.remove(tab.session)
         chtvFullscreenAssistNativeTapLastMsBySession.remove(tab.session)
         chtvFullscreenAssistSuppressedUrlBySession.remove(tab.session)
+        caribvisionSessionStateBySession.remove(tab.session)
+        caribvisionPlayAssistBySession.remove(tab.session)
+        caribvisionPlayAssistNativeTapCountBySession.remove(tab.session)
+        caribvisionPlayAssistNativeTapLastMsBySession.remove(tab.session)
+        caribvisionFullscreenAssistBySession.remove(tab.session)
+        caribvisionFullscreenAssistNativeTapCountBySession.remove(tab.session)
+        caribvisionFullscreenAssistNativeTapLastMsBySession.remove(tab.session)
+        caribvisionFullscreenAssistSuppressedUrlBySession.remove(tab.session)
+        cancelCaribvisionFullscreenCheck(tab.session)
+        caribvisionFullscreenStageBySession.remove(tab.session)
         cgtvBrowserPlaybackActiveBySession.remove(tab.session)
         clearFacebookVideoHelperTracking(tab.session)
         stopYouTubeAutoFullscreen(tab.session, reason = "tab-closed")
@@ -7307,6 +7420,10 @@ return changed>0;
         return chtvFullscreenAssistSuppressedUrlBySession[session] == pageUrl
     }
 
+    private fun isCaribvisionFullscreenAssistSuppressed(session: GeckoSession, pageUrl: String): Boolean {
+        return caribvisionFullscreenAssistSuppressedUrlBySession[session] == pageUrl
+    }
+
     private fun suppressChtvFullscreenAssistAfterBack(
         session: GeckoSession,
         pageUrl: String,
@@ -7322,6 +7439,24 @@ return changed>0;
         GvLogger.i(
             "GvInput",
             "chtv-back-suppress-autofullscreen reason=$reason url=$pageUrl"
+        )
+    }
+
+    private fun suppressCaribvisionFullscreenAssistAfterBack(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isCaribVisionAppUrl(pageUrl)) {
+            return
+        }
+        caribvisionFullscreenAssistSuppressedUrlBySession[session] = pageUrl
+        session.loadUri(
+            "javascript:(function(){try{window.__kfCaribvisionFullscreenAssistSuppressedUrl=window.location.href;}catch(_){}})();"
+        )
+        GvLogger.i(
+            "GvInput",
+            "caribvision-back-suppress-autofullscreen reason=$reason url=$pageUrl"
         )
     }
 
@@ -9101,6 +9236,22 @@ return changed>0;
                     chtvPermissionUri ||
                         (chtvTopContext && chtvThirdParty)
                     )
+            val caribvisionTopContext = isCaribVisionAppUrl(activeSessionUrl) || isCaribVisionAppUrl(currentRootUrl)
+            val caribvisionPermissionUri =
+                isCaribVisionAutoplayContextUrl(permission.uri.orEmpty()) ||
+                    isCaribVisionAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
+            val caribvisionThirdParty =
+                thirdPartyHost == CARIBVISION_OFFICIAL_HLS_HOST ||
+                    thirdPartyHost == "app.caribvision.tv"
+            val caribvisionAutoplayScoped = ENABLE_CARIBVISION_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    caribvisionPermissionUri ||
+                        (caribvisionTopContext && caribvisionThirdParty)
+                    )
             val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
             val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
             val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
@@ -9120,6 +9271,7 @@ return changed>0;
                 novusAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cgtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 chtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                caribvisionAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -9171,6 +9323,12 @@ return changed>0;
                     "chtv autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
+            if (caribvisionAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
                 (isCvmVimeoDiagnosticUrl(permission.uri.orEmpty()) || isCvmVimeoDiagnosticUrl(permission.thirdPartyOrigin.orEmpty()))
             ) {
@@ -9204,6 +9362,7 @@ return changed>0;
                     KeyEvent.KEYCODE_DPAD_UP,
                     KeyEvent.KEYCODE_DPAD_DOWN -> {
                         val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+                        val activeSession = tabController.getActiveTab()?.session
                         val wasHidden = !pointerVisible || !pointerOverlay.isPointerVisible()
                         if (isTttOrTegoLivePlayerUrl(activeUrl)) {
                             val revealReason = if (wasHidden) "dpad-wake" else "dpad-move"
@@ -9237,6 +9396,13 @@ return changed>0;
                                 GvLogger.i(
                                     "GvMedia",
                                     "chtv transport reveal hover reason=$revealReason x=${pointerX.toInt()} y=${pointerY.toInt()} handled=$handled pageUrl=$activeUrl"
+                                )
+                            } else if (isCaribvisionPlayerActive(activeSession, activeUrl)) {
+                                val revealReason = if (wasHidden) "dpad-wake" else "dpad-move"
+                                val handled = dispatchNativeMouseHoverAt(pointerX, pointerY, "caribvision-transport-reveal-$revealReason")
+                                GvLogger.i(
+                                    "GvMedia",
+                                    "caribvision transport reveal hover reason=$revealReason x=${pointerX.toInt()} y=${pointerY.toInt()} handled=$handled pageUrl=$activeUrl"
                                 )
                             }
                             maybeDispatchKulchaFloHomepageRailHoverScroll(event.keyCode, move.overshootX, reason = "initial-edge")
@@ -9453,6 +9619,22 @@ return changed>0;
             GvLogger.i(
                 "GvInput",
                 "facebook back consumed reason=exit-fullscreen url=$activeUrl downHandled=$downHandled upHandled=$upHandled"
+            )
+            return true
+        }
+        if (fullscreenActive && isCaribvisionPlayerActive(activeTab.session, activeUrl)) {
+            suppressCaribvisionFullscreenAssistAfterBack(activeTab.session, activeUrl, reason = "back-pressed")
+            val eventTime = SystemClock.uptimeMillis()
+            val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0)
+            val up = KeyEvent(eventTime, eventTime + 20L, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE, 0)
+            val downHandled = geckoView.dispatchKeyEvent(down)
+            val upHandled = geckoView.dispatchKeyEvent(up)
+            activeTab.session.loadUri(
+                "javascript:(function(){try{if(document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen();}}catch(_){}})();"
+            )
+            GvLogger.i(
+                "GvInput",
+                "caribvision back consumed reason=exit-fullscreen url=$activeUrl downHandled=$downHandled upHandled=$upHandled"
             )
             return true
         }
@@ -9849,11 +10031,13 @@ return changed>0;
     }
 
     private fun shouldPointerAssistIdleSleep(url: String): Boolean {
+        val activeSession = tabController.getActiveTab()?.session
         return isYouTubePageUrl(url) ||
             isAbsTegoGestureFullscreenContextUrl(url) ||
             isTttTegoContextUrl(url) ||
             isCgtvContextUrl(url) ||
-            isChtvContextUrl(url)
+            isChtvContextUrl(url) ||
+            isCaribvisionPlayerActive(activeSession, url)
     }
 
     private fun isKulchaFloGeneralSiteFocusUrl(url: String): Boolean {
@@ -13571,6 +13755,122 @@ return changed>0;
             )
             return
         }
+        if (type == "caribvision-session-state") {
+            val state = CaribvisionSessionState(
+                loginRequired = payload.optBoolean("loginRequired"),
+                playerVisible = payload.optBoolean("playerVisible"),
+                pageUrl = pageUrl,
+                reason = payload.optString("stateReason", payload.optString("reason")),
+            )
+            if (state.loginRequired || state.playerVisible) {
+                caribvisionSessionStateBySession[session] = state
+            } else {
+                caribvisionSessionStateBySession.remove(session)
+            }
+            if (state.loginRequired) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision session login-required reason=login-wall pageUrl=$pageUrl playerRect=${payload.optString("playerRect")} videoRect=${payload.optString("videoRect")}"
+                )
+                GvLogger.i("GvMedia", "caribvision helper skipped reason=login-required pageUrl=$pageUrl")
+            }
+            if (state.playerVisible) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision session likely-authenticated reason=player-visible pageUrl=$pageUrl hasExactHls=${payload.optBoolean("hasExactHls")} hasDirectLiveId=${payload.optBoolean("hasDirectLiveId")}"
+                )
+                GvLogger.i("GvMedia", "caribvision helper active reason=player-visible pageUrl=$pageUrl")
+            }
+            return
+        }
+        if (type == "caribvision-play-assist") {
+            val active = payload.optBoolean("active")
+            val requiresUserAction = payload.optBoolean("requiresUserAction", false)
+            val targetKind = payload.optString("targetKind")
+            val state = CaribvisionPlayAssistState(
+                active = active,
+                requiresUserAction = requiresUserAction,
+                centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                xRatio = payload.optDouble("xRatio", -1.0).toFloat(),
+                yRatio = payload.optDouble("yRatio", -1.0).toFloat(),
+                reason = payload.optString("assistReason", payload.optString("reason")),
+                targetKind = targetKind,
+                targetLabel = payload.optString("targetLabel"),
+                pageUrl = pageUrl,
+                viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat(),
+                viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat(),
+                hasVideo = payload.optBoolean("hasVideo"),
+                paused = payload.optBoolean("paused", true),
+                muted = payload.optBoolean("muted"),
+                volume = payload.optDouble("volume", 1.0).toFloat(),
+                readyState = payload.optInt("readyState"),
+                currentTime = payload.optDouble("currentTime"),
+                videoWidth = payload.optInt("videoWidth"),
+                videoHeight = payload.optInt("videoHeight"),
+            )
+            if (active) {
+                caribvisionPlayAssistBySession[session] = state
+            } else {
+                caribvisionPlayAssistBySession.remove(session)
+            }
+            GvLogger.i(
+                "GvMedia",
+                "caribvision play assist target measured x=${state.centerX.toInt()} y=${state.centerY.toInt()} label=${state.targetLabel.ifBlank { targetKind }} reason=${state.reason} pageUrl=$pageUrl rect=${payload.optString("rect")} playerRect=${payload.optString("playerRect")} active=$active playing=${payload.optBoolean("playing")} paused=${payload.optBoolean("paused")} muted=${payload.optBoolean("muted")} volume=${payload.optDouble("volume", 1.0)} readyState=${payload.optInt("readyState")} currentTime=${payload.optDouble("currentTime")} size=${payload.optInt("videoWidth")}x${payload.optInt("videoHeight")} mutedBefore=${payload.optBoolean("mutedBefore")} mutedAfter=${payload.optBoolean("mutedAfter")} volumeBefore=${payload.optDouble("volumeBefore", 1.0)} volumeAfter=${payload.optDouble("volumeAfter", 1.0)} unmuteMethods=${payload.optString("unmuteMethods")}"
+            )
+            if (active) {
+                dispatchCaribvisionPlayAssistNativeTap(session, state, trigger = "auto")
+            }
+            return
+        }
+        if (type == "caribvision-fullscreen-assist") {
+            val active = payload.optBoolean("active")
+            val requestNativeTap = payload.optBoolean("requestNativeTap", false)
+            val targetKind = payload.optString("targetKind")
+            val suppressed = isCaribvisionFullscreenAssistSuppressed(session, pageUrl)
+            val state = CaribvisionFullscreenAssistState(
+                active = active,
+                centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                xRatio = payload.optDouble("xRatio", -1.0).toFloat(),
+                yRatio = payload.optDouble("yRatio", -1.0).toFloat(),
+                audioCenterX = payload.optDouble("audioCenterX", -1.0).toFloat(),
+                audioCenterY = payload.optDouble("audioCenterY", -1.0).toFloat(),
+                audioXRatio = payload.optDouble("audioXRatio", -1.0).toFloat(),
+                audioYRatio = payload.optDouble("audioYRatio", -1.0).toFloat(),
+                reason = payload.optString("assistReason", payload.optString("reason")),
+                targetKind = targetKind,
+                targetLabel = payload.optString("targetLabel"),
+                audioTargetKind = payload.optString("audioTargetKind"),
+                audioTargetLabel = payload.optString("audioTargetLabel"),
+                pageUrl = pageUrl,
+                viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat(),
+                viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat(),
+                fullscreenActive = payload.optBoolean("fullscreenActive"),
+            )
+            if (active || state.fullscreenActive) {
+                caribvisionFullscreenAssistBySession[session] = state
+            } else {
+                caribvisionFullscreenAssistBySession.remove(session)
+            }
+            if (state.centerX >= 0f && state.centerY >= 0f) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision fullscreen target measured source=$targetKind x=${state.centerX.toInt()} y=${state.centerY.toInt()} pageUrl=$pageUrl rect=${payload.optString("rect")} playerRect=${payload.optString("playerRect")} label=${state.targetLabel.ifBlank { targetKind }} audioTarget=${state.audioTargetLabel.ifBlank { state.audioTargetKind }} audioX=${state.audioCenterX.toInt()} audioY=${state.audioCenterY.toInt()} active=$active requestNativeTap=$requestNativeTap fullscreenActive=${state.fullscreenActive} suppressedAfterBack=$suppressed audioDomClicked=${payload.optBoolean("audioDomClicked")} fullscreenDomClicked=${payload.optBoolean("fullscreenDomClicked")} playing=${payload.optBoolean("playing")} paused=${payload.optBoolean("paused")} muted=${payload.optBoolean("muted")} volume=${payload.optDouble("volume", 1.0)} playbackPrimed=${payload.optBoolean("playbackPrimed")} audioPrimed=${payload.optBoolean("audioPrimed")} readyState=${payload.optInt("readyState")} currentTime=${payload.optDouble("currentTime")}"
+                )
+            }
+            if (suppressed) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision fullscreen assist skipped reason=suppressed-after-back pageUrl=$pageUrl targetKind=$targetKind"
+                )
+                return
+            }
+            if (active && requestNativeTap && !state.fullscreenActive) {
+                dispatchCaribvisionFullscreenAssistNativeTap(session, state, trigger = "auto")
+            }
+            return
+        }
         if (type == "cgtv-transport-lock") {
             GvLogger.i(
                 "GvMedia",
@@ -13611,33 +13911,7 @@ return changed>0;
                 "GvMedia",
                 "caribvision live hls ready pageUrl=$pageUrl playerId=${payload.optString("playerId")} sourceType=$sourceType muted=$muted autoplay=$autoplay sourceUrl=$sourceUrl"
             )
-            if (!isCaribVisionAppUrl(pageUrl)) {
-                GvLogger.i("GvMedia", "caribvision native promote skipped reason=page-context pageUrl=$pageUrl")
-                return
-            }
-            if (!isExactCaribVisionLiveHlsUrl(sourceUrl)) {
-                GvLogger.i("GvMedia", "caribvision native promote skipped reason=non-exact-hls sourceUrl=$sourceUrl")
-                return
-            }
-            val observation = mediaPathController.onExtensionMediaEvidence(
-                pageUrl = pageUrl,
-                sourceUrl = sourceUrl,
-                mimeType = if (sourceType.isBlank()) "application/x-mpegURL" else sourceType,
-                title = title,
-            )
-            if (observation == null) {
-                GvLogger.i("GvMedia", "caribvision native promote skipped reason=observation-null sourceUrl=$sourceUrl")
-                return
-            }
-            GvLogger.i("GvMedia", "caribvision native promote allowed exact-hls sourceUrl=$sourceUrl")
-            if (tabController.getActiveTab()?.session == session) {
-                if (isExactCaribVisionLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
-                    GvLogger.i("GvMedia", "caribvision native promote skipped reason=already-active sourceUrl=$sourceUrl")
-                    return
-                }
-                geckoView.visibility = View.GONE
-                promotedMediaPlayer.play(observation)
-            }
+            GvLogger.i("GvMedia", "caribvision native promote skipped reason=browser-helper sourceUrl=$sourceUrl")
             return
         }
         if (type == "cbc-live-hls-ready") {
@@ -13697,25 +13971,7 @@ return changed>0;
                 val candidate = candidates.optJSONObject(index) ?: continue
                 val sourceUrl = candidate.optString("src").trim()
                 if (!isExactCaribVisionLiveHlsUrl(sourceUrl)) continue
-                val observation = mediaPathController.onExtensionMediaEvidence(
-                    pageUrl = pageUrl,
-                    sourceUrl = sourceUrl,
-                    mimeType = "application/x-mpegURL",
-                    title = title,
-                )
-                if (observation == null) {
-                    GvLogger.i("GvMedia", "caribvision native promote skipped reason=observation-null sourceUrl=$sourceUrl")
-                    return
-                }
-                GvLogger.i("GvMedia", "caribvision native promote allowed exact-hls sourceUrl=$sourceUrl")
-                if (tabController.getActiveTab()?.session == session) {
-                    if (isExactCaribVisionLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
-                        GvLogger.i("GvMedia", "caribvision native promote skipped reason=already-active sourceUrl=$sourceUrl")
-                        return
-                    }
-                    geckoView.visibility = View.GONE
-                    promotedMediaPlayer.play(observation)
-                }
+                GvLogger.i("GvMedia", "caribvision native promote skipped reason=browser-helper sourceUrl=$sourceUrl")
                 return
             }
         }
@@ -13823,6 +14079,7 @@ return changed>0;
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CHTV_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_CARIBVISION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
@@ -13918,6 +14175,15 @@ return changed>0;
         private const val CHTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 2
         private const val CHTV_FULLSCREEN_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
         private const val CHTV_FULLSCREEN_ASSIST_AUTO_TAP_LIMIT = 2
+        private const val CARIBVISION_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
+        private const val CARIBVISION_PLAY_ASSIST_AUTO_TAP_LIMIT = 2
+        private const val CARIBVISION_FULLSCREEN_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 800L
+        private const val CARIBVISION_FULLSCREEN_ASSIST_AUTO_TAP_LIMIT = 2
+        private const val CARIBVISION_FULLSCREEN_CHECK_DELAY_MS = 1400L
+        private const val CARIBVISION_FULLSCREEN_STAGE_NOT_STARTED = "fullscreen-not-started"
+        private const val CARIBVISION_FULLSCREEN_STAGE_PENDING = "fullscreen-pending"
+        private const val CARIBVISION_FULLSCREEN_STAGE_ENTERED = "fullscreen-entered"
+        private const val CARIBVISION_FULLSCREEN_STAGE_FAILED = "fullscreen-failed"
         // Fallback timeout used to release CGTV play-assist state if page-side playing=true
         // does not arrive within this window after an assisted native tap.
         private const val CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS = 5000L
@@ -14513,6 +14779,28 @@ return changed>0;
         }
     }
 
+    private fun resetCaribvisionHelperAttempt(
+        session: GeckoSession,
+        reason: String,
+        pageUrl: String,
+        logWhenEmpty: Boolean = false,
+    ) {
+        val hadState = caribvisionSessionStateBySession.remove(session) != null ||
+            caribvisionPlayAssistBySession.remove(session) != null ||
+            caribvisionPlayAssistNativeTapCountBySession.remove(session) != null ||
+            caribvisionPlayAssistNativeTapLastMsBySession.remove(session) != null ||
+            caribvisionFullscreenAssistBySession.remove(session) != null ||
+            caribvisionFullscreenAssistNativeTapCountBySession.remove(session) != null ||
+            caribvisionFullscreenAssistNativeTapLastMsBySession.remove(session) != null ||
+            caribvisionFullscreenAssistSuppressedUrlBySession.remove(session) != null ||
+            caribvisionFullscreenStageBySession.remove(session) != null ||
+            caribvisionFullscreenCheckRunnableBySession.containsKey(session)
+        cancelCaribvisionFullscreenCheck(session)
+        if (hadState || logWhenEmpty) {
+            GvLogger.i("GvMedia", "caribvision helper reset reason=$reason pageUrl=$pageUrl")
+        }
+    }
+
     private fun scheduleCgtvPlayAssistFallbackRelease(session: GeckoSession, pageUrl: String) {
         try {
             if (cgtvPlayAssistFallbackReleaseRunnableBySession.containsKey(session)) return
@@ -14688,7 +14976,7 @@ return changed>0;
         val usingRatio = state.xRatio > 0f && state.yRatio > 0f
         val cssX = state.centerX
         val cssY = state.centerY
-        val x =
+        var x =
             if (usingRatio) {
                 (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
             } else {
@@ -14700,7 +14988,7 @@ return changed>0;
                     }
                 (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
             }
-        val y =
+        var y =
             if (usingRatio) {
                 (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
             } else {
@@ -14767,7 +15055,7 @@ return changed>0;
         val usingRatio = state.xRatio > 0f && state.yRatio > 0f
         val cssX = state.centerX
         val cssY = state.centerY
-        val x =
+        var x =
             if (usingRatio) {
                 (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
             } else {
@@ -14779,7 +15067,7 @@ return changed>0;
                     }
                 (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
             }
-        val y =
+        var y =
             if (usingRatio) {
                 (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
             } else {
@@ -14798,6 +15086,280 @@ return changed>0;
             "GvMedia",
             "chtv fullscreen assist native tap dispatched trigger=$trigger handled=$handled native=${x.toInt()},${y.toInt()} css=${cssX.toInt()},${cssY.toInt()} viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} ratio=${if (usingRatio) "${state.xRatio},${state.yRatio}" else "-,-"} targetKind=${state.targetKind} reason=${state.reason} pageUrl=${state.pageUrl}"
         )
+        return handled
+    }
+
+    private fun dispatchCaribvisionPlayAssistNativeTap(
+        session: GeckoSession,
+        state: CaribvisionPlayAssistState,
+        trigger: String,
+    ): Boolean {
+        val activeTab = tabController.getActiveTab()
+        if (activeTab?.session != session || !isCaribvisionPlayerActive(session, activeTab.url)) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision play assist native tap skipped trigger=$trigger reason=active-url-mismatch pageUrl=${state.pageUrl} activeUrl=${activeTab?.url.orEmpty()}"
+            )
+            return false
+        }
+        if (state.centerX < 0f || state.centerY < 0f) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision play assist native tap skipped trigger=$trigger reason=missing-coordinates pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = caribvisionPlayAssistNativeTapLastMsBySession[session] ?: 0L
+        if (now - last < CARIBVISION_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision play assist native tap skipped trigger=$trigger reason=rate-limited pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (trigger.startsWith("auto")) {
+            val count = caribvisionPlayAssistNativeTapCountBySession[session] ?: 0
+            if (count >= CARIBVISION_PLAY_ASSIST_AUTO_TAP_LIMIT) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision play assist native tap skipped trigger=$trigger reason=auto-limit pageUrl=${state.pageUrl}"
+                )
+                return false
+            }
+            caribvisionPlayAssistNativeTapCountBySession[session] = count + 1
+        }
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val usingRatio = state.xRatio > 0f && state.yRatio > 0f
+        var x =
+            if (usingRatio) {
+                (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
+            } else {
+                val scaleX =
+                    if (state.viewportWidth > 0f && maxWidth > state.viewportWidth + 1f) {
+                        maxWidth / state.viewportWidth
+                    } else {
+                        1f
+                    }
+                (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
+            }
+        var y =
+            if (usingRatio) {
+                (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
+            } else {
+                val scaleY =
+                    if (state.viewportHeight > 0f && maxHeight > state.viewportHeight + 1f) {
+                        maxHeight / state.viewportHeight
+                    } else {
+                        1f
+                    }
+                (state.centerY * scaleY).coerceIn(1f, maxHeight - 1f)
+            }
+        showPointerAt(x, y, reason = "caribvision-play-assist")
+        caribvisionPlayAssistNativeTapLastMsBySession[session] = now
+        val handled = dispatchNativeMouseTapAt(x, y, "caribvision-play-assist-$trigger")
+        GvLogger.i(
+            "GvMedia",
+            "caribvision play assist native tap dispatched x=${x.toInt()} y=${y.toInt()} handled=$handled trigger=$trigger label=${state.targetLabel.ifBlank { state.targetKind }} reason=${state.reason} pageUrl=${state.pageUrl}"
+        )
+        return handled
+    }
+
+    private fun cancelCaribvisionFullscreenCheck(session: GeckoSession) {
+        caribvisionFullscreenCheckRunnableBySession.remove(session)?.let { runnable ->
+            pointerHandler.removeCallbacks(runnable)
+        }
+    }
+
+    private fun scheduleCaribvisionFullscreenCheck(
+        session: GeckoSession,
+        state: CaribvisionFullscreenAssistState,
+        attempt: Int,
+    ) {
+        cancelCaribvisionFullscreenCheck(session)
+        val runnable = Runnable {
+            caribvisionFullscreenCheckRunnableBySession.remove(session)
+            val activeTab = tabController.getActiveTab()
+            val currentUrl = activeTab?.url.orEmpty().ifBlank { state.pageUrl }
+            val entered = browserFullscreenStateBySession[session] == true
+            if (entered) {
+                caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_ENTERED
+                caribvisionFullscreenAssistNativeTapCountBySession.remove(session)
+                caribvisionFullscreenAssistNativeTapLastMsBySession.remove(session)
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision fullscreen check result=entered attempt=$attempt pageUrl=$currentUrl"
+                )
+                GvLogger.i("GvMedia", "caribvision fullscreen complete pageUrl=$currentUrl")
+                return@Runnable
+            }
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen check result=not-entered attempt=$attempt pageUrl=$currentUrl"
+            )
+            val latestState = caribvisionFullscreenAssistBySession[session]
+            if (
+                attempt < CARIBVISION_FULLSCREEN_ASSIST_AUTO_TAP_LIMIT &&
+                latestState != null &&
+                latestState.active &&
+                latestState.pageUrl == currentUrl &&
+                isCaribvisionPlayerActive(session, currentUrl)
+            ) {
+                caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_NOT_STARTED
+                GvLogger.i("GvMedia", "caribvision fullscreen retry reason=no-callback pageUrl=$currentUrl")
+                dispatchCaribvisionFullscreenAssistNativeTap(session, latestState, trigger = "auto-retry")
+                return@Runnable
+            }
+            caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_FAILED
+        }
+        caribvisionFullscreenCheckRunnableBySession[session] = runnable
+        pointerHandler.postDelayed(runnable, CARIBVISION_FULLSCREEN_CHECK_DELAY_MS)
+    }
+
+    private fun dispatchCaribvisionFullscreenAssistNativeTap(
+        session: GeckoSession,
+        state: CaribvisionFullscreenAssistState,
+        trigger: String,
+    ): Boolean {
+        val activeTab = tabController.getActiveTab()
+        if (activeTab?.session != session || !isCaribvisionPlayerActive(session, activeTab.url)) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen tap skipped trigger=$trigger reason=active-url-mismatch pageUrl=${state.pageUrl} activeUrl=${activeTab?.url.orEmpty()}"
+            )
+            return false
+        }
+        if (browserFullscreenStateBySession[session] == true || state.fullscreenActive) {
+            caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_ENTERED
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen tap skipped trigger=$trigger reason=already-fullscreen pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (isCaribvisionFullscreenAssistSuppressed(session, state.pageUrl)) {
+            caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_NOT_STARTED
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen tap skipped trigger=$trigger reason=suppressed-after-back pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (caribvisionFullscreenStageBySession[session] == CARIBVISION_FULLSCREEN_STAGE_PENDING) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen tap skipped trigger=$trigger reason=pending-callback pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (state.centerX < 0f || state.centerY < 0f) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen tap skipped trigger=$trigger reason=missing-coordinates pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = caribvisionFullscreenAssistNativeTapLastMsBySession[session] ?: 0L
+        if (now - last < CARIBVISION_FULLSCREEN_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS) {
+            GvLogger.i(
+                "GvMedia",
+                "caribvision fullscreen tap skipped trigger=$trigger reason=rate-limited pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        var attempt = caribvisionFullscreenAssistNativeTapCountBySession[session] ?: 0
+        if (trigger.startsWith("auto")) {
+            if (attempt >= CARIBVISION_FULLSCREEN_ASSIST_AUTO_TAP_LIMIT) {
+                GvLogger.i(
+                    "GvMedia",
+                    "caribvision fullscreen tap skipped trigger=$trigger reason=auto-limit pageUrl=${state.pageUrl}"
+                )
+                return false
+            }
+            attempt += 1
+            caribvisionFullscreenAssistNativeTapCountBySession[session] = attempt
+        }
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val usingRatio = state.xRatio > 0f && state.yRatio > 0f
+        var x =
+            if (usingRatio) {
+                (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
+            } else {
+                val scaleX =
+                    if (state.viewportWidth > 0f && maxWidth > state.viewportWidth + 1f) {
+                        maxWidth / state.viewportWidth
+                    } else {
+                        1f
+                    }
+                (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
+            }
+        var y =
+            if (usingRatio) {
+                (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
+            } else {
+                val scaleY =
+                    if (state.viewportHeight > 0f && maxHeight > state.viewportHeight + 1f) {
+                        maxHeight / state.viewportHeight
+                    } else {
+                        1f
+                    }
+                (state.centerY * scaleY).coerceIn(1f, maxHeight - 1f)
+            }
+        if (trigger == "auto-retry" && state.targetKind == "caribvision-fullscreen-fallback") {
+            x = (x + 28f).coerceIn(1f, maxWidth - 1f)
+            y = (y + 20f).coerceIn(1f, maxHeight - 1f)
+        }
+        if (trigger == "auto" && attempt == 1 && state.audioCenterX >= 0f && state.audioCenterY >= 0f) {
+            val useAudioRatio = state.audioXRatio > 0f && state.audioYRatio > 0f
+            val audioX =
+                if (useAudioRatio) {
+                    (maxWidth * state.audioXRatio).coerceIn(1f, maxWidth - 1f)
+                } else {
+                    val scaleX =
+                        if (state.viewportWidth > 0f && maxWidth > state.viewportWidth + 1f) {
+                            maxWidth / state.viewportWidth
+                        } else {
+                            1f
+                        }
+                    (state.audioCenterX * scaleX).coerceIn(1f, maxWidth - 1f)
+                }
+            val audioY =
+                if (useAudioRatio) {
+                    (maxHeight * state.audioYRatio).coerceIn(1f, maxHeight - 1f)
+                } else {
+                    val scaleY =
+                        if (state.viewportHeight > 0f && maxHeight > state.viewportHeight + 1f) {
+                            maxHeight / state.viewportHeight
+                        } else {
+                            1f
+                        }
+                    (state.audioCenterY * scaleY).coerceIn(1f, maxHeight - 1f)
+                }
+            showPointerAt(audioX, audioY, reason = "caribvision-audio-assist")
+            val audioHoverHandled = dispatchNativeMouseHoverAt(audioX, audioY, "caribvision-audio-assist-hover-$trigger")
+            val audioHandled = dispatchNativeMouseTapAt(audioX, audioY, "caribvision-audio-assist-$trigger")
+            GvLogger.i(
+                "GvMedia",
+                "caribvision audio tap x=${audioX.toInt()} y=${audioY.toInt()} handled=$audioHandled hoverHandled=$audioHoverHandled source=${state.audioTargetKind} label=${state.audioTargetLabel.ifBlank { state.audioTargetKind }} pageUrl=${state.pageUrl}"
+            )
+        }
+        showPointerAt(x, y, reason = "caribvision-fullscreen-assist")
+        val hoverHandled = dispatchNativeMouseHoverAt(x, y, "caribvision-fullscreen-assist-hover-$trigger")
+        caribvisionFullscreenAssistNativeTapLastMsBySession[session] = now
+        caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_PENDING
+        val handled = dispatchNativeMouseTapAt(x, y, "caribvision-fullscreen-assist-$trigger")
+        GvLogger.i(
+            "GvMedia",
+            "caribvision fullscreen tap x=${x.toInt()} y=${y.toInt()} handled=$handled hoverHandled=$hoverHandled attempt=$attempt trigger=$trigger source=${state.targetKind} pageUrl=${state.pageUrl}"
+        )
+        if (handled) {
+            scheduleCaribvisionFullscreenCheck(session, state, attempt)
+        } else {
+            caribvisionFullscreenStageBySession[session] = CARIBVISION_FULLSCREEN_STAGE_NOT_STARTED
+        }
         return handled
     }
 
@@ -14995,6 +15557,17 @@ return changed>0;
         if (host != CARIBVISION_OFFICIAL_HLS_HOST) return false
         if (path != CARIBVISION_OFFICIAL_HLS_PATH) return false
         return true
+    }
+
+    private fun isCaribVisionAutoplayContextUrl(url: String): Boolean {
+        return isCaribVisionAppUrl(url) || isExactCaribVisionLiveHlsUrl(url)
+    }
+
+    private fun isCaribvisionPlayerActive(session: GeckoSession?, url: String): Boolean {
+        if (session == null || !isCaribVisionAppUrl(url)) {
+            return false
+        }
+        return caribvisionSessionStateBySession[session]?.playerVisible == true
     }
 
     private fun isExactCbcLiveHlsUrl(url: String): Boolean {

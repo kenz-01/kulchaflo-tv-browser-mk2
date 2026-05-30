@@ -10,6 +10,10 @@
   const CGTV_PLAY_ASSIST_DELAYS_MS = [900, 2400, 5200];
   const CHTV_PLAY_ASSIST_DELAYS_MS = [700, 1800, 4000, 6500];
   const CHTV_FULLSCREEN_ASSIST_DELAYS_MS = [2200, 4200, 7000];
+  const CARIBVISION_PLAY_ASSIST_DELAYS_MS = [900, 2400, 5200];
+  const CARIBVISION_FULLSCREEN_ASSIST_DELAYS_MS = [2200, 4200, 7000];
+  const CARIBVISION_OFFICIAL_HLS_HOST = "5dcabf026b188.streamlock.net";
+  const CARIBVISION_OFFICIAL_HLS_PATH = "/CaribVision/livestream/playlist.m3u8";
   const CGTV_TOP_OFFSET_PX = 0;
   const NOVUS_AUTOPLAY_MAX_ATTEMPTS = 6;
   const ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE = true;
@@ -78,6 +82,13 @@
   let chtvFullscreenAssistScheduled = false;
   let chtvFullscreenAssistLastKey = "";
   let chtvFullscreenAssistClickCount = 0;
+  let caribvisionSessionStateLastKey = "";
+  let caribvisionPlayAssistScheduled = false;
+  let caribvisionPlayAssistLastKey = "";
+  let caribvisionFullscreenAssistScheduled = false;
+  let caribvisionFullscreenAssistLastKey = "";
+  let caribvisionAudioDomClickDone = false;
+  let caribvisionFullscreenDomClickDone = false;
 
   function isVisible(element) {
     if (!element) return false;
@@ -233,6 +244,773 @@
     if (!isCaribVisionAppPage()) return;
     [400, 1200, 2600, 5000].forEach((delayMs) => {
       setTimeout(() => emitCaribVisionLiveHlsReady("scheduled-" + delayMs), delayMs);
+    });
+  }
+
+  function isExactCaribVisionLiveHlsUrl(rawUrl) {
+    try {
+      const url = new URL(String(rawUrl || ""), window.location.href);
+      return url.hostname.toLowerCase() === CARIBVISION_OFFICIAL_HLS_HOST &&
+        url.pathname === CARIBVISION_OFFICIAL_HLS_PATH;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isCaribVisionAuthPath() {
+    if (!isCaribVisionAppPage()) return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path.indexOf("/login") >= 0 ||
+      path.indexOf("/signin") >= 0 ||
+      path.indexOf("/signup") >= 0 ||
+      path.indexOf("/signup_free") >= 0 ||
+      path.indexOf("/register") >= 0 ||
+      path.indexOf("/account") >= 0;
+  }
+
+  function findVisibleCaribVisionPasswordInput() {
+    if (!isCaribVisionAppPage()) return null;
+    return Array.from(document.querySelectorAll("input")).find((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        const type = String(node.getAttribute("type") || "").toLowerCase();
+        const name = String(node.getAttribute("name") || "").toLowerCase();
+        const autocomplete = String(node.getAttribute("autocomplete") || "").toLowerCase();
+        return type === "password" ||
+          name.indexOf("password") >= 0 ||
+          autocomplete.indexOf("password") >= 0;
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function hasVisibleCaribVisionAuthAction() {
+    if (!isCaribVisionAppPage()) return false;
+    const authTerms = [
+      "sign in",
+      "signin",
+      "login",
+      "log in",
+      "create account",
+      "register",
+      "forgot password"
+    ];
+    return Array.from(document.querySelectorAll("button,[role='button'],a,label,h1,h2,h3,p,span,div")).some((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 12) return false;
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (!text) return false;
+        return authTerms.some((term) => text.indexOf(term) >= 0);
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
+  function findCaribVisionExactSource(root) {
+    const scope = root || document;
+    let nodes = [];
+    try {
+      nodes = Array.from(scope.querySelectorAll('source[type="application/x-mpegURL" i],source[src*=".m3u8" i]'));
+    } catch (_) {
+      nodes = [];
+    }
+    return nodes.find((node) => {
+      try {
+        const sourceUrl = String(node.getAttribute("src") || node.src || "").trim();
+        return isExactCaribVisionLiveHlsUrl(sourceUrl);
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function scoreCaribVisionPlayerCandidate(node) {
+    if (!node) return -1;
+    try {
+      if (!isVisible(node)) return -1;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 160 || rect.height < 90) return -1;
+      const id = String(node.getAttribute && node.getAttribute("id") || "").toLowerCase();
+      const cls = String(node.className || "").toLowerCase();
+      let score = rect.width * rect.height;
+      if (id.indexOf("live-stream-player") >= 0 || cls.indexOf("live-stream-player") >= 0) {
+        score += 2000000;
+      }
+      if (cls.indexOf("video-js") >= 0 || cls.indexOf("vjs") >= 0) {
+        score += 500000;
+      }
+      if (findCaribVisionExactSource(node)) {
+        score += 3000000;
+      }
+      return score;
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  function findCaribVisionPlayerRoot() {
+    if (!isCaribVisionAppPage()) return null;
+    const candidates = [];
+    const pushCandidate = (node) => {
+      if (node && candidates.indexOf(node) < 0) {
+        candidates.push(node);
+      }
+    };
+    pushCandidate(document.querySelector("video#live-stream-player"));
+    pushCandidate(document.querySelector("#live-stream-player_html5_api"));
+    pushCandidate(document.querySelector("#live-stream-player"));
+    const exactSource = findCaribVisionExactSource(document);
+    if (exactSource) {
+      pushCandidate(exactSource.parentElement);
+      pushCandidate(exactSource.closest("video-js,.video-js,[data-vjs-player],.vjs-player,.player"));
+    }
+    try {
+      Array.from(document.querySelectorAll("video-js,.video-js,[data-vjs-player],.vjs-player,video")).forEach(pushCandidate);
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    candidates.forEach((node) => {
+      const score = scoreCaribVisionPlayerCandidate(node);
+      if (score > bestScore) {
+        best = node;
+        bestScore = score;
+      }
+    });
+    return best;
+  }
+
+  function collectCaribVisionVideoState(player) {
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720);
+    const exactSource = findCaribVisionExactSource(player || document);
+    let playerRect = null;
+    try {
+      playerRect = player && player.getBoundingClientRect ? player.getBoundingClientRect() : null;
+    } catch (_) {
+      playerRect = null;
+    }
+    let videos = [];
+    try {
+      videos = Array.from((player && player.querySelectorAll("video")) || document.querySelectorAll("video"));
+    } catch (_) {
+      videos = [];
+    }
+    let bestVideo = null;
+    let bestScore = -1;
+    videos.forEach((video) => {
+      try {
+        if (!isVisible(video)) return;
+        const rect = video.getBoundingClientRect();
+        if (rect.width < 120 || rect.height < 68) return;
+        let score = rect.width * rect.height;
+        const id = String(video.getAttribute("id") || "").toLowerCase();
+        const cls = String(video.className || "").toLowerCase();
+        if (id === "live-stream-player" || id === "live-stream-player_html5_api") score += 3000000;
+        if (cls.indexOf("vjs-tech") >= 0) score += 1000000;
+        if (playerRect && !(rect.right < playerRect.left - 8 || rect.left > playerRect.right + 8 || rect.bottom < playerRect.top - 8 || rect.top > playerRect.bottom + 8)) {
+          score += 200000;
+        }
+        if (score > bestScore) {
+          bestVideo = video;
+          bestScore = score;
+        }
+      } catch (_) {}
+    });
+    let rect = null;
+    try {
+      rect = bestVideo ? bestVideo.getBoundingClientRect() : playerRect;
+    } catch (_) {
+      rect = playerRect;
+    }
+    const centerX = rect ? Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2))) : Math.max(1, Math.floor(viewportWidth / 2));
+    const centerY = rect ? Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2))) : Math.max(1, Math.floor(viewportHeight / 2));
+    const paused = bestVideo ? !!bestVideo.paused : true;
+    const readyState = Number(bestVideo && bestVideo.readyState || 0);
+    const currentTime = Number(bestVideo && typeof bestVideo.currentTime === "number" ? bestVideo.currentTime : 0);
+    const muted = !!(bestVideo && bestVideo.muted);
+    const volume = bestVideo && typeof bestVideo.volume === "number" ? Number(bestVideo.volume) : 1;
+    const videoId = String(bestVideo && bestVideo.getAttribute && bestVideo.getAttribute("id") || "").toLowerCase();
+    const playerId = String(player && player.getAttribute && player.getAttribute("id") || "").toLowerCase();
+    return {
+      video: bestVideo,
+      hasVideo: !!bestVideo,
+      paused,
+      readyState,
+      currentTime,
+      playing: !!bestVideo && !paused && readyState >= 2,
+      videoWidth: bestVideo && bestVideo.videoWidth || 0,
+      videoHeight: bestVideo && bestVideo.videoHeight || 0,
+      muted,
+      volume,
+      centerX,
+      centerY,
+      xRatio: parseFloat((centerX / viewportWidth).toFixed(4)),
+      yRatio: parseFloat((centerY / viewportHeight).toFixed(4)),
+      rectText: rect ? rectAsText(rect) : "",
+      playerRectText: playerRect ? rectAsText(playerRect) : "",
+      playerLeft: playerRect ? Number(playerRect.left) : -1,
+      playerTop: playerRect ? Number(playerRect.top) : -1,
+      playerWidth: playerRect ? Number(playerRect.width) : 0,
+      playerHeight: playerRect ? Number(playerRect.height) : 0,
+      viewportWidth,
+      viewportHeight,
+      hasExactHls: !!exactSource,
+      hasDirectLiveId: videoId === "live-stream-player" || videoId === "live-stream-player_html5_api" || playerId.indexOf("live-stream-player") >= 0
+    };
+  }
+
+  function attemptCaribVisionPlaybackUnmute(state) {
+    const video = state && state.video;
+    const methods = [];
+    const result = {
+      mutedBefore: !!(video && video.muted),
+      mutedAfter: !!(video && video.muted),
+      volumeBefore: video && typeof video.volume === "number" ? Number(video.volume) : Number((state && state.volume) || 1),
+      volumeAfter: video && typeof video.volume === "number" ? Number(video.volume) : Number((state && state.volume) || 1),
+      methods: "",
+      changed: false
+    };
+    if (video) {
+      try {
+        video.defaultMuted = false;
+      } catch (_) {}
+      try {
+        video.muted = false;
+      } catch (_) {}
+      try {
+        if (typeof video.volume === "number" && video.volume < 0.95) {
+          video.volume = 1;
+        }
+      } catch (_) {}
+    }
+    try {
+      readVideoJsPlayers().forEach((player) => {
+        safeMethodCall(player, "muted", [false], methods);
+        safeMethodCall(player, "volume", [1], methods);
+      });
+    } catch (_) {}
+    result.methods = methods.join(",");
+    result.mutedAfter = !!(video && video.muted);
+    result.volumeAfter = video && typeof video.volume === "number" ? Number(video.volume) : result.volumeBefore;
+    result.changed =
+      result.mutedBefore !== result.mutedAfter ||
+      Math.abs(result.volumeAfter - result.volumeBefore) > 0.001 ||
+      methods.length > 0;
+    return result;
+  }
+
+  function detectCaribVisionState() {
+    if (!isCaribVisionAppPage()) {
+      return {
+        playerVisible: false,
+        loginRequired: false
+      };
+    }
+    const player = findCaribVisionPlayerRoot();
+    const videoState = collectCaribVisionVideoState(player);
+    const authPath = isCaribVisionAuthPath();
+    const hasPasswordField = !!findVisibleCaribVisionPasswordInput();
+    const hasAuthAction = hasVisibleCaribVisionAuthAction();
+    const authSignals = authPath || hasPasswordField || hasAuthAction;
+    const playerVisible = !!player && (videoState.hasExactHls || (videoState.hasDirectLiveId && !authSignals));
+    const loginRequired = !playerVisible && authSignals;
+    return {
+      player,
+      videoState,
+      playerVisible,
+      loginRequired,
+      reason: playerVisible ? "player-visible" : (loginRequired ? "login-wall" : "no-clear-signal")
+    };
+  }
+
+  function emitCaribVisionSessionState(reason) {
+    const detected = detectCaribVisionState();
+    if (!detected.playerVisible && !detected.loginRequired) return false;
+    if (detected.loginRequired || !detected.playerVisible) {
+      caribvisionAudioDomClickDone = false;
+      caribvisionFullscreenDomClickDone = false;
+      caribvisionPlayAssistLastKey = "";
+      caribvisionFullscreenAssistLastKey = "";
+    }
+    const key = [
+      detected.playerVisible ? "player" : "not-player",
+      detected.loginRequired ? "login" : "not-login",
+      detected.reason,
+      window.location.href
+    ].join(":");
+    if (key === caribvisionSessionStateLastKey) return true;
+    caribvisionSessionStateLastKey = key;
+    promptPayload({
+      type: "caribvision-session-state",
+      phase: "content-caribvision-session-state",
+      pageUrl: window.location.href,
+      playerVisible: detected.playerVisible,
+      loginRequired: detected.loginRequired,
+      reason: String(reason || detected.reason),
+      stateReason: detected.reason,
+      playerRect: detected.videoState && detected.videoState.playerRectText || "",
+      videoRect: detected.videoState && detected.videoState.rectText || "",
+      hasExactHls: !!(detected.videoState && detected.videoState.hasExactHls),
+      hasDirectLiveId: !!(detected.videoState && detected.videoState.hasDirectLiveId)
+    });
+    return true;
+  }
+
+  function isCaribVisionFullscreenAssistSuppressed() {
+    try {
+      const suppressedUrl = String(window.__kfCaribvisionFullscreenAssistSuppressedUrl || "");
+      return !!suppressedUrl && suppressedUrl === window.location.href;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findCaribVisionPlayControl(player) {
+    if (!player) return null;
+    const selectors = [
+      ".vjs-big-play-button",
+      ".vjs-play-control",
+      ".vjs-play-button",
+      "button",
+      "[role='button']",
+      "a",
+      "div",
+      "span"
+    ];
+    const seen = new Set();
+    let best = null;
+    let bestScore = -1;
+    selectors.forEach((selector) => {
+      let nodes = [];
+      try {
+        nodes = Array.from(player.querySelectorAll(selector));
+      } catch (_) {
+        nodes = [];
+      }
+      nodes.forEach((node) => {
+        if (!node || seen.has(node)) return;
+        seen.add(node);
+        try {
+          if (!isVisible(node)) return;
+          const rect = node.getBoundingClientRect();
+          if (rect.width < 18 || rect.height < 18) return;
+          const cls = String(node.className || "").toLowerCase();
+          const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+          const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+          const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const blob = `${cls} ${aria} ${title} ${text}`;
+          if (blob.indexOf("pause") >= 0) return;
+          if (blob.indexOf("fullscreen") >= 0 || blob.indexOf("full screen") >= 0) return;
+          if (blob.indexOf("volume") >= 0 || blob.indexOf("mute") >= 0 || blob.indexOf("unmute") >= 0) return;
+          if (blob.indexOf("play") < 0 && cls.indexOf("vjs-play") < 0) return;
+          let score = rect.width * rect.height;
+          if (cls.indexOf("vjs-big-play-button") >= 0) score += 2000000;
+          if (cls.indexOf("vjs-play-control") >= 0) score += 1000000;
+          if (score > bestScore) {
+            best = node;
+            bestScore = score;
+          }
+        } catch (_) {}
+      });
+    });
+    return best;
+  }
+
+  function isCaribVisionFullscreenActive(player) {
+    if (!player) return false;
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
+        return true;
+      }
+    } catch (_) {}
+    try {
+      const cls = String(player.className || "").toLowerCase();
+      return cls.indexOf("vjs-fullscreen") >= 0 || cls.indexOf("fullscreen") >= 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findCaribVisionFullscreenControl(player) {
+    if (!player) return null;
+    let playerRect = null;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    const seen = [];
+    const roots = [player, document];
+    roots.forEach((root) => {
+      try {
+        Array.from(root.querySelectorAll(".vjs-fullscreen-control,button,[role='button'],a,div,span")).forEach((node) => {
+          try {
+            if (!node || seen.indexOf(node) >= 0) return;
+            seen.push(node);
+            const cls = String(node.className || "").toLowerCase();
+            const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+            const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+            const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const blob = `${cls} ${aria} ${title} ${text}`;
+            const semantic = blob.indexOf("fullscreen") >= 0 || blob.indexOf("full screen") >= 0 || cls.indexOf("vjs-fullscreen-control") >= 0;
+            if (!semantic) return;
+            if (blob.indexOf("exit fullscreen") >= 0 || blob.indexOf("exit full screen") >= 0) return;
+            const visible = isVisible(node);
+            if (!visible && cls.indexOf("vjs-fullscreen-control") < 0) return;
+            const rect = node.getBoundingClientRect();
+            if (rect.width < 14 || rect.height < 14) return;
+            if (
+              playerRect &&
+              (
+                rect.bottom < playerRect.top - 220 ||
+                rect.top > playerRect.bottom + 220 ||
+                rect.right < playerRect.left - 220 ||
+                rect.left > playerRect.right + 220
+              )
+            ) {
+              return;
+            }
+            let score = rect.width * rect.height;
+            if (cls.indexOf("vjs-fullscreen-control") >= 0) score += 2200000;
+            if (title.indexOf("fullscreen") >= 0 || aria.indexOf("fullscreen") >= 0 || text.indexOf("fullscreen") >= 0 || text.indexOf("full screen") >= 0) {
+              score += 300000;
+            }
+            if (playerRect) {
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              const insidePlayer = centerX >= playerRect.left - 6 && centerX <= playerRect.right + 6 && centerY >= playerRect.top - 6 && centerY <= playerRect.bottom + 6;
+              if (insidePlayer) score += 140000;
+              const nearTopLeft = Math.abs(rect.left - playerRect.left) <= 180 && Math.abs(rect.top - playerRect.top) <= 130;
+              if (nearTopLeft) score += 1200000;
+              const nearBottomRight = Math.abs(rect.right - playerRect.right) <= 180 && Math.abs(rect.bottom - playerRect.bottom) <= 130;
+              if (nearBottomRight) score += 450000;
+            }
+            if (score > bestScore) {
+              best = node;
+              bestScore = score;
+            }
+          } catch (_) {}
+        });
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function findCaribVisionAudioControl(player) {
+    if (!player) return null;
+    let playerRect = null;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    const seen = [];
+    const roots = [player, document];
+    roots.forEach((root) => {
+      try {
+        Array.from(root.querySelectorAll(".vjs-mute-control,.vjs-volume-menu-button,button,[role='button'],a,div,span")).forEach((node) => {
+          try {
+            if (!node || seen.indexOf(node) >= 0) return;
+            seen.push(node);
+            if (!isVisible(node)) return;
+            const rect = node.getBoundingClientRect();
+            if (rect.width < 14 || rect.height < 14) return;
+            if (
+              playerRect &&
+              (
+                rect.bottom < playerRect.top - 220 ||
+                rect.top > playerRect.bottom + 220 ||
+                rect.right < playerRect.left - 220 ||
+                rect.left > playerRect.right + 220
+              )
+            ) {
+              return;
+            }
+            const cls = String(node.className || "").toLowerCase();
+            const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+            const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+            const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const blob = `${cls} ${aria} ${title} ${text}`;
+            const semantic = blob.indexOf("unmute") >= 0 || blob.indexOf("mute") >= 0 || blob.indexOf("volume") >= 0 || cls.indexOf("vjs-mute-control") >= 0 || cls.indexOf("vjs-volume-menu-button") >= 0;
+            if (!semantic) return;
+            let score = rect.width * rect.height;
+            if (blob.indexOf("unmute") >= 0) score += 1800000;
+            if (cls.indexOf("vjs-mute-control") >= 0) score += 1400000;
+            if (cls.indexOf("vjs-volume-menu-button") >= 0) score += 900000;
+            if (blob.indexOf("mute") >= 0 || blob.indexOf("volume") >= 0) score += 200000;
+            if (playerRect) {
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              const insidePlayer = centerX >= playerRect.left - 6 && centerX <= playerRect.right + 6 && centerY >= playerRect.top - 6 && centerY <= playerRect.bottom + 6;
+              if (insidePlayer) score += 140000;
+              const nearBottom = Math.abs(rect.bottom - playerRect.bottom) <= 140;
+              if (nearBottom) score += 300000;
+            }
+            if (score > bestScore) {
+              best = node;
+              bestScore = score;
+            }
+          } catch (_) {}
+        });
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function clickCaribVisionControlNode(node) {
+    if (!node) return false;
+    try {
+      node.click();
+      return true;
+    } catch (_) {}
+    try {
+      const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+      return !!node.dispatchEvent(ev);
+    } catch (_) {}
+    return false;
+  }
+
+  function emitCaribVisionPlayAssist(reason, attemptAtMs) {
+    const detected = detectCaribVisionState();
+    if (!detected.playerVisible || !detected.player) return false;
+    let state = detected.videoState;
+    const unmute = attemptCaribVisionPlaybackUnmute(state);
+    state = collectCaribVisionVideoState(detected.player);
+    let target = findCaribVisionPlayControl(detected.player);
+    let targetKind = "caribvision-play-control";
+    if (!target && state.video) {
+      target = state.video;
+      targetKind = "caribvision-video";
+    }
+    if (!target) {
+      target = detected.player;
+      targetKind = "caribvision-player";
+    }
+    let rect;
+    try {
+      rect = target.getBoundingClientRect();
+    } catch (_) {
+      return false;
+    }
+    const centerX = Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2)));
+    const centerY = Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2)));
+    const active = !state.playing;
+    const reasonText = active
+      ? (targetKind === "caribvision-play-control" ? "player-paused-play-control" : "player-paused")
+      : "playing";
+    const key = [
+      active ? "active" : "idle",
+      reasonText,
+      targetKind,
+      centerX,
+      centerY,
+      detected.videoState.playerRectText
+    ].join(":");
+    if (key === caribvisionPlayAssistLastKey) return true;
+    caribvisionPlayAssistLastKey = key;
+    promptPayload({
+      type: "caribvision-play-assist",
+      phase: "content-caribvision-play-assist",
+      pageUrl: window.location.href,
+      active,
+      requiresUserAction: active,
+      reason: String(reason || reasonText),
+      assistReason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      xRatio: centerX / detected.videoState.viewportWidth,
+      yRatio: centerY / detected.videoState.viewportHeight,
+      rect: rectAsText(rect),
+      playerRect: detected.videoState.playerRectText,
+      targetKind,
+      targetLabel: summarizeNode(target),
+      viewportWidth: detected.videoState.viewportWidth,
+      viewportHeight: detected.videoState.viewportHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      hasVideo: state.hasVideo,
+      paused: state.paused,
+      playing: state.playing,
+      muted: !!state.muted,
+      volume: Number(state.volume || 1),
+      mutedBefore: !!unmute.mutedBefore,
+      mutedAfter: !!unmute.mutedAfter,
+      volumeBefore: Number(unmute.volumeBefore || 1),
+      volumeAfter: Number(unmute.volumeAfter || 1),
+      unmuteMethods: unmute.methods,
+      readyState: state.readyState,
+      currentTime: state.currentTime,
+      videoWidth: state.videoWidth,
+      videoHeight: state.videoHeight
+    });
+    return true;
+  }
+
+  function emitCaribVisionFullscreenAssist(reason, attemptAtMs) {
+    const detected = detectCaribVisionState();
+    if (!detected.playerVisible || !detected.player) return false;
+    let state = detected.videoState;
+    attemptCaribVisionPlaybackUnmute(state);
+    state = collectCaribVisionVideoState(detected.player);
+    const suppressedAfterBack = isCaribVisionFullscreenAssistSuppressed();
+    const fullscreenActive = isCaribVisionFullscreenActive(detected.player);
+    const control = findCaribVisionFullscreenControl(detected.player);
+    const audioControl = findCaribVisionAudioControl(detected.player);
+    let audioDomClicked = false;
+    let fullscreenDomClicked = false;
+    let rect = null;
+    let targetKind = "none";
+    let targetLabel = "none";
+    let audioRect = null;
+    let audioTargetKind = "none";
+    let audioTargetLabel = "none";
+    if (control) {
+      try {
+        rect = control.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+      targetKind = "caribvision-fullscreen-control";
+      targetLabel = summarizeNode(control);
+    }
+    if (audioControl) {
+      try {
+        audioRect = audioControl.getBoundingClientRect();
+      } catch (_) {
+        audioRect = null;
+      }
+      audioTargetKind = "caribvision-audio-control";
+      audioTargetLabel = summarizeNode(audioControl);
+      if (!caribvisionAudioDomClickDone) {
+        audioDomClicked = clickCaribVisionControlNode(audioControl);
+        if (audioDomClicked) caribvisionAudioDomClickDone = true;
+      }
+    }
+    if (!audioRect && state.playerWidth >= 220 && state.playerHeight >= 120) {
+      const width = Math.max(34, Math.min(56, Math.round(state.playerWidth * 0.043)));
+      const height = Math.max(26, Math.min(44, Math.round(state.playerHeight * 0.08)));
+      const insetLeft = Math.max(30, Math.min(58, Math.round(state.playerWidth * 0.03)));
+      const insetBottom = Math.max(6, Math.min(18, Math.round(state.playerHeight * 0.015)));
+      const left = state.playerLeft + insetLeft;
+      const top = state.playerTop + state.playerHeight - insetBottom - height;
+      audioRect = {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height
+      };
+      audioTargetKind = "caribvision-audio-fallback";
+      audioTargetLabel = "player-bottom-left-audio-fallback";
+    }
+    if (!rect && state.playerWidth >= 220 && state.playerHeight >= 120) {
+      const width = Math.max(34, Math.min(56, Math.round(state.playerWidth * 0.043)));
+      const height = Math.max(26, Math.min(44, Math.round(state.playerHeight * 0.08)));
+      const insetRight = Math.max(8, Math.min(22, Math.round(state.playerWidth * 0.012)));
+      const insetBottom = Math.max(6, Math.min(18, Math.round(state.playerHeight * 0.015)));
+      const left = state.playerLeft + state.playerWidth - insetRight - width;
+      const top = state.playerTop + state.playerHeight - insetBottom - height;
+      rect = {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height
+      };
+      targetKind = "caribvision-fullscreen-fallback";
+      targetLabel = "player-bottom-right-fallback";
+    }
+    if (!suppressedAfterBack && control && !caribvisionFullscreenDomClickDone) {
+      fullscreenDomClicked = clickCaribVisionControlNode(control);
+      if (fullscreenDomClicked) caribvisionFullscreenDomClickDone = true;
+    }
+    const centerX = rect ? Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2))) : -1;
+    const centerY = rect ? Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2))) : -1;
+    const audioCenterX = audioRect ? Math.round(audioRect.left + Math.max(1, Math.floor(audioRect.width / 2))) : -1;
+    const audioCenterY = audioRect ? Math.round(audioRect.top + Math.max(1, Math.floor(audioRect.height / 2))) : -1;
+    const hasTarget = !!rect;
+    const playbackPrimed = !!(state.playing || state.currentTime > 0.2 || (!state.paused && state.readyState >= 1));
+    const audioPrimed = !!(!state.muted && Number(state.volume || 0) > 0.01);
+    const active = !!(!suppressedAfterBack && !fullscreenActive && hasTarget && !fullscreenDomClicked);
+    const reasonText = suppressedAfterBack
+      ? "suppressed-after-back"
+      : fullscreenActive
+      ? "already-fullscreen"
+      : control
+        ? (state.playing ? "fullscreen-ready" : "fullscreen-control-visible")
+        : hasTarget
+          ? "fullscreen-fallback"
+        : "fullscreen-control-missing";
+    const key = [
+      active ? "active" : "idle",
+      reasonText,
+      centerX,
+      centerY,
+      detected.videoState.playerRectText
+    ].join(":");
+    if (key === caribvisionFullscreenAssistLastKey) return true;
+    caribvisionFullscreenAssistLastKey = key;
+    promptPayload({
+      type: "caribvision-fullscreen-assist",
+      phase: "content-caribvision-fullscreen-assist",
+      pageUrl: window.location.href,
+      active,
+      requestNativeTap: !!active,
+      reason: String(reason || reasonText),
+      assistReason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      xRatio: centerX >= 0 ? centerX / detected.videoState.viewportWidth : -1,
+      yRatio: centerY >= 0 ? centerY / detected.videoState.viewportHeight : -1,
+      audioCenterX,
+      audioCenterY,
+      audioXRatio: audioCenterX >= 0 ? audioCenterX / detected.videoState.viewportWidth : -1,
+      audioYRatio: audioCenterY >= 0 ? audioCenterY / detected.videoState.viewportHeight : -1,
+      rect: rect ? rectAsText(rect) : "none",
+      audioRect: audioRect ? rectAsText(audioRect) : "none",
+      playerRect: detected.videoState.playerRectText,
+      targetKind,
+      targetLabel,
+      audioTargetKind,
+      audioTargetLabel,
+      audioDomClicked,
+      fullscreenDomClicked,
+      suppressedAfterBack,
+      viewportWidth: detected.videoState.viewportWidth,
+      viewportHeight: detected.videoState.viewportHeight,
+      fullscreenActive,
+      playing: state.playing,
+      paused: state.paused,
+      muted: !!state.muted,
+      volume: Number(state.volume || 1),
+      playbackPrimed,
+      audioPrimed,
+      readyState: state.readyState,
+      currentTime: state.currentTime
+    });
+    return true;
+  }
+
+  function scheduleCaribVisionPlayAssist() {
+    if (caribvisionPlayAssistScheduled || !isCaribVisionAppPage()) return;
+    caribvisionPlayAssistScheduled = true;
+    CARIBVISION_PLAY_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => emitCaribVisionPlayAssist("scheduled-" + delayMs, delayMs), delayMs);
+    });
+  }
+
+  function scheduleCaribVisionFullscreenAssist() {
+    if (caribvisionFullscreenAssistScheduled || !isCaribVisionAppPage()) return;
+    caribvisionFullscreenAssistScheduled = true;
+    CARIBVISION_FULLSCREEN_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => emitCaribVisionFullscreenAssist("scheduled-" + delayMs, delayMs), delayMs);
     });
   }
 
@@ -4509,6 +5287,9 @@
     const payload = collect();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
+      emitCaribVisionSessionState("publish-no-change");
+      emitCaribVisionPlayAssist("publish-no-change");
+      emitCaribVisionFullscreenAssist("publish-no-change");
       emitChtvPlayAssist("publish-no-change");
       emitChtvFullscreenAssist("publish-no-change");
       emitCbcLiveHlsReady("publish-no-change");
@@ -4517,6 +5298,9 @@
     }
     lastSignature = signature;
     promptPayload(payload);
+    emitCaribVisionSessionState("publish");
+    emitCaribVisionPlayAssist("publish");
+    emitCaribVisionFullscreenAssist("publish");
     emitChtvPlayAssist("publish");
     emitChtvFullscreenAssist("publish");
     emitCbcLiveHlsReady("publish");
@@ -4534,6 +5318,8 @@
   scheduleNovusTelearubaFlow();
   scheduleCgtvPageFullscreenLike();
   scheduleCgtvPlayAssist();
+  scheduleCaribVisionPlayAssist();
+  scheduleCaribVisionFullscreenAssist();
   scheduleChtvPlayAssist();
   scheduleChtvFullscreenAssist();
   scheduleCbcLiveHlsReady();
@@ -4548,7 +5334,10 @@
   window.addEventListener("load", scheduleNovusTelearubaFlow, { once: true });
   window.addEventListener("load", scheduleCgtvPageFullscreenLike, { once: true });
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
+  window.addEventListener("load", scheduleCaribVisionPlayAssist, { once: true });
+  window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
+  window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
   window.addEventListener("load", scheduleCaribVisionLiveHlsReady, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
