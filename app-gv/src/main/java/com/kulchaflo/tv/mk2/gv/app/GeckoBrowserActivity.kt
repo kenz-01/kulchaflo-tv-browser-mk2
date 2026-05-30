@@ -130,6 +130,38 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var videoHeight: Int = 0,
     )
 
+    private data class ChtvPlayAssistState(
+        var active: Boolean = false,
+        var requiresUserAction: Boolean = false,
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var xRatio: Float = -1f,
+        var yRatio: Float = -1f,
+        var reason: String = "",
+        var targetKind: String = "",
+        var pageUrl: String = "",
+        var viewportWidth: Float = 0f,
+        var viewportHeight: Float = 0f,
+        var hasVideo: Boolean = false,
+        var paused: Boolean = true,
+        var readyState: Int = 0,
+        var currentTime: Double = 0.0,
+    )
+
+    private data class ChtvFullscreenAssistState(
+        var active: Boolean = false,
+        var centerX: Float = -1f,
+        var centerY: Float = -1f,
+        var xRatio: Float = -1f,
+        var yRatio: Float = -1f,
+        var reason: String = "",
+        var targetKind: String = "",
+        var pageUrl: String = "",
+        var viewportWidth: Float = 0f,
+        var viewportHeight: Float = 0f,
+        var clicked: Boolean = false,
+    )
+
     private data class CgtvCandidateSelection(
         val sourceUrl: String,
         val mimeType: String?,
@@ -192,6 +224,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val cgtvPlayAssistBySession = LinkedHashMap<GeckoSession, CgtvPlayAssistState>()
     private val cgtvPlayAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val cgtvPlayAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val chtvPlayAssistBySession = LinkedHashMap<GeckoSession, ChtvPlayAssistState>()
+    private val chtvPlayAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val chtvPlayAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val chtvFullscreenAssistBySession = LinkedHashMap<GeckoSession, ChtvFullscreenAssistState>()
+    private val chtvFullscreenAssistNativeTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val chtvFullscreenAssistNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cgtvBrowserPlaybackActiveBySession = LinkedHashSet<GeckoSession>()
     // Fallback release runnables scheduled after the first assisted native tap to ensure
     // play-assist state does not permanently suppress user interaction when page-side
@@ -213,6 +251,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val youtubeAutoFsOverlayDeferralCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val youtubeAutoFsSuppressedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val youtubeAutoFsSuppressedUntilBySession = LinkedHashMap<GeckoSession, Long>()
+    private val chtvFullscreenAssistSuppressedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val youtubeFullscreenChatCollapseLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val youtubeQualityTrackedUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val youtubeQualityAttemptCountBySession = LinkedHashMap<GeckoSession, Int>()
@@ -541,6 +580,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
+        if (maybeHandleChtvPlayAssistOk(event)) {
+            return true
+        }
         if (maybeHandleCgtvPlayAssistOk(event)) {
             return true
         }
@@ -842,6 +884,28 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         return true
     }
 
+    private fun maybeHandleChtvPlayAssistOk(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_DPAD_CENTER && event.keyCode != KeyEvent.KEYCODE_ENTER) {
+            return false
+        }
+        val activeTab = tabController.getActiveTab() ?: return false
+        if (!isChtvContextUrl(activeTab.url)) {
+            return false
+        }
+        val state = chtvPlayAssistBySession[activeTab.session] ?: return false
+        if (!state.active || !state.requiresUserAction) {
+            return false
+        }
+        if (event.action == KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+        dispatchChtvPlayAssistNativeTap(activeTab.session, state, trigger = "ok")
+        return true
+    }
+
     override fun onDestroy() {
         stopPointerRepeater()
         pointerHandler.removeCallbacksAndMessages(null)
@@ -983,6 +1047,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 resetCgtvPlayAssistAttempt(session, reason = "watch-page", pageUrl = url.orEmpty(), logWhenEmpty = true)
             } else if (!isCgtvContextUrl(url.orEmpty())) {
                 resetCgtvPlayAssistAttempt(session, reason = "leave-context", pageUrl = url.orEmpty())
+            }
+            if (isChtvContextUrl(url.orEmpty())) {
+                resetChtvPlayAssistAttempt(session, reason = "page", pageUrl = url.orEmpty(), logWhenEmpty = true)
+            } else {
+                resetChtvPlayAssistAttempt(session, reason = "leave-context", pageUrl = url.orEmpty())
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -1224,6 +1293,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         cgtvPlayAssistBySession.remove(tab.session)
         cgtvPlayAssistNativeTapCountBySession.remove(tab.session)
         cgtvPlayAssistNativeTapLastMsBySession.remove(tab.session)
+        chtvPlayAssistBySession.remove(tab.session)
+        chtvPlayAssistNativeTapCountBySession.remove(tab.session)
+        chtvPlayAssistNativeTapLastMsBySession.remove(tab.session)
+        chtvFullscreenAssistBySession.remove(tab.session)
+        chtvFullscreenAssistNativeTapCountBySession.remove(tab.session)
+        chtvFullscreenAssistNativeTapLastMsBySession.remove(tab.session)
+        chtvFullscreenAssistSuppressedUrlBySession.remove(tab.session)
         cgtvBrowserPlaybackActiveBySession.remove(tab.session)
         clearFacebookVideoHelperTracking(tab.session)
         stopYouTubeAutoFullscreen(tab.session, reason = "tab-closed")
@@ -7227,6 +7303,28 @@ return changed>0;
         )
     }
 
+    private fun isChtvFullscreenAssistSuppressed(session: GeckoSession, pageUrl: String): Boolean {
+        return chtvFullscreenAssistSuppressedUrlBySession[session] == pageUrl
+    }
+
+    private fun suppressChtvFullscreenAssistAfterBack(
+        session: GeckoSession,
+        pageUrl: String,
+        reason: String,
+    ) {
+        if (!isChtvContextUrl(pageUrl)) {
+            return
+        }
+        chtvFullscreenAssistSuppressedUrlBySession[session] = pageUrl
+        session.loadUri(
+            "javascript:(function(){try{window.__kfChtvFullscreenAssistSuppressedUrl=window.location.href;}catch(_){}})();"
+        )
+        GvLogger.i(
+            "GvInput",
+            "chtv-back-suppress-autofullscreen reason=$reason url=$pageUrl"
+        )
+    }
+
     private fun cancelPendingYouTubeHelpersForBack(session: GeckoSession, pageUrl: String): String {
         val cancelled = mutableListOf<String>()
         fun cancelRunnable(name: String, runnable: Runnable?) {
@@ -8991,6 +9089,18 @@ return changed>0;
                     cgtvPermissionUri ||
                         (cgtvTopContext && cgtvThirdPartyBradmax)
                     )
+            val chtvTopContext = isChtvContextUrl(activeSessionUrl) || isChtvContextUrl(currentRootUrl)
+            val chtvPermissionUri = isChtvContextUrl(permission.uri.orEmpty())
+            val chtvThirdParty = isChtvHost(thirdPartyHost)
+            val chtvAutoplayScoped = ENABLE_CHTV_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    chtvPermissionUri ||
+                        (chtvTopContext && chtvThirdParty)
+                    )
             val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
             val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
             val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
@@ -9009,6 +9119,7 @@ return changed>0;
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 novusAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cgtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                chtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -9052,6 +9163,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "cgtv autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (chtvAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "chtv autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -9114,6 +9231,14 @@ return changed>0;
                                 deltaX = delta.first * POINTER_MOVE_STEP_PX,
                                 deltaY = delta.second * POINTER_MOVE_STEP_PX,
                             )
+                            if (isChtvContextUrl(activeUrl)) {
+                                val revealReason = if (wasHidden) "dpad-wake" else "dpad-move"
+                                val handled = dispatchNativeMouseHoverAt(pointerX, pointerY, "chtv-transport-reveal-$revealReason")
+                                GvLogger.i(
+                                    "GvMedia",
+                                    "chtv transport reveal hover reason=$revealReason x=${pointerX.toInt()} y=${pointerY.toInt()} handled=$handled pageUrl=$activeUrl"
+                                )
+                            }
                             maybeDispatchKulchaFloHomepageRailHoverScroll(event.keyCode, move.overshootX, reason = "initial-edge")
                             maybeScrollContent(move.overshootX, move.overshootY, "initial")
                             startPointerRepeater()
@@ -9337,6 +9462,9 @@ return changed>0;
             return true
         }
         if (fullscreenActive) {
+            if (isChtvContextUrl(activeUrl)) {
+                suppressChtvFullscreenAssistAfterBack(activeTab.session, activeUrl, reason = "back-pressed")
+            }
             val eventTime = SystemClock.uptimeMillis()
             val down = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0)
             val up = KeyEvent(eventTime, eventTime + 20L, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE, 0)
@@ -9724,7 +9852,8 @@ return changed>0;
         return isYouTubePageUrl(url) ||
             isAbsTegoGestureFullscreenContextUrl(url) ||
             isTttTegoContextUrl(url) ||
-            isCgtvContextUrl(url)
+            isCgtvContextUrl(url) ||
+            isChtvContextUrl(url)
     }
 
     private fun isKulchaFloGeneralSiteFocusUrl(url: String): Boolean {
@@ -13368,6 +13497,80 @@ return changed>0;
             )
             return
         }
+        if (type == "chtv-play-assist") {
+            val active = payload.optBoolean("active")
+            val requiresUserAction = payload.optBoolean("requiresUserAction", false)
+            val targetKind = payload.optString("targetKind")
+            val state = ChtvPlayAssistState(
+                active = active,
+                requiresUserAction = requiresUserAction,
+                centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                xRatio = payload.optDouble("xRatio", -1.0).toFloat(),
+                yRatio = payload.optDouble("yRatio", -1.0).toFloat(),
+                reason = payload.optString("assistReason", payload.optString("reason")),
+                targetKind = targetKind,
+                pageUrl = pageUrl,
+                viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat(),
+                viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat(),
+                hasVideo = payload.optBoolean("hasVideo"),
+                paused = payload.optBoolean("paused", true),
+                readyState = payload.optInt("readyState"),
+                currentTime = payload.optDouble("currentTime"),
+            )
+            chtvPlayAssistBySession[session] = state
+            if (active) {
+                dispatchChtvPlayAssistNativeTap(session, state, trigger = "auto")
+            }
+            GvLogger.i(
+                "GvMedia",
+                "chtv play assist active=$active requiresUserAction=$requiresUserAction reason=${state.reason} targetKind=$targetKind " +
+                    "pageUrl=$pageUrl center=${state.centerX.toInt()},${state.centerY.toInt()} rect=${payload.optString("rect")} playerRect=${payload.optString("playerRect")} " +
+                    "viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} dpr=${payload.optDouble("devicePixelRatio", 0.0)} " +
+                    "hasVideo=${payload.optBoolean("hasVideo")} playing=${payload.optBoolean("playing")} paused=${payload.optBoolean("paused")} " +
+                    "readyState=${payload.optInt("readyState")} currentTime=${payload.optDouble("currentTime")}"
+            )
+            return
+        }
+        if (type == "chtv-fullscreen-assist") {
+            val active = payload.optBoolean("active")
+            val clicked = payload.optBoolean("clicked")
+            val requestNativeFallback = payload.optBoolean("requestNativeFallback", false)
+            val targetKind = payload.optString("targetKind")
+            val suppressed = isChtvFullscreenAssistSuppressed(session, pageUrl)
+            val state = ChtvFullscreenAssistState(
+                active = active,
+                centerX = payload.optDouble("centerX", -1.0).toFloat(),
+                centerY = payload.optDouble("centerY", -1.0).toFloat(),
+                xRatio = payload.optDouble("xRatio", -1.0).toFloat(),
+                yRatio = payload.optDouble("yRatio", -1.0).toFloat(),
+                reason = payload.optString("assistReason", payload.optString("reason")),
+                targetKind = targetKind,
+                pageUrl = pageUrl,
+                viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat(),
+                viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat(),
+                clicked = clicked,
+            )
+            chtvFullscreenAssistBySession[session] = state
+            if (suppressed) {
+                GvLogger.i(
+                    "GvMedia",
+                    "chtv fullscreen assist skipped reason=suppressed-after-back pageUrl=$pageUrl targetKind=$targetKind"
+                )
+                return
+            }
+            if (active && requestNativeFallback && !clicked) {
+                dispatchChtvFullscreenAssistNativeTap(session, state, trigger = "auto")
+            }
+            GvLogger.i(
+                "GvMedia",
+                "chtv fullscreen assist active=$active clicked=$clicked nativeFallback=$requestNativeFallback reason=${state.reason} targetKind=$targetKind " +
+                    "pageUrl=$pageUrl center=${state.centerX.toInt()},${state.centerY.toInt()} rect=${payload.optString("rect")} playerRect=${payload.optString("playerRect")} " +
+                    "viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} fullscreenBefore=${payload.optBoolean("fullscreenActiveBefore")} " +
+                    "fullscreenAfter=${payload.optBoolean("fullscreenActiveAfter")} methods=${payload.optString("methods")}"
+            )
+            return
+        }
         if (type == "cgtv-transport-lock") {
             GvLogger.i(
                 "GvMedia",
@@ -13619,6 +13822,7 @@ return changed>0;
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_CHTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
@@ -13710,6 +13914,10 @@ return changed>0;
         private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
         private const val CGTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
         private const val CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 2
+        private const val CHTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
+        private const val CHTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 2
+        private const val CHTV_FULLSCREEN_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
+        private const val CHTV_FULLSCREEN_ASSIST_AUTO_TAP_LIMIT = 2
         // Fallback timeout used to release CGTV play-assist state if page-side playing=true
         // does not arrive within this window after an assisted native tap.
         private const val CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS = 5000L
@@ -14287,6 +14495,24 @@ return changed>0;
         }
     }
 
+    private fun resetChtvPlayAssistAttempt(
+        session: GeckoSession,
+        reason: String,
+        pageUrl: String,
+        logWhenEmpty: Boolean = false,
+    ) {
+        val hadState = chtvPlayAssistBySession.remove(session) != null ||
+            chtvPlayAssistNativeTapCountBySession.remove(session) != null ||
+            chtvPlayAssistNativeTapLastMsBySession.remove(session) != null ||
+            chtvFullscreenAssistBySession.remove(session) != null ||
+            chtvFullscreenAssistNativeTapCountBySession.remove(session) != null ||
+            chtvFullscreenAssistNativeTapLastMsBySession.remove(session) != null ||
+            chtvFullscreenAssistSuppressedUrlBySession.remove(session) != null
+        if (hadState || logWhenEmpty) {
+            GvLogger.i("GvMedia", "chtv play assist attempt reset reason=$reason pageUrl=$pageUrl")
+        }
+    }
+
     private fun scheduleCgtvPlayAssistFallbackRelease(session: GeckoSession, pageUrl: String) {
         try {
             if (cgtvPlayAssistFallbackReleaseRunnableBySession.containsKey(session)) return
@@ -14417,6 +14643,164 @@ return changed>0;
         return handled
     }
 
+    private fun dispatchChtvPlayAssistNativeTap(
+        session: GeckoSession,
+        state: ChtvPlayAssistState,
+        trigger: String,
+    ): Boolean {
+        val activeTab = tabController.getActiveTab()
+        if (activeTab?.session != session || !isChtvContextUrl(activeTab.url)) {
+            GvLogger.i(
+                "GvMedia",
+                "chtv play assist native tap skipped trigger=$trigger reason=active-url-mismatch pageUrl=${state.pageUrl} activeUrl=${activeTab?.url.orEmpty()}"
+            )
+            return false
+        }
+        if (state.centerX < 0f || state.centerY < 0f) {
+            GvLogger.i(
+                "GvMedia",
+                "chtv play assist native tap skipped trigger=$trigger reason=missing-coordinates pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = chtvPlayAssistNativeTapLastMsBySession[session] ?: 0L
+        if (now - last < CHTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS) {
+            GvLogger.i(
+                "GvMedia",
+                "chtv play assist native tap skipped trigger=$trigger reason=rate-limited pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (trigger.startsWith("auto")) {
+            val count = chtvPlayAssistNativeTapCountBySession[session] ?: 0
+            if (count >= CHTV_PLAY_ASSIST_AUTO_TAP_LIMIT) {
+                GvLogger.i(
+                    "GvMedia",
+                    "chtv play assist native tap skipped trigger=$trigger reason=auto-limit pageUrl=${state.pageUrl}"
+                )
+                return false
+            }
+            chtvPlayAssistNativeTapCountBySession[session] = count + 1
+        }
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val usingRatio = state.xRatio > 0f && state.yRatio > 0f
+        val cssX = state.centerX
+        val cssY = state.centerY
+        val x =
+            if (usingRatio) {
+                (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
+            } else {
+                val scaleX =
+                    if (state.viewportWidth > 0f && maxWidth > state.viewportWidth + 1f) {
+                        maxWidth / state.viewportWidth
+                    } else {
+                        1f
+                    }
+                (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
+            }
+        val y =
+            if (usingRatio) {
+                (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
+            } else {
+                val scaleY =
+                    if (state.viewportHeight > 0f && maxHeight > state.viewportHeight + 1f) {
+                        maxHeight / state.viewportHeight
+                    } else {
+                        1f
+                    }
+                (state.centerY * scaleY).coerceIn(1f, maxHeight - 1f)
+        }
+        showPointerAt(x, y, reason = "chtv-play-assist")
+        chtvPlayAssistNativeTapLastMsBySession[session] = now
+        val handled = dispatchNativeMouseTapAt(x, y, "chtv-play-assist-$trigger")
+        GvLogger.i(
+            "GvMedia",
+            "chtv play assist native tap dispatched trigger=$trigger handled=$handled native=${x.toInt()},${y.toInt()} css=${cssX.toInt()},${cssY.toInt()} viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} ratio=${if (usingRatio) "${state.xRatio},${state.yRatio}" else "-,-"} targetKind=${state.targetKind} reason=${state.reason} pageUrl=${state.pageUrl}"
+        )
+        return handled
+    }
+
+    private fun dispatchChtvFullscreenAssistNativeTap(
+        session: GeckoSession,
+        state: ChtvFullscreenAssistState,
+        trigger: String,
+    ): Boolean {
+        val activeTab = tabController.getActiveTab()
+        if (activeTab?.session != session || !isChtvContextUrl(activeTab.url)) {
+            GvLogger.i(
+                "GvMedia",
+                "chtv fullscreen assist native tap skipped trigger=$trigger reason=active-url-mismatch pageUrl=${state.pageUrl} activeUrl=${activeTab?.url.orEmpty()}"
+            )
+            return false
+        }
+        if (state.centerX < 0f || state.centerY < 0f) {
+            GvLogger.i(
+                "GvMedia",
+                "chtv fullscreen assist native tap skipped trigger=$trigger reason=missing-coordinates pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = chtvFullscreenAssistNativeTapLastMsBySession[session] ?: 0L
+        if (now - last < CHTV_FULLSCREEN_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS) {
+            GvLogger.i(
+                "GvMedia",
+                "chtv fullscreen assist native tap skipped trigger=$trigger reason=rate-limited pageUrl=${state.pageUrl}"
+            )
+            return false
+        }
+        if (trigger.startsWith("auto")) {
+            val count = chtvFullscreenAssistNativeTapCountBySession[session] ?: 0
+            if (count >= CHTV_FULLSCREEN_ASSIST_AUTO_TAP_LIMIT) {
+                GvLogger.i(
+                    "GvMedia",
+                    "chtv fullscreen assist native tap skipped trigger=$trigger reason=auto-limit pageUrl=${state.pageUrl}"
+                )
+                return false
+            }
+            chtvFullscreenAssistNativeTapCountBySession[session] = count + 1
+        }
+        val maxWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val maxHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val usingRatio = state.xRatio > 0f && state.yRatio > 0f
+        val cssX = state.centerX
+        val cssY = state.centerY
+        val x =
+            if (usingRatio) {
+                (maxWidth * state.xRatio).coerceIn(1f, maxWidth - 1f)
+            } else {
+                val scaleX =
+                    if (state.viewportWidth > 0f && maxWidth > state.viewportWidth + 1f) {
+                        maxWidth / state.viewportWidth
+                    } else {
+                        1f
+                    }
+                (state.centerX * scaleX).coerceIn(1f, maxWidth - 1f)
+            }
+        val y =
+            if (usingRatio) {
+                (maxHeight * state.yRatio).coerceIn(1f, maxHeight - 1f)
+            } else {
+                val scaleY =
+                    if (state.viewportHeight > 0f && maxHeight > state.viewportHeight + 1f) {
+                        maxHeight / state.viewportHeight
+                    } else {
+                        1f
+                    }
+                (state.centerY * scaleY).coerceIn(1f, maxHeight - 1f)
+            }
+        showPointerAt(x, y, reason = "chtv-fullscreen-assist")
+        chtvFullscreenAssistNativeTapLastMsBySession[session] = now
+        val handled = dispatchNativeMouseTapAt(x, y, "chtv-fullscreen-assist-$trigger")
+        GvLogger.i(
+            "GvMedia",
+            "chtv fullscreen assist native tap dispatched trigger=$trigger handled=$handled native=${x.toInt()},${y.toInt()} css=${cssX.toInt()},${cssY.toInt()} viewport=${state.viewportWidth.toInt()}x${state.viewportHeight.toInt()} ratio=${if (usingRatio) "${state.xRatio},${state.yRatio}" else "-,-"} targetKind=${state.targetKind} reason=${state.reason} pageUrl=${state.pageUrl}"
+        )
+        return handled
+    }
+
     private fun selectCgtvCandidate(
         pageUrl: String,
         candidates: JSONArray,
@@ -14530,6 +14914,20 @@ return changed>0;
         return host == "caribbeangospel.tv" || host.endsWith(".caribbeangospel.tv") || isBradmaxHost(host)
     }
 
+    private fun isChtvContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        return isChtvHost(uri.host)
+    }
+
+    private fun isChtvHost(host: String?): Boolean {
+        val normalized = host?.lowercase().orEmpty().removePrefix("www.")
+        return normalized == "caribbeanhottv.com" || normalized.endsWith(".caribbeanhottv.com")
+    }
+
     private fun isBradmaxHost(host: String?): Boolean {
         val normalized = host?.lowercase().orEmpty().removePrefix("www.")
         return normalized == "bradm.ax" || normalized.endsWith(".bradm.ax")
@@ -14621,6 +15019,7 @@ return changed>0;
             host == "cbc.bb" && path.startsWith("/live") -> true
             host == "kulchaflo.com" && path.startsWith("/channels/") -> true
             host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> true
+            host == "caribbeanhottv.com" || host.endsWith(".caribbeanhottv.com") -> true
             host == "abstvradio.com" && path.contains("live-streaming") -> true
             host == "novus.telearuba.aw" || host.endsWith(".novus.telearuba.aw") -> true
             host == "player.tegotv.com" -> true
