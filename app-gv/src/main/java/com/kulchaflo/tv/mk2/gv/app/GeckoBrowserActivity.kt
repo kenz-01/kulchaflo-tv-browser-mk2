@@ -122,6 +122,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var pageUrl: String = "",
         var viewportWidth: Float = 0f,
         var viewportHeight: Float = 0f,
+        var hasVideo: Boolean = false,
+        var paused: Boolean = true,
+        var readyState: Int = 0,
+        var currentTime: Double = 0.0,
+        var videoWidth: Int = 0,
+        var videoHeight: Int = 0,
     )
 
     private data class CgtvCandidateSelection(
@@ -973,13 +979,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 novusTelearubaProfileBySession.remove(session)
                 novusTelearubaPlayAssistBySession.remove(session)
             }
-            if (!isCgtvContextUrl(url.orEmpty())) {
-                // Clear any CGTV play-assist state and scheduled fallback when leaving CGTV contexts.
-                cgtvPlayAssistBySession.remove(session)
-                cgtvPlayAssistNativeTapCountBySession.remove(session)
-                cgtvPlayAssistNativeTapLastMsBySession.remove(session)
-                cgtvBrowserPlaybackActiveBySession.remove(session)
-                clearCgtvPlayAssistFallback(session)
+            if (isCgtvWatchPageUrl(url.orEmpty())) {
+                resetCgtvPlayAssistAttempt(session, reason = "watch-page", pageUrl = url.orEmpty(), logWhenEmpty = true)
+            } else if (!isCgtvContextUrl(url.orEmpty())) {
+                resetCgtvPlayAssistAttempt(session, reason = "leave-context", pageUrl = url.orEmpty())
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -8976,6 +8979,18 @@ return changed>0;
                     novusPermissionUri ||
                         (novusTopContext && (novusThirdParty || novusProfileScoped))
                     )
+            val cgtvTopContext = isCgtvExternalContextUrl(activeSessionUrl) || isCgtvExternalContextUrl(currentRootUrl)
+            val cgtvPermissionUri = isCgtvExternalContextUrl(permission.uri.orEmpty())
+            val cgtvThirdPartyBradmax = isBradmaxHost(thirdPartyHost)
+            val cgtvAutoplayScoped = ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    cgtvPermissionUri ||
+                        (cgtvTopContext && cgtvThirdPartyBradmax)
+                    )
             val cvmTopContext = isCvmLiveStreamUrl(activeSessionUrl) || isCvmLiveStreamUrl(currentRootUrl)
             val cvmPermissionUri = isCvmVimeoDiagnosticUrl(permission.uri.orEmpty())
             val cvmThirdPartyVimeo = isVimeoHostForCvm(thirdPartyHost)
@@ -8993,6 +9008,7 @@ return changed>0;
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 novusAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                cgtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -9030,6 +9046,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "novus telearuba autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (cgtvAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cgtv autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -9701,7 +9723,8 @@ return changed>0;
     private fun shouldPointerAssistIdleSleep(url: String): Boolean {
         return isYouTubePageUrl(url) ||
             isAbsTegoGestureFullscreenContextUrl(url) ||
-            isTttTegoContextUrl(url)
+            isTttTegoContextUrl(url) ||
+            isCgtvContextUrl(url)
     }
 
     private fun isKulchaFloGeneralSiteFocusUrl(url: String): Boolean {
@@ -13300,6 +13323,12 @@ return changed>0;
                 pageUrl = pageUrl,
                 viewportWidth = payload.optDouble("viewportWidth", 0.0).toFloat(),
                 viewportHeight = payload.optDouble("viewportHeight", 0.0).toFloat(),
+                hasVideo = payload.optBoolean("hasVideo"),
+                paused = payload.optBoolean("paused", true),
+                readyState = payload.optInt("readyState"),
+                currentTime = payload.optDouble("currentTime"),
+                videoWidth = payload.optInt("videoWidth"),
+                videoHeight = payload.optInt("videoHeight"),
             )
             if (targetKind == "bradmax-iframe" && active) {
                 cgtvPlayAssistBySession[session] = state
@@ -13307,6 +13336,12 @@ return changed>0;
                 if (handled) {
                     // Schedule a short Kotlin-side fallback that will release play-assist
                     // if page-side playing=true does not arrive in time.
+                    scheduleCgtvPlayAssistFallbackRelease(session, pageUrl)
+                }
+            } else if (targetKind == "bradmax-video" && active && state.hasVideo && state.paused) {
+                cgtvPlayAssistBySession[session] = state
+                val handled = dispatchCgtvPlayAssistNativeTap(session, state, trigger = "auto-video")
+                if (handled) {
                     scheduleCgtvPlayAssistFallbackRelease(session, pageUrl)
                 }
             } else if (targetKind == "bradmax-video" && payload.optBoolean("playing")) {
@@ -13583,6 +13618,7 @@ return changed>0;
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
@@ -13673,7 +13709,7 @@ return changed>0;
         private val YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK
         private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
         private const val CGTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
-        private const val CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 1
+        private const val CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 2
         // Fallback timeout used to release CGTV play-assist state if page-side playing=true
         // does not arrive within this window after an assisted native tap.
         private const val CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS = 5000L
@@ -14235,6 +14271,22 @@ return changed>0;
         }
     }
 
+    private fun resetCgtvPlayAssistAttempt(
+        session: GeckoSession,
+        reason: String,
+        pageUrl: String,
+        logWhenEmpty: Boolean = false,
+    ) {
+        val hadState = cgtvPlayAssistBySession.remove(session) != null ||
+            cgtvPlayAssistNativeTapCountBySession.remove(session) != null ||
+            cgtvPlayAssistNativeTapLastMsBySession.remove(session) != null ||
+            cgtvBrowserPlaybackActiveBySession.remove(session)
+        clearCgtvPlayAssistFallback(session)
+        if (hadState || logWhenEmpty) {
+            GvLogger.i("GvMedia", "cgtv play assist attempt reset reason=$reason pageUrl=$pageUrl")
+        }
+    }
+
     private fun scheduleCgtvPlayAssistFallbackRelease(session: GeckoSession, pageUrl: String) {
         try {
             if (cgtvPlayAssistFallbackReleaseRunnableBySession.containsKey(session)) return
@@ -14303,7 +14355,8 @@ return changed>0;
             )
             return false
         }
-        if (trigger == "auto") {
+        val autoTrigger = trigger.startsWith("auto")
+        if (autoTrigger) {
             val alignedViewport = if (state.yRatio > 0f) {
                 // Ratio-based alignment check (device-independent)
                 state.yRatio <= 0.65f
@@ -14454,6 +14507,32 @@ return changed>0;
             return true
         }
         return host == "bradm.ax" || host.endsWith(".bradm.ax")
+    }
+
+    private fun isCgtvWatchPageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "caribbeangospel.tv" && (path == "/watch" || path == "/watch/")
+    }
+
+    private fun isCgtvExternalContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "caribbeangospel.tv" || host.endsWith(".caribbeangospel.tv") || isBradmaxHost(host)
+    }
+
+    private fun isBradmaxHost(host: String?): Boolean {
+        val normalized = host?.lowercase().orEmpty().removePrefix("www.")
+        return normalized == "bradm.ax" || normalized.endsWith(".bradm.ax")
     }
 
     private fun isLikelyCgtvSplashAnimationUrl(url: String): Boolean {

@@ -8,7 +8,7 @@
   const NOVUS_CHANNEL_SELECT_DELAYS_MS = [350, 1200, 2600, 4500];
   const NOVUS_PLAYABLE_CHECK_DELAYS_MS = [1200, 2600, 5000, 8000, 12000, 16000, 22000, 30000];
   const CGTV_PLAY_ASSIST_DELAYS_MS = [900, 2400, 5200];
-  const CGTV_TOP_OFFSET_PX = 8;
+  const CGTV_TOP_OFFSET_PX = 0;
   const NOVUS_AUTOPLAY_MAX_ATTEMPTS = 6;
   const ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE = true;
   const ENABLE_ABS_TEGO_PLAYER_FULLSCREEN_LIKE = true;
@@ -247,6 +247,8 @@
   }
 
   function collectCgtvBradmaxVideoState() {
+    const vw = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 0);
+    const vh = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 0);
     const videos = Array.from(document.querySelectorAll("video"));
     let best = null;
     let bestScore = -1;
@@ -267,12 +269,18 @@
         paused: true,
         readyState: 0,
         currentTime: 0,
+        centerX: Math.max(1, Math.floor(vw / 2)),
+        centerY: Math.max(1, Math.floor(vh / 2)),
+        xRatio: 0.5,
+        yRatio: 0.5,
         videoWidth: 0,
         videoHeight: 0,
         rectText: ""
       };
     }
     const rect = best.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
     const paused = !!best.paused;
     const currentTime = typeof best.currentTime === "number" ? best.currentTime : 0;
     return {
@@ -281,6 +289,10 @@
       paused,
       readyState: best.readyState || 0,
       currentTime,
+      centerX: Math.round(centerX),
+      centerY: Math.round(centerY),
+      xRatio: parseFloat((vw > 0 ? centerX / vw : 0.5).toFixed(4)),
+      yRatio: parseFloat((vh > 0 ? centerY / vh : 0.5).toFixed(4)),
       videoWidth: best.videoWidth || 0,
       videoHeight: best.videoHeight || 0,
       rectText: rectAsText(rect)
@@ -700,10 +712,12 @@
         requiresUserAction: !!state.hasVideo && !state.playing,
         reason: state.playing ? "playing" : "bradmax-video-state",
         attemptAtMs: numberOrZero(attemptAtMs),
-        centerX: Math.max(1, Math.floor(window.innerWidth / 2)),
-        centerY: Math.max(1, Math.floor(window.innerHeight / 2)),
+        centerX: state.centerX,
+        centerY: state.centerY,
         viewportWidth: numberOrZero(window.innerWidth || 0),
         viewportHeight: numberOrZero(window.innerHeight || 0),
+        xRatio: state.xRatio,
+        yRatio: state.yRatio,
         devicePixelRatio: numberOrZero(window.devicePixelRatio || 0),
         rect: state.rectText,
         targetKind: "bradmax-video",
@@ -763,7 +777,7 @@
       }
       const beforeTop = iframe.getBoundingClientRect().top;
       const currentScrollY = window.scrollY || window.pageYOffset || 0;
-      const targetScrollY = Math.max(0, currentScrollY + beforeTop);
+      const targetScrollY = Math.max(0, currentScrollY + beforeTop - CGTV_TOP_OFFSET_PX);
       if (Math.abs(beforeTop) > 2) {
         window.scrollTo({ top: targetScrollY, left: 0, behavior: "auto" });
       }
