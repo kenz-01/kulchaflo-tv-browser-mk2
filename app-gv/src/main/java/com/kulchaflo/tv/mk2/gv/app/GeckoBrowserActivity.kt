@@ -352,8 +352,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             schedulePointerIdleTimeout()
             return@Runnable
         }
-        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        val activeTab = tabController.getActiveTab()
+        val activeUrl = activeTab?.url ?: currentUrl
         val pointerIdleSleepAllowed = shouldPointerAssistIdleSleep(activeUrl)
+        val cvmPlayer = isCvmLiveStreamUrl(activeUrl) || isCvmVimeoPlayerUrl(activeUrl)
+        if (cvmPlayer && !browserFullscreenPointerSleepActive) {
+            browserFullscreenPointerSleepActive = true
+        }
         if (browserFullscreenPointerSleepActive) {
             if (!pointerVisible || !pointerOverlay.isPointerVisible()) {
                 return@Runnable
@@ -395,6 +400,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 deltaX = delta.first * POINTER_MOVE_STEP_PX * multiplier,
                 deltaY = delta.second * POINTER_MOVE_STEP_PX * multiplier,
             )
+            val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+            if (isNovusTelearubaContextUrl(activeUrl)) {
+                pointerHandler.postDelayed(this, POINTER_REPEAT_FRAME_MS)
+                return
+            }
             if (maybeDispatchKulchaFloHomepageRailHoverScroll(currentHorizontalDpadKey(), move.overshootX, reason = "repeat")) {
                 pointerHandler.postDelayed(this, POINTER_REPEAT_FRAME_MS)
                 return
@@ -526,43 +536,30 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     if (maybeHandleTttBackExit(activeTab, activeSession, activeUrl)) {
                         return
                     }
+                    if (maybeHandleNovusTelearubaBackExit(activeTab, activeSession, activeUrl)) {
+                        return
+                    }
+                    if (isCvmLiveStreamUrl(activeUrl) || isCvmVimeoPlayerUrl(activeUrl)) {
+                        if (canGoBack) {
+                            activeTab?.session?.goBack()
+                            GvLogger.i("GvNav", "cvm back consumed reason=history url=$activeUrl")
+                            return
+                        }
+                        activeTab?.session?.loadUri("https://kulchaflo.com/channels/cvm-tv/")
+                        GvLogger.i("GvNav", "cvm back consumed reason=watch-page url=$activeUrl")
+                        return
+                    }
                     if (!promotedMediaPlayer.isPromoted() &&
                         pointerAssistModeActive &&
                         !isYouTubePageUrl(activeUrl) &&
                         !isFacebookUrl(activeUrl) &&
                         !isAbsTegoGestureFullscreenContextUrl(activeUrl) &&
-                        !isTttOrTegoLivePlayerUrl(activeUrl)
+                        !isTttOrTegoLivePlayerUrl(activeUrl) &&
+                        !isNovusTelearubaContextUrl(activeUrl) &&
+                        !isCvmLiveStreamUrl(activeUrl) &&
+                        !isCvmVimeoPlayerUrl(activeUrl)
                     ) {
                         disablePointerAssistMode(reason = "back-to-focus-mode")
-                        return
-                    }
-                    val novusPlayerFirstReturnUrl = activeSession?.let { novusTelearubaPlayerFirstReturnUrlBySession[it] }
-                    val novusProfile = activeSession?.let { novusTelearubaProfileBySession[it] }
-                    if (!novusPlayerFirstReturnUrl.isNullOrBlank()) {
-                        novusTelearubaPlayerFirstReturnUrlBySession.remove(activeSession)
-                        activeSession?.let { novusTelearubaProfileBySession.remove(it) }
-                        activeSession?.let { novusTelearubaPlayAssistBySession.remove(it) }
-                        val activeTabId = activeTab?.id
-                        val targetTab = tabController.getTabs().firstOrNull { tab ->
-                            tab.id != activeTab?.id && tab.url.startsWith(novusPlayerFirstReturnUrl)
-                        }
-                        if (targetTab != null && activeTabId != null) {
-                            GvLogger.i(
-                                "GvNav",
-                                "novus telearuba back exit target existing-tab tabId=${targetTab.id} desiredChannel=${novusProfile?.desiredChannel.orEmpty()} returnUrl=$novusPlayerFirstReturnUrl"
-                            )
-                            tabController.activateTab(targetTab.id)
-                            tabController.closeTab(activeTabId)
-                        } else {
-                            GvLogger.i(
-                                "GvNav",
-                                "novus telearuba back exit target new-tab desiredChannel=${novusProfile?.desiredChannel.orEmpty()} returnUrl=$novusPlayerFirstReturnUrl"
-                            )
-                            tabController.createTab(novusPlayerFirstReturnUrl, activate = true)
-                            if (activeTabId != null) {
-                                tabController.closeTab(activeTabId)
-                            }
-                        }
                         return
                     }
                     val tabs = tabController.getTabs()
@@ -583,7 +580,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     if (activeTab != null && !isKulchaFloHomepage(activeTab.url)) {
                         val shouldConfirmReturnHome =
                             activeHost.isNotBlank() &&
-                                !activeHost.contains("kulchaflo.com")
+                                !activeHost.contains("kulchaflo.com") &&
+                                !isCvmLiveStreamUrl(activeUrl) &&
+                                !isCvmVimeoPlayerUrl(activeUrl)
                         if (shouldConfirmReturnHome) {
                             val now = SystemClock.elapsedRealtime()
                             if (now - lastBackToHomeAtMs > BACK_RETURN_HOME_CONFIRM_WINDOW_MS) {
@@ -9363,6 +9362,7 @@ return changed>0;
                     KeyEvent.KEYCODE_DPAD_DOWN -> {
                         val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
                         val activeSession = tabController.getActiveTab()?.session
+                        val novusTelearubaContext = isNovusTelearubaContextUrl(activeUrl)
                         val wasHidden = !pointerVisible || !pointerOverlay.isPointerVisible()
                         if (isTttOrTegoLivePlayerUrl(activeUrl)) {
                             val revealReason = if (wasHidden) "dpad-wake" else "dpad-move"
@@ -9370,10 +9370,12 @@ return changed>0;
                                 reason = revealReason,
                                 preferStoredPointer = !wasHidden,
                             )
-                            GvLogger.i(
-                                "GvMedia",
-                                "ttt transport reveal hover reason=$revealReason x=${reveal.x.toInt()} y=${reveal.y.toInt()} handled=${reveal.handled} pageUrl=$activeUrl"
-                            )
+                                GvLogger.i(
+                                    "GvMedia",
+                                    "ttt transport reveal hover reason=$revealReason x=${reveal.x.toInt()} y=${reveal.y.toInt()} handled=${reveal.handled} pageUrl=$activeUrl"
+                                )
+                        } else if (novusTelearubaContext) {
+                            ensurePointerVisible()
                         } else {
                             ensurePointerVisible()
                         }
@@ -9405,14 +9407,21 @@ return changed>0;
                                     "caribvision transport reveal hover reason=$revealReason x=${pointerX.toInt()} y=${pointerY.toInt()} handled=$handled pageUrl=$activeUrl"
                                 )
                             }
-                            maybeDispatchKulchaFloHomepageRailHoverScroll(event.keyCode, move.overshootX, reason = "initial-edge")
-                            maybeScrollContent(move.overshootX, move.overshootY, "initial")
+                            if (!novusTelearubaContext) {
+                                maybeDispatchKulchaFloHomepageRailHoverScroll(event.keyCode, move.overshootX, reason = "initial-edge")
+                                maybeScrollContent(move.overshootX, move.overshootY, "initial")
+                            }
                             startPointerRepeater()
-                            maybeDispatchDpadDocumentScrollFallback(
-                                keyCode = event.keyCode,
-                                reason = "initial-edge",
-                                scrollY = (move.overshootY * EDGE_SCROLL_MULTIPLIER).toInt(),
-                            )
+                            if (!novusTelearubaContext) {
+                                maybeDispatchDpadDocumentScrollFallback(
+                                    keyCode = event.keyCode,
+                                    reason = "initial-edge",
+                                    scrollY = (move.overshootY * EDGE_SCROLL_MULTIPLIER).toInt(),
+                                )
+                            }
+                            if (novusTelearubaContext) {
+                                return true
+                            }
                         }
                         return true
                     }
@@ -9573,8 +9582,14 @@ return changed>0;
         }
         val activeTab = tabController.getActiveTab() ?: return false
         val activeUrl = activeTab.url
+        if (isNovusTelearubaContextUrl(activeUrl)) {
+            browserFullscreenPointerSleepActive = false
+            browserFullscreenWakeOnlyPendingKeyUp = false
+            return false
+        }
         val youtubePage = isYouTubePageUrl(activeUrl)
         val facebookPage = isFacebookUrl(activeUrl)
+        val cvmPlayer = isCvmLiveStreamUrl(activeUrl) || isCvmVimeoPlayerUrl(activeUrl)
         val fullscreenActive = isBrowserFullscreenLikeState(activeTab)
         if (youtubePage && !fullscreenActive) {
             browserFullscreenPointerSleepActive = false
@@ -9582,6 +9597,9 @@ return changed>0;
         }
         if (facebookPage && !fullscreenActive) {
             browserFullscreenPointerSleepActive = false
+            return false
+        }
+        if (cvmPlayer) {
             return false
         }
         if (!fullscreenActive && !browserFullscreenPointerSleepActive) {
@@ -9636,6 +9654,11 @@ return changed>0;
                 "GvInput",
                 "caribvision back consumed reason=exit-fullscreen url=$activeUrl downHandled=$downHandled upHandled=$upHandled"
             )
+            return true
+        }
+        if (cvmPlayer && pointerVisible && pointerOverlay.isPointerVisible()) {
+            enterBrowserFullscreenPointerSleep(reason = "back")
+            GvLogger.i("GvInput", "browser fullscreen back consumed reason=sleep-pointer url=$activeUrl")
             return true
         }
         if (pointerVisible && pointerOverlay.isPointerVisible()) {
@@ -9943,6 +9966,65 @@ return changed>0;
         return true
     }
 
+    private fun novusTelearubaProfileTag(session: GeckoSession?): String {
+        val channel = session?.let {
+            novusTelearubaProfileBySession[it]?.desiredChannel
+        }.orEmpty()
+        return when (channel) {
+            "13" -> "telearuba"
+            "23" -> "nos-isla-novus"
+            "49" -> "aruba-novus"
+            else -> "novus-telearuba"
+        }
+    }
+
+    private fun maybeHandleNovusTelearubaBackExit(
+        activeTab: GvTab?,
+        activeSession: GeckoSession?,
+        activeUrl: String,
+    ): Boolean {
+        if (activeTab == null || activeSession == null) {
+            return false
+        }
+        if (!isNovusTelearubaPlayerUrl(activeUrl)) {
+            return false
+        }
+        val profileTag = novusTelearubaProfileTag(activeSession)
+        val profile = novusTelearubaProfileBySession[activeSession]
+        val returnUrl = novusTelearubaPlayerFirstReturnUrlBySession[activeSession]
+            ?.takeIf { it.isNotBlank() }
+                ?: profile?.returnUrl?.takeIf { it.isNotBlank() }
+            ?: BuildConfig.DEFAULT_START_URL
+        novusTelearubaPlayerFirstReturnUrlBySession.remove(activeSession)
+        novusTelearubaProfileBySession.remove(activeSession)
+        novusTelearubaPlayAssistBySession.remove(activeSession)
+        browserFullscreenPointerSleepActive = false
+        browserFullscreenWakeOnlyPendingKeyUp = false
+        if (pointerAssistModeActive || pointerVisible || pointerOverlay.isPointerVisible()) {
+            disablePointerAssistMode(reason = "novus-back-exit")
+        }
+        val targetTab = tabController.getTabs().firstOrNull { tab ->
+            tab.id != activeTab.id && tab.url.startsWith(returnUrl)
+        }
+        return if (targetTab != null) {
+            GvLogger.i(
+                "GvNav",
+                "$profileTag back consumed reason=exit-to-kulchaflo mode=existing-tab url=$activeUrl returnUrl=$returnUrl tabId=${targetTab.id}"
+            )
+            tabController.activateTab(targetTab.id)
+            tabController.closeTab(activeTab.id)
+            true
+        } else {
+            GvLogger.i(
+                "GvNav",
+                "$profileTag back consumed reason=exit-to-kulchaflo mode=new-tab url=$activeUrl returnUrl=$returnUrl"
+            )
+            tabController.createTab(returnUrl, activate = true)
+            tabController.closeTab(activeTab.id)
+            true
+        }
+    }
+
     private fun ensurePointerVisible() {
         if (pointerVisible && pointerOverlay.isPointerVisible()) {
             schedulePointerIdleTimeout()
@@ -10035,9 +10117,12 @@ return changed>0;
         return isYouTubePageUrl(url) ||
             isAbsTegoGestureFullscreenContextUrl(url) ||
             isTttTegoContextUrl(url) ||
+            isNovusTelearubaContextUrl(url) ||
             isCgtvContextUrl(url) ||
             isChtvContextUrl(url) ||
-            isCaribvisionPlayerActive(activeSession, url)
+            isCaribvisionPlayerActive(activeSession, url) ||
+            isCvmLiveStreamUrl(url) ||
+            isCvmVimeoPlayerUrl(url)
     }
 
     private fun isKulchaFloGeneralSiteFocusUrl(url: String): Boolean {
@@ -11174,6 +11259,9 @@ return changed>0;
         }
         if (host == "kulchaflo.com" && (path == "/watch" || path.startsWith("/watch/"))) {
             return "internal-watch-route"
+        }
+        if (isCvmLiveStreamUrl(url) || isCvmVimeoEmbedUrl(uri)) {
+            return "cvm-vimeo-player"
         }
         if (isAdminOrBackendRoute(host, path)) {
             return "admin-backend"
@@ -14555,6 +14643,15 @@ return changed>0;
         return resolveNovusTelearubaIntentFromKulchaFloUrl(url) != null
     }
 
+    private fun isNovusTelearubaPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        return isNovusTelearubaHost(uri.host)
+    }
+
     private fun resolveNovusTelearubaIntentFromKulchaFloUrl(url: String): NovusTelearubaProfileState? {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -14652,10 +14749,10 @@ return changed>0;
         }
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
-        if (host == "cvmtv.com" && path.startsWith("/more-pages/cvm-live-stream")) {
+        if (host == "cvmtv.com" && (path.startsWith("/more-pages/cvm-live-stream") || path == "/live" || path.startsWith("/live/"))) {
             return true
         }
-        if (host == "vimeo.com" && path.startsWith("/event/") && path.endsWith("/embed")) {
+        if (isCvmVimeoEmbedUrl(uri)) {
             return true
         }
         if (host == "player.vimeo.com" && path == "/static/proxy.html") {
@@ -14672,7 +14769,21 @@ return changed>0;
         }
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
-        return host == "cvmtv.com" && path.startsWith("/more-pages/cvm-live-stream")
+        return host == "cvmtv.com" && (path.startsWith("/more-pages/cvm-live-stream") || path == "/live" || path.startsWith("/live/"))
+    }
+
+    private fun isCvmVimeoEmbedUrl(uri: android.net.Uri): Boolean {
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "vimeo.com" && path.startsWith("/event/") && path.endsWith("/embed")
+    }
+
+    private fun isCvmVimeoPlayerUrl(url: String): Boolean {
+        if (isCvmLiveStreamUrl(url)) {
+            return true
+        }
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        return isCvmVimeoEmbedUrl(uri)
     }
 
     private fun isVimeoHostForCvm(hostValue: String?): Boolean {
@@ -14698,6 +14809,8 @@ return changed>0;
             host == "novus.telearuba.aw" || host.endsWith(".novus.telearuba.aw") -> "novus-live"
             host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> "caribvision-live"
             host == "cbc.bb" && path.startsWith("/live") -> "cbc-live"
+            isCvmLiveStreamUrl(url) -> "cvm-vimeo-player"
+            isCvmVimeoEmbedUrl(uri) -> "cvm-vimeo-player"
             isLiveMediaSurfaceUrl(url) -> "live-media-surface"
             else -> null
         }
@@ -15598,6 +15711,8 @@ return changed>0;
             host == "player.tegotv.com" -> true
             path.contains("/player.php") -> true
             path.contains("/live-stream") -> true
+            isCvmLiveStreamUrl(url) -> true
+            isCvmVimeoEmbedUrl(uri) -> true
             else -> false
         }
     }

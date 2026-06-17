@@ -89,6 +89,8 @@
   let caribvisionFullscreenAssistLastKey = "";
   let caribvisionAudioDomClickDone = false;
   let caribvisionFullscreenDomClickDone = false;
+  let cvmVimeoPlayerFirstApplied = false;
+  let cvmVimeoQualityPreferenceResolved = false;
 
   function isVisible(element) {
     if (!element) return false;
@@ -124,6 +126,111 @@
     if (host !== "ttt.live" && host !== "www.ttt.live") return false;
     const path = (window.location.pathname || "").toLowerCase();
     return path.indexOf("/stream") === 0;
+  }
+
+  function isCvmLiveTopPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cvmtv.com" && host !== "www.cvmtv.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live" || path.indexOf("/live/") === 0 || path.indexOf("/more-pages/cvm-live-stream") === 0;
+  }
+
+  function isCvmVimeoEmbedFrame() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "vimeo.com" && !host.endsWith(".vimeo.com")) return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path.indexOf("/event/") === 0 && path.endsWith("/embed");
+  }
+
+  function applyCvmVimeoPlayerFirstLayout() {
+    if (cvmVimeoPlayerFirstApplied) return false;
+    const shouldApply = isCvmLiveTopPage() || isCvmVimeoEmbedFrame();
+    if (!shouldApply) return false;
+    const target = isCvmLiveTopPage()
+      ? Array.from(document.querySelectorAll("iframe")).find((node) => {
+          const src = String(node.src || node.getAttribute("src") || "").toLowerCase();
+          return src.indexOf("vimeo.com/event/") >= 0 && src.indexOf("/embed") >= 0;
+        })
+      : (document.querySelector("iframe") || document.body);
+    if (!target) return false;
+    try {
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("width", "100vw", "important");
+        document.documentElement.style.setProperty("height", "100vh", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        document.documentElement.style.setProperty("background", "#000", "important");
+      }
+      if (document.body && document.body.style) {
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("width", "100vw", "important");
+        document.body.style.setProperty("height", "100vh", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+        document.body.style.setProperty("background", "#000", "important");
+      }
+      if (target && target.style) {
+        target.style.setProperty("position", "fixed", "important");
+        target.style.setProperty("left", "0", "important");
+        target.style.setProperty("top", "0", "important");
+        target.style.setProperty("width", "100vw", "important");
+        target.style.setProperty("height", "100vh", "important");
+        target.style.setProperty("max-width", "100vw", "important");
+        target.style.setProperty("max-height", "100vh", "important");
+        target.style.setProperty("margin", "0", "important");
+        target.style.setProperty("padding", "0", "important");
+        target.style.setProperty("border", "0", "important");
+        target.style.setProperty("z-index", "2147483647", "important");
+        target.style.setProperty("background", "#000", "important");
+      }
+      cvmVimeoPlayerFirstApplied = true;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function maybePreferCvmVimeo1080p() {
+    if (cvmVimeoQualityPreferenceResolved || !isCvmVimeoEmbedFrame()) return false;
+    try {
+      const PlayerCtor = window.Vimeo && window.Vimeo.Player;
+      if (typeof PlayerCtor !== "function") return false;
+      const root = Array.from(document.querySelectorAll("iframe, div[data-vimeo-id], div[data-vimeo-url]")).find((node) => {
+        const src = String(node.src || node.getAttribute("data-vimeo-url") || "").toLowerCase();
+        return src.indexOf("vimeo.com") >= 0 || node.hasAttribute("data-vimeo-id") || node.hasAttribute("data-vimeo-url");
+      });
+      if (!root) return false;
+      const player = new PlayerCtor(root);
+      Promise.resolve(player.getQualities())
+        .then((qualities) => {
+          const preferred = Array.isArray(qualities)
+            ? qualities.find((quality) => String((quality && (quality.id || quality.label)) || "").toLowerCase() === "1080p")
+            : null;
+          if (!preferred) {
+            cvmVimeoQualityPreferenceResolved = true;
+            return null;
+          }
+          return Promise.resolve(player.getQuality())
+            .then((current) => {
+              if (String(current || "").toLowerCase() === "1080p") {
+                cvmVimeoQualityPreferenceResolved = true;
+                return current;
+              }
+              return player.setQuality(preferred.id || preferred.label || "1080p");
+            })
+            .then(() => {
+              cvmVimeoQualityPreferenceResolved = true;
+            })
+            .catch(() => {
+              cvmVimeoQualityPreferenceResolved = true;
+            });
+        })
+        .catch(() => {});
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function detectTegoProfileFromPlayerUrl(rawUrl) {
@@ -5285,6 +5392,8 @@
 
   function publish() {
     const payload = collect();
+    applyCvmVimeoPlayerFirstLayout();
+    maybePreferCvmVimeo1080p();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
       emitCaribVisionSessionState("publish-no-change");
