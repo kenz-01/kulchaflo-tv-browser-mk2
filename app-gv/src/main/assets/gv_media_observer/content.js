@@ -91,6 +91,13 @@
   let caribvisionFullscreenDomClickDone = false;
   let cvmVimeoPlayerFirstApplied = false;
   let cvmVimeoQualityPreferenceResolved = false;
+  let cbnVirginIslandsLayoutApplied = false;
+  let cbnVirginIslandsAutoplayAttempted = false;
+  let cbnVirginIslandsMutedFallbackAttempted = false;
+  let cbnVirginIslandsMutedFallbackRetryCount = 0;
+  let cbnVirginIslandsMutedFallbackRetryTimer = null;
+  let cbnVirginIslandsPointerSleepRequested = false;
+  let cbnVirginIslandsPointerSleepTimer = null;
 
   function isVisible(element) {
     if (!element) return false;
@@ -140,6 +147,18 @@
     if (host !== "vimeo.com" && !host.endsWith(".vimeo.com")) return false;
     const path = (window.location.pathname || "").toLowerCase();
     return path.indexOf("/event/") === 0 && path.endsWith("/embed");
+  }
+
+  function isCbnVirginIslandsLivePage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cbnvirginislands.com" && host !== "www.cbnvirginislands.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/cbn-tv" || path.indexOf("/cbn-tv/") === 0;
+  }
+
+  function isCbnVirginIslandsEmbedFrame() {
+    const href = String(window.location.href || "").toLowerCase();
+    return href.indexOf("cbnvirginislands-com.filesusr.com/html/") >= 0;
   }
 
   function applyCvmVimeoPlayerFirstLayout() {
@@ -231,6 +250,226 @@
     } catch (_) {
       return false;
     }
+  }
+
+  function isCbnVirginIslandsPlaybackActive() {
+    try {
+      const visibleVideos = Array.from(document.querySelectorAll("video")).filter((node) => isVisible(node));
+      if (visibleVideos.some((node) => !node.paused && !node.ended)) {
+        return true;
+      }
+      if (typeof window.jwplayer === "function") {
+        const jwplayerInstance = window.jwplayer();
+        if (jwplayerInstance && typeof jwplayerInstance.getState === "function") {
+          const state = String(jwplayerInstance.getState() || "").toLowerCase();
+          if (state === "playing") {
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function applyCbnVirginIslandsPlayerFirstLayout() {
+    if (cbnVirginIslandsLayoutApplied || !isCbnVirginIslandsLivePage()) return false;
+    const player = document.getElementById("comp-ke1v14ts");
+    if (!player) return false;
+    try {
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("width", "100vw", "important");
+        document.documentElement.style.setProperty("height", "100vh", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        document.documentElement.style.setProperty("background", "#000", "important");
+      }
+      if (document.body && document.body.style) {
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("width", "100vw", "important");
+        document.body.style.setProperty("height", "100vh", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+        document.body.style.setProperty("background", "#000", "important");
+      }
+      const playerFrame = player.querySelector("iframe");
+      const targets = [player, playerFrame].filter(Boolean);
+      targets.forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("left", "0", "important");
+        node.style.setProperty("top", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "100vw", "important");
+        node.style.setProperty("max-height", "100vh", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("overflow", "hidden", "important");
+        node.style.setProperty("background", "#000", "important");
+        node.style.setProperty("z-index", "2147483647", "important");
+      });
+      try {
+        const quietSelectors = ["#comp-lg70kcxq"];
+        quietSelectors.forEach((selector) => {
+          const node = document.querySelector(selector);
+          if (node && node.style) {
+            node.style.setProperty("display", "none", "important");
+          }
+        });
+      } catch (_) {}
+      cbnVirginIslandsLayoutApplied = true;
+      maybeScheduleCbnVirginIslandsPointerSleep();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function maybeScheduleCbnVirginIslandsPointerSleep() {
+    if (cbnVirginIslandsPointerSleepRequested || cbnVirginIslandsPointerSleepTimer || !isCbnVirginIslandsLivePage()) {
+      return false;
+    }
+    if (!cbnVirginIslandsLayoutApplied && !isCbnVirginIslandsPlaybackActive()) {
+      return false;
+    }
+    cbnVirginIslandsPointerSleepTimer = setTimeout(() => {
+      cbnVirginIslandsPointerSleepTimer = null;
+      if (cbnVirginIslandsPointerSleepRequested || !isCbnVirginIslandsLivePage()) return;
+      cbnVirginIslandsPointerSleepRequested = true;
+      promptPayload({
+        type: "cbn-virgin-islands-state",
+        phase: "content-cbn-virgin-islands-pointer-sleep",
+        pageUrl: window.location.href,
+        layoutApplied: !!cbnVirginIslandsLayoutApplied,
+        playbackActive: isCbnVirginIslandsPlaybackActive(),
+        requestPointerSleep: true
+      });
+    }, 1800);
+    return true;
+  }
+
+  function tryCbnVirginIslandsMutedFallback() {
+    if (cbnVirginIslandsMutedFallbackAttempted || !isCbnVirginIslandsEmbedFrame()) return false;
+    let attempted = false;
+    let foundTarget = false;
+    try {
+      const jwplayerInstance = typeof window.jwplayer === "function" ? window.jwplayer() : null;
+      if (jwplayerInstance) {
+        foundTarget = true;
+        attempted = safeMethodCall(jwplayerInstance, "play", [true], null) || attempted;
+        attempted = safeMethodCall(jwplayerInstance, "play", [], null) || attempted;
+      }
+    } catch (_) {}
+    try {
+      const visibleVideos = Array.from(document.querySelectorAll("video")).filter((node) => isVisible(node));
+      const mutedVideo = visibleVideos.find((node) => node.paused || node.ended) || visibleVideos[0] || null;
+      if (mutedVideo) {
+        foundTarget = true;
+        try {
+          mutedVideo.playsInline = true;
+        } catch (_) {}
+        const playResult = mutedVideo.play();
+        attempted = true;
+        if (playResult && typeof playResult.catch === "function") {
+          playResult.catch(() => {});
+        }
+      }
+    } catch (_) {}
+    if (isCbnVirginIslandsPlaybackActive()) {
+      cbnVirginIslandsMutedFallbackAttempted = true;
+      cbnVirginIslandsMutedFallbackRetryCount = 0;
+      maybeScheduleCbnVirginIslandsPointerSleep();
+      return true;
+    }
+    if ((attempted || foundTarget) && !cbnVirginIslandsMutedFallbackRetryTimer && cbnVirginIslandsMutedFallbackRetryCount < 3) {
+      const retryDelayMs = 500 + (cbnVirginIslandsMutedFallbackRetryCount * 700);
+      cbnVirginIslandsMutedFallbackRetryCount += 1;
+      cbnVirginIslandsMutedFallbackRetryTimer = setTimeout(() => {
+        cbnVirginIslandsMutedFallbackRetryTimer = null;
+        if (!isCbnVirginIslandsEmbedFrame() || cbnVirginIslandsMutedFallbackAttempted || isCbnVirginIslandsPlaybackActive()) {
+          return;
+        }
+        tryCbnVirginIslandsMutedFallback();
+      }, retryDelayMs);
+    }
+    return attempted || foundTarget;
+  }
+
+  function maybeKickCbnVirginIslandsPlayer() {
+    if (cbnVirginIslandsAutoplayAttempted || !isCbnVirginIslandsEmbedFrame()) return false;
+    let attempted = false;
+    let foundTarget = false;
+    try {
+      const jwplayerInstance = typeof window.jwplayer === "function" ? window.jwplayer() : null;
+      if (jwplayerInstance) {
+        foundTarget = true;
+        try {
+          if (typeof jwplayerInstance.getState === "function") {
+            const state = String(jwplayerInstance.getState() || "").toLowerCase();
+            if (state === "playing") {
+              cbnVirginIslandsAutoplayAttempted = true;
+              maybeScheduleCbnVirginIslandsPointerSleep();
+              return true;
+            }
+          }
+          attempted = safeMethodCall(jwplayerInstance, "play", [true], null) || attempted;
+          attempted = safeMethodCall(jwplayerInstance, "play", [], null) || attempted;
+        } catch (_) {}
+      }
+      if (!attempted) {
+        try {
+          const visibleVideos = Array.from(document.querySelectorAll("video")).filter((node) => isVisible(node));
+          const activeVideo = visibleVideos.find((node) => node.paused || node.ended) || null;
+          if (activeVideo) {
+            foundTarget = true;
+            try {
+              if (activeVideo.muted) activeVideo.muted = false;
+              if (typeof activeVideo.volume === "number" && activeVideo.volume < 1) activeVideo.volume = 1;
+              activeVideo.playsInline = true;
+            } catch (_) {}
+            const playResult = activeVideo.play();
+            attempted = true;
+            if (playResult && typeof playResult.catch === "function") {
+              playResult.catch(() => {
+                tryCbnVirginIslandsMutedFallback();
+              });
+            }
+          }
+        } catch (_) {}
+      }
+      if (!attempted) {
+        const playButton = Array.from(
+          document.querySelectorAll("button,[role='button'],.jw-icon-playback,.jw-display-icon-container,.jw-icon-play,.jw-big-play-button")
+        ).find((node) => {
+          if (!isVisible(node)) return false;
+          const blob = String(
+            node.innerText || node.textContent || node.getAttribute("aria-label") || node.getAttribute("title") || node.className || ""
+          ).replace(/\s+/g, " ").trim().toLowerCase();
+          if (!blob) return false;
+          if (blob.indexOf("pause") >= 0) return false;
+          return blob.indexOf("play") >= 0 || blob.indexOf("watch") >= 0 || blob.indexOf("live") >= 0;
+        });
+        if (playButton) {
+          foundTarget = true;
+          try {
+            playButton.click();
+            attempted = true;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    if (!foundTarget) {
+      return false;
+    }
+    cbnVirginIslandsAutoplayAttempted = true;
+    if (attempted) {
+      maybeScheduleCbnVirginIslandsPointerSleep();
+    } else {
+      tryCbnVirginIslandsMutedFallback();
+    }
+    return attempted;
   }
 
   function detectTegoProfileFromPlayerUrl(rawUrl) {
@@ -5394,6 +5633,8 @@
     const payload = collect();
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
+    applyCbnVirginIslandsPlayerFirstLayout();
+    maybeKickCbnVirginIslandsPlayer();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
       emitCaribVisionSessionState("publish-no-change");

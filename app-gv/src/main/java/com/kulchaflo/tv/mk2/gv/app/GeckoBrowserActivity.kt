@@ -328,6 +328,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val youtubeFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val browserFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val cbnVirginIslandsAutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val cbnVirginIslandsAutostartTapCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pointerDirectionKeys = LinkedHashSet<Int>()
@@ -537,6 +539,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         return
                     }
                     if (maybeHandleNovusTelearubaBackExit(activeTab, activeSession, activeUrl)) {
+                        return
+                    }
+                    if (maybeHandleCbnVirginIslandsBackExit(activeTab, activeSession, activeUrl)) {
                         return
                     }
                     if (isCvmLiveStreamUrl(activeUrl) || isCvmVimeoPlayerUrl(activeUrl)) {
@@ -9587,6 +9592,9 @@ return changed>0;
             browserFullscreenWakeOnlyPendingKeyUp = false
             return false
         }
+        if (isCbnVirginIslandsLivePageUrl(activeUrl)) {
+            return false
+        }
         val youtubePage = isYouTubePageUrl(activeUrl)
         val facebookPage = isFacebookUrl(activeUrl)
         val cvmPlayer = isCvmLiveStreamUrl(activeUrl) || isCvmVimeoPlayerUrl(activeUrl)
@@ -10023,6 +10031,78 @@ return changed>0;
             tabController.closeTab(activeTab.id)
             true
         }
+    }
+
+    private fun maybeHandleCbnVirginIslandsBackExit(
+        activeTab: GvTab?,
+        activeSession: GeckoSession?,
+        activeUrl: String,
+    ): Boolean {
+        if (activeTab == null || activeSession == null) {
+            return false
+        }
+        if (!isCbnVirginIslandsLivePageUrl(activeUrl)) {
+            return false
+        }
+        browserFullscreenPointerSleepActive = false
+        browserFullscreenWakeOnlyPendingKeyUp = false
+        val returnUrl = BuildConfig.DEFAULT_START_URL
+        if (activeTab.canGoBack) {
+            GvLogger.i(
+                "GvNav",
+                "cbn back consumed reason=exit-to-kulchaflo mode=history-back url=$activeUrl returnUrl=$returnUrl"
+            )
+            activeSession.goBack()
+        } else {
+            GvLogger.i(
+                "GvNav",
+                "cbn back consumed reason=exit-to-kulchaflo mode=replace-history url=$activeUrl returnUrl=$returnUrl"
+            )
+            activeSession.load(
+                GeckoSession.Loader()
+                    .uri(returnUrl)
+                    .flags(GeckoSession.LOAD_FLAGS_REPLACE_HISTORY)
+            )
+        }
+        return true
+    }
+
+    private fun scheduleCbnVirginIslandsAutostartTap(
+        session: GeckoSession,
+        pageUrl: String,
+        delayMs: Long = 700L,
+    ) {
+        if (cbnVirginIslandsAutostartTapRunnableBySession.containsKey(session)) {
+            return
+        }
+        val runnable = Runnable {
+            cbnVirginIslandsAutostartTapRunnableBySession.remove(session)
+            if (isFinishing || isDestroyed) {
+                return@Runnable
+            }
+            val activeTab = tabController.getActiveTab()
+            if (activeTab?.session != session || !isCbnVirginIslandsLivePageUrl(activeTab.url)) {
+                return@Runnable
+            }
+            if (isCbnVirginIslandsBrowserPlaybackActive(session)) {
+                cbnVirginIslandsAutostartTapCountBySession.remove(session)
+                return@Runnable
+            }
+            val width = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+            val height = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+            val handled = dispatchNativeMouseTapAt(width * 0.5f, height * 0.5f, "cbn-autostart")
+            cbnVirginIslandsAutostartTapCountBySession[session] = 1
+            GvLogger.i(
+                "GvMedia",
+                "cbn virgin islands native tap dispatched attempt=1 handled=$handled pageUrl=$pageUrl"
+            )
+        }
+        cbnVirginIslandsAutostartTapRunnableBySession[session] = runnable
+        pointerHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun isCbnVirginIslandsBrowserPlaybackActive(session: GeckoSession): Boolean {
+        return browserMediaController.describeSessionState(session).contains("playing=true")
     }
 
     private fun ensurePointerVisible() {
@@ -12366,6 +12446,25 @@ return changed>0;
             )
             return
         }
+        if (type == "cbn-virgin-islands-state") {
+            val layoutApplied = payload.optBoolean("layoutApplied")
+            val playbackActive = payload.optBoolean("playbackActive")
+            val requestPointerSleep = payload.optBoolean("requestPointerSleep")
+            GvLogger.i(
+                "GvMedia",
+                "cbn virgin islands state layoutApplied=$layoutApplied playbackActive=$playbackActive requestPointerSleep=$requestPointerSleep pageUrl=$pageUrl"
+            )
+            if (playbackActive) {
+                cbnVirginIslandsAutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
+                cbnVirginIslandsAutostartTapCountBySession.remove(session)
+            } else if (layoutApplied) {
+                scheduleCbnVirginIslandsAutostartTap(session, pageUrl)
+            }
+            if (requestPointerSleep || layoutApplied || playbackActive) {
+                enterBrowserFullscreenPointerSleep(reason = "cbn-player-first")
+            }
+            return
+        }
         if (type == "ttt-consent-autoclick") {
             GvLogger.i(
                 "GvLayout",
@@ -14340,6 +14439,20 @@ return changed>0;
         }
         val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
         return host == "kulchaflo.com"
+    }
+
+    private fun isCbnVirginIslandsLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
+        if (host != "cbnvirginislands.com") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return path == "/cbn-tv" || path.startsWith("/cbn-tv/")
     }
 
     private fun isYouTubePageUrl(url: String): Boolean {
