@@ -330,6 +330,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cbnVirginIslandsAutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val cbnVirginIslandsAutostartTapCountBySession = LinkedHashMap<GeckoSession, Int>()
+    private val cnc3AutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
+    private val cnc3AutostartAttemptedBySession =
+        Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pointerDirectionKeys = LinkedHashSet<Int>()
@@ -664,6 +667,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             return true
         }
         if (promotedPointerModeActive && handlePromotedPointerInput(event)) {
+            return true
+        }
+        if (handleCnc3PromotedDpadInput(event)) {
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && maybeHandlePointerAssistManualSummon(event)) {
@@ -1037,6 +1043,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             progressBar.visibility = View.VISIBLE
             tabController.updateLoading(session, true)
             maybeStartLiveLoadTiming(session, url, event = "page-start")
+            if (isCnc3LiveStreamPageUrl(url)) {
+                cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
+                cnc3AutostartAttemptedBySession.remove(session)
+            }
             GvLogger.i("GvNav", "page start tabId=${tab?.id ?: "unknown"} url=$url")
         }
 
@@ -1051,6 +1061,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             GvLogger.i("GvNav", "page stop tabId=${tab?.id ?: "unknown"} success=$success url=$pageUrl")
             logLiveLoadTimingPageStop(session, pageUrl, success)
             maybeDispatchCvmVimeoDiagnostic(session, pageUrl, reason = "page-stop")
+            if (success) {
+                maybeScheduleCnc3AutostartTap(session, pageUrl)
+            }
             if (isFacebookUrl(pageUrl)) {
                 GvLogger.i(
                     "GvMedia",
@@ -1147,6 +1160,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 resetCaribvisionHelperAttempt(session, reason = "page", pageUrl = url.orEmpty(), logWhenEmpty = true)
             } else {
                 resetCaribvisionHelperAttempt(session, reason = "leave-context", pageUrl = url.orEmpty())
+            }
+            if (!isCnc3LiveStreamPageUrl(url.orEmpty()) && !isCnc3DailymotionPlayerUrl(url.orEmpty())) {
+                cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
+                cnc3AutostartAttemptedBySession.remove(session)
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -9269,6 +9286,20 @@ return changed>0;
                         cvmPermissionUri ||
                         (cvmThirdPartyVimeo && cvmTopContext)
                     )
+            val cnc3TopContext = isCnc3LiveStreamPageUrl(activeSessionUrl) || isCnc3LiveStreamPageUrl(currentRootUrl)
+            val cnc3PermissionUri =
+                isCnc3LiveStreamPageUrl(permission.uri.orEmpty()) ||
+                    isCnc3DailymotionPlayerUrl(permission.uri.orEmpty())
+            val cnc3ThirdPartyDailymotion = thirdPartyHost?.lowercase().orEmpty().removePrefix("www.") == "geo.dailymotion.com"
+            val cnc3AutoplayScoped = ENABLE_CNC3_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    cnc3PermissionUri ||
+                        (cnc3TopContext && cnc3ThirdPartyDailymotion)
+                    )
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9277,6 +9308,7 @@ return changed>0;
                 chtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 caribvisionAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -9331,6 +9363,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "caribvision autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (cnc3AutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "cnc3 dailymotion autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -9850,6 +9888,56 @@ return changed>0;
         return false
     }
 
+    private fun handleCnc3PromotedDpadInput(event: KeyEvent): Boolean {
+        if (!promotedMediaPlayer.isPromoted() || event.keyCode !in POINTER_KEY_CODES) {
+            return false
+        }
+        val sourceUrl = promotedMediaPlayer.currentSourceUrl().orEmpty()
+        val activeUrl = tabController.getActiveTab()?.url ?: currentUrl
+        if (!isCnc3DailymotionMediaUrl(sourceUrl) && !isCnc3ContextUrl(activeUrl)) {
+            return false
+        }
+        if (geckoView.width <= 0 || geckoView.height <= 0) {
+            return false
+        }
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT,
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        ensurePromotedPointerVisible()
+                        val firstPress = pointerDirectionKeys.add(event.keyCode)
+                        if (firstPress) {
+                            pointerRepeatTicks = 0
+                            val delta = directionalPointerDelta(event.keyCode)
+                            movePromotedPointerBy(
+                                deltaX = delta.first * POINTER_MOVE_STEP_PX,
+                                deltaY = delta.second * POINTER_MOVE_STEP_PX,
+                            )
+                            startPromotedPointerRepeater()
+                        }
+                        return true
+                    }
+                }
+                return false
+            }
+
+            KeyEvent.ACTION_UP -> {
+                if (event.keyCode in POINTER_DIRECTION_KEYS) {
+                    pointerDirectionKeys.remove(event.keyCode)
+                    if (pointerDirectionKeys.isEmpty()) {
+                        stopPromotedPointerRepeater()
+                    }
+                    return true
+                }
+                return false
+            }
+        }
+        return false
+    }
+
     private fun maybeHandleAbsBackExit(
         activeTab: GvTab?,
         activeSession: GeckoSession?,
@@ -10101,6 +10189,44 @@ return changed>0;
         pointerHandler.postDelayed(runnable, delayMs)
     }
 
+    private fun maybeScheduleCnc3AutostartTap(
+        session: GeckoSession,
+        pageUrl: String,
+        delayMs: Long = 300L,
+    ) {
+        if (cnc3AutostartAttemptedBySession.contains(session) || cnc3AutostartTapRunnableBySession.containsKey(session)) {
+            return
+        }
+        if (!isCnc3LiveStreamPageUrl(pageUrl) && !isCnc3DailymotionPlayerUrl(pageUrl)) {
+            return
+        }
+        cnc3AutostartAttemptedBySession.add(session)
+        val runnable = Runnable {
+            cnc3AutostartTapRunnableBySession.remove(session)
+            if (isFinishing || isDestroyed) {
+                return@Runnable
+            }
+            val activeTab = tabController.getActiveTab()
+            val activeUrl = activeTab?.url.orEmpty()
+            if (!isCnc3LiveStreamPageUrl(activeUrl) && !isCnc3DailymotionPlayerUrl(activeUrl)) {
+                return@Runnable
+            }
+            if (isCnc3BrowserPlaybackActive(session)) {
+                return@Runnable
+            }
+            val width = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+            val height = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+            val handled = dispatchNativeMouseTapAt(width * 0.5f, height * 0.5f, "cnc3-autostart")
+            GvLogger.i("GvMedia", "cnc3 autostart tap dispatched handled=$handled pageUrl=$pageUrl")
+        }
+        cnc3AutostartTapRunnableBySession[session] = runnable
+        pointerHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun isCnc3BrowserPlaybackActive(session: GeckoSession): Boolean {
+        return browserMediaController.describeSessionState(session).contains("playing=true")
+    }
+
     private fun isCbnVirginIslandsBrowserPlaybackActive(session: GeckoSession): Boolean {
         return browserMediaController.describeSessionState(session).contains("playing=true")
     }
@@ -10201,6 +10327,8 @@ return changed>0;
             isCgtvContextUrl(url) ||
             isChtvContextUrl(url) ||
             isCaribvisionPlayerActive(activeSession, url) ||
+            isCnc3LiveStreamPageUrl(url) ||
+            isCnc3DailymotionPlayerUrl(url) ||
             isCvmLiveStreamUrl(url) ||
             isCvmVimeoPlayerUrl(url)
     }
@@ -10879,6 +11007,23 @@ return changed>0;
         GvLogger.i(
             "GvInput",
             "native pointer hover source=mouse reason=$reason x=${x.toInt()} y=${y.toInt()} handled=$handled"
+        )
+        return handled
+    }
+
+    private fun dispatchNativeMouseMoveAt(x: Float, y: Float, reason: String): Boolean {
+        val eventTime = SystemClock.uptimeMillis()
+        val handled = dispatchPointerMotionAt(
+            action = MotionEvent.ACTION_MOVE,
+            downTime = eventTime,
+            x = x,
+            y = y,
+            forceMouse = true,
+            reason = reason,
+        )
+        GvLogger.i(
+            "GvInput",
+            "native pointer move source=mouse reason=$reason x=${x.toInt()} y=${y.toInt()} handled=$handled"
         )
         return handled
     }
@@ -12462,6 +12607,24 @@ return changed>0;
             }
             if (requestPointerSleep || layoutApplied || playbackActive) {
                 enterBrowserFullscreenPointerSleep(reason = "cbn-player-first")
+            }
+            return
+        }
+        if (type == "cnc3-live-state") {
+            val layoutApplied = payload.optBoolean("layoutApplied")
+            val playbackActive = payload.optBoolean("playbackActive")
+            GvLogger.i(
+                "GvMedia",
+                "cnc3 live state layoutApplied=$layoutApplied playbackActive=$playbackActive pageUrl=$pageUrl"
+            )
+            if (playbackActive) {
+                cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
+                cnc3AutostartAttemptedBySession.add(session)
+            } else if (layoutApplied) {
+                maybeScheduleCnc3AutostartTap(session, pageUrl, delayMs = 120L)
+            }
+            if (layoutApplied || playbackActive) {
+                enterBrowserFullscreenPointerSleep(reason = "cnc3-player-first")
             }
             return
         }
@@ -14195,6 +14358,15 @@ return changed>0;
                 return
             }
         }
+        if (isCnc3DailymotionPlayerUrl(pageUrl)) {
+            GvLogger.i(
+                "GvMedia",
+                "cnc3 native promote skipped reason=dailymotion-page-player pageUrl=$pageUrl"
+            )
+            promotedMediaPlayer.stop(reason = "cnc3-dailymotion-page-player")
+            geckoView.visibility = View.VISIBLE
+            return
+        }
         if (!shouldPromoteDirectMedia(pageUrl)) {
             GvLogger.i(
                 "GvExt",
@@ -14267,6 +14439,7 @@ return changed>0;
         private const val ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CHTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CARIBVISION_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_CNC3_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
         private const val ENABLE_ABS_TEGO_FULLSCREEN_NATIVE_TAP_FALLBACK = false
@@ -14453,6 +14626,52 @@ return changed>0;
         }
         val path = uri.encodedPath.orEmpty().lowercase()
         return path == "/cbn-tv" || path.startsWith("/cbn-tv/")
+    }
+
+    private fun isCnc3LiveStreamPageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "cnc3.co.tt") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return path == "/live-stream" || path.startsWith("/live-stream/")
+    }
+
+    private fun isCnc3DailymotionPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "geo.dailymotion.com") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        val videoId = uri.getQueryParameter("video").orEmpty().lowercase()
+        return path.startsWith("/player/") && videoId == "x9vba4u"
+    }
+
+    private fun isCnc3DailymotionMediaUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host.endsWith("dailymotion.com") &&
+            path.contains("/video/x9vba4u") &&
+            path.endsWith(".m3u8")
+    }
+
+    private fun isCnc3ContextUrl(url: String): Boolean {
+        return isCnc3LiveStreamPageUrl(url) || isCnc3DailymotionPlayerUrl(url)
     }
 
     private fun isYouTubePageUrl(url: String): Boolean {
@@ -14922,6 +15141,8 @@ return changed>0;
             host == "novus.telearuba.aw" || host.endsWith(".novus.telearuba.aw") -> "novus-live"
             host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> "caribvision-live"
             host == "cbc.bb" && path.startsWith("/live") -> "cbc-live"
+            isCnc3LiveStreamPageUrl(url) -> "cnc3-live-stream"
+            isCnc3DailymotionPlayerUrl(url) -> "cnc3-dailymotion-player"
             isCvmLiveStreamUrl(url) -> "cvm-vimeo-player"
             isCvmVimeoEmbedUrl(uri) -> "cvm-vimeo-player"
             isLiveMediaSurfaceUrl(url) -> "live-media-surface"
@@ -15824,6 +16045,7 @@ return changed>0;
             host == "player.tegotv.com" -> true
             path.contains("/player.php") -> true
             path.contains("/live-stream") -> true
+            isCnc3LiveStreamPageUrl(url) -> true
             isCvmLiveStreamUrl(url) -> true
             isCvmVimeoEmbedUrl(uri) -> true
             else -> false

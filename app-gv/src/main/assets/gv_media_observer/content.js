@@ -98,6 +98,7 @@
   let cbnVirginIslandsMutedFallbackRetryTimer = null;
   let cbnVirginIslandsPointerSleepRequested = false;
   let cbnVirginIslandsPointerSleepTimer = null;
+  let cnc3PlayerFirstApplied = false;
 
   function isVisible(element) {
     if (!element) return false;
@@ -159,6 +160,13 @@
   function isCbnVirginIslandsEmbedFrame() {
     const href = String(window.location.href || "").toLowerCase();
     return href.indexOf("cbnvirginislands-com.filesusr.com/html/") >= 0;
+  }
+
+  function isCnc3LiveStreamPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cnc3.co.tt" && host !== "www.cnc3.co.tt") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live-stream" || path.indexOf("/live-stream/") === 0;
   }
 
   function applyCvmVimeoPlayerFirstLayout() {
@@ -321,6 +329,58 @@
       } catch (_) {}
       cbnVirginIslandsLayoutApplied = true;
       maybeScheduleCbnVirginIslandsPointerSleep();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function applyCnc3PlayerFirstLayout() {
+    if (cnc3PlayerFirstApplied || !isCnc3LiveStreamPage()) return false;
+    const playerFrame = document.querySelector("iframe[src*='geo.dailymotion.com/player/'][src*='x9vba4u']");
+    const player = playerFrame?.parentElement;
+    if (!player && !playerFrame) return false;
+    try {
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("width", "100vw", "important");
+        document.documentElement.style.setProperty("height", "100vh", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        document.documentElement.style.setProperty("background", "#000", "important");
+      }
+      if (document.body && document.body.style) {
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("width", "100vw", "important");
+        document.body.style.setProperty("height", "100vh", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+        document.body.style.setProperty("background", "#000", "important");
+      }
+      [player, playerFrame].filter(Boolean).forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("left", "0", "important");
+        node.style.setProperty("top", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "100vw", "important");
+        node.style.setProperty("max-height", "100vh", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("overflow", "hidden", "important");
+        node.style.setProperty("background", "#000", "important");
+        node.style.setProperty("z-index", "2147483647", "important");
+      });
+      cnc3PlayerFirstApplied = true;
+      promptPayload({
+        type: "cnc3-live-state",
+        phase: "content-cnc3-player-first",
+        pageUrl: window.location.href,
+        layoutApplied: true,
+        playbackActive: false
+      });
       return true;
     } catch (_) {
       return false;
@@ -5635,6 +5695,7 @@
     maybePreferCvmVimeo1080p();
     applyCbnVirginIslandsPlayerFirstLayout();
     maybeKickCbnVirginIslandsPlayer();
+    applyCnc3PlayerFirstLayout();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
       emitCaribVisionSessionState("publish-no-change");
