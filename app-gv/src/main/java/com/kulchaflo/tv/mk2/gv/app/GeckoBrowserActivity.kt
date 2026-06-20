@@ -1191,6 +1191,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 cvc9ConsentFrameBurstGenerationBySession.remove(session)
                 resetCvc9ConsentFrameNativeTapState(session)
             }
+            if (isGbnContextUrl(url.orEmpty())) {
+                enterBrowserFullscreenPointerSleep(reason = "gbn-dailymotion-embed-page")
+            }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
         }
@@ -1298,6 +1301,23 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 )
                 return GeckoResult.fromValue(AllowOrDeny.DENY)
             }
+            val inGbnFlow =
+                isGbnContextUrl(triggerUri) ||
+                    isGbnContextUrl(activeTabUrl) ||
+                    isGbnContextUrl(currentUrl) ||
+                    isGbnDailymotionConsentPageUrl(triggerUri) ||
+                    isGbnDailymotionConsentPageUrl(activeTabUrl) ||
+                    isGbnDailymotionConsentPageUrl(currentUrl) ||
+                    isGbnLivePageUrl(triggerUri) ||
+                    isGbnLivePageUrl(activeTabUrl) ||
+                    isGbnLivePageUrl(currentUrl)
+            if (inGbnFlow && isGbnDailymotionAdNavigationUrl(requestUri)) {
+                GvLogger.i(
+                    "GvNav",
+                    "gbn ad navigation request denied uri=$requestUri"
+                )
+                return GeckoResult.fromValue(AllowOrDeny.DENY)
+            }
             captureNovusTelearubaProfileForSession(session, triggerUri, reason = "load-request-trigger")
             captureNovusTelearubaProfileForSession(session, activeTabUrl, reason = "load-request-active-tab")
             captureNovusTelearubaProfileForSession(session, currentUrl, reason = "load-request-current-url")
@@ -1334,6 +1354,20 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 GvLogger.i(
                     "GvNav",
                     "cvc9 new session denied reason=dailymotion-adclick-popup sourceTabId=$sourceTabId"
+                )
+                return null
+            }
+            val inGbnFlow =
+                isGbnContextUrl(sourceTabUrl) ||
+                    isGbnContextUrl(currentUrl) ||
+                    isGbnDailymotionConsentPageUrl(sourceTabUrl) ||
+                    isGbnDailymotionConsentPageUrl(currentUrl) ||
+                    isGbnLivePageUrl(sourceTabUrl) ||
+                    isGbnLivePageUrl(currentUrl)
+            if (inGbnFlow && isGbnDailymotionAdNavigationUrl(uri)) {
+                GvLogger.i(
+                    "GvNav",
+                    "gbn new session denied reason=dailymotion-ad-popup sourceTabId=$sourceTabId"
                 )
                 return null
             }
@@ -1759,6 +1793,15 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         "cvc9 native promote skipped reason=dailymotion-browser-player pageUrl=${observation.url} currentUrl=$currentUrl"
                     )
                     promotedMediaPlayer.stop(reason = "cvc9-dailymotion-browser-player")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
+                if (isGbnDailymotionBrowserPlayerContextUrl(observation.url) || (isGbnContextUrl(currentUrl) && isGbnDailymotionAdAssetUrl(observation.url))) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "gbn native promote skipped reason=dailymotion-browser-player pageUrl=${observation.url} currentUrl=$currentUrl"
+                    )
+                    promotedMediaPlayer.stop(reason = "gbn-dailymotion-browser-player")
                     geckoView.visibility = View.VISIBLE
                     return
                 }
@@ -9578,6 +9621,20 @@ return changed>0;
                     cnc3PermissionUri ||
                         (cnc3TopContext && cnc3ThirdPartyDailymotion)
                     )
+            val gbnTopContext = isGbnLivePageUrl(activeSessionUrl) || isGbnLivePageUrl(currentRootUrl)
+            val gbnPermissionUri =
+                isGbnLivePageUrl(permission.uri.orEmpty()) ||
+                    isGbnDailymotionEmbedContextUrl(permission.uri.orEmpty())
+            val gbnThirdPartyDailymotion = thirdPartyHost?.lowercase().orEmpty().removePrefix("www.") in setOf("dailymotion.com", "geo.dailymotion.com")
+            val gbnAutoplayScoped = ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    gbnPermissionUri ||
+                        (gbnTopContext && gbnThirdPartyDailymotion)
+                    )
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9588,6 +9645,7 @@ return changed>0;
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvc9AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -9656,6 +9714,12 @@ return changed>0;
                     "cvc9 dailymotion watch-page autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${
                         permission.value
                     } decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (gbnAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "gbn dailymotion embed autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -12766,6 +12830,9 @@ return changed>0;
             scheduleCvc9ConsentFrameNativeTapBurst(session)
             return
         }
+        if (type == "gbn-live-state" && phase == "content-gbn-consent-frame-detected") {
+            return
+        }
         if (type == "layout-evidence") {
             GvLogger.i(
                 "GvLayout",
@@ -12948,6 +13015,17 @@ return changed>0;
             }
             if (layoutApplied || playbackActive) {
                 enterBrowserFullscreenPointerSleep(reason = "cnc3-player-first")
+            }
+            return
+        }
+        if (type == "gbn-live-state") {
+            val playerFirstApplied = phase == "content-gbn-player-first-applied"
+            GvLogger.i(
+                "GvMedia",
+                "gbn live state phase=$phase playerFirstApplied=$playerFirstApplied pageUrl=$pageUrl"
+            )
+            if (playerFirstApplied) {
+                enterBrowserFullscreenPointerSleep(reason = "gbn-player-first")
             }
             return
         }
@@ -14699,6 +14777,15 @@ return changed>0;
             geckoView.visibility = View.VISIBLE
             return
         }
+        if (isGbnDailymotionBrowserPlayerContextUrl(pageUrl)) {
+            GvLogger.i(
+                "GvMedia",
+                "gbn native promote skipped reason=dailymotion-browser-player pageUrl=$pageUrl currentUrl=$currentUrl"
+            )
+            promotedMediaPlayer.stop(reason = "gbn-dailymotion-browser-player")
+            geckoView.visibility = View.VISIBLE
+            return
+        }
         if (!shouldPromoteDirectMedia(pageUrl)) {
             GvLogger.i(
                 "GvExt",
@@ -14773,6 +14860,7 @@ return changed>0;
         private const val ENABLE_CARIBVISION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CNC3_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CVC9_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15008,6 +15096,106 @@ return changed>0;
 
     private fun isCnc3ContextUrl(url: String): Boolean {
         return isCnc3LiveStreamPageUrl(url) || isCnc3DailymotionPlayerUrl(url)
+    }
+
+    private fun isGbnLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "gbn.gd") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return path == "/live-television" || path == "/live-television/"
+    }
+
+    private fun isGbnDailymotionEmbedPageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "dailymotion.com") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return path == "/embed/video/x85vz1r" || path.startsWith("/embed/video/x85vz1r/")
+    }
+
+    private fun isGbnDailymotionPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "geo.dailymotion.com") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        val videoId = uri.getQueryParameter("video").orEmpty().lowercase()
+        val playerPath = path == "/player.html" || path.startsWith("/player/") || path.startsWith("/player.html")
+        return playerPath && videoId == "x85vz1r"
+    }
+
+    private fun isGbnDailymotionConsentPageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "consent.dailymotion.com"
+    }
+
+    private fun isGbnContextUrl(url: String): Boolean {
+        return isGbnLivePageUrl(url) || isGbnDailymotionEmbedContextUrl(url)
+    }
+
+    private fun isGbnDailymotionEmbedContextUrl(url: String): Boolean {
+        return isGbnDailymotionEmbedPageUrl(url) || isGbnDailymotionPlayerUrl(url)
+    }
+
+    private fun isGbnDailymotionPlayerContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "geo.dailymotion.com" &&
+            (path == "/player.html" || path.startsWith("/player/") || path.startsWith("/player.html"))
+    }
+
+    private fun isGbnDailymotionBrowserPlayerContextUrl(url: String): Boolean {
+        val activeUrl = tabController.getActiveTab()?.url.orEmpty()
+        val currentContext =
+            isGbnLivePageUrl(currentUrl) ||
+                isGbnLivePageUrl(activeUrl) ||
+                isGbnDailymotionEmbedContextUrl(currentUrl) ||
+                isGbnDailymotionEmbedContextUrl(activeUrl) ||
+                isGbnDailymotionConsentPageUrl(currentUrl) ||
+                isGbnDailymotionConsentPageUrl(activeUrl)
+        if (!currentContext) {
+            return false
+        }
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        val videoId = uri.getQueryParameter("video").orEmpty().lowercase()
+        return (host == "dailymotion.com" && (path == "/embed/video/x85vz1r" || path.startsWith("/embed/video/x85vz1r/"))) ||
+            (host == "geo.dailymotion.com" &&
+                (path == "/player.html" || path.startsWith("/player/") || path.startsWith("/player.html")) &&
+                (videoId == "x85vz1r" || isGbnLivePageUrl(currentUrl) || isGbnLivePageUrl(activeUrl)))
     }
 
     private fun isYouTubePageUrl(url: String): Boolean {
@@ -16291,6 +16479,43 @@ return changed>0;
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return host == "adclick.g.doubleclick.net" && path.startsWith("/pcs/click")
+    }
+
+    private fun isGbnDailymotionAdNavigationUrl(url: String): Boolean {
+        if (isCvc9AdclickUrl(url)) {
+            return true
+        }
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        val query = uri.encodedQuery.orEmpty().lowercase()
+        return (host == "bing.com" && (path == "/api/v1/mediation/tracking" || path == "/aclick")) ||
+            (host == "bing.com" && query.contains("rlink=https%3a%2f%2fwww.bing.com%2faclick")) ||
+            (host == "bing.com" && query.contains("rlink=http%3a%2f%2fwww.bing.com%2faclick"))
+    }
+
+    private fun isGbnDailymotionAdAssetUrl(url: String): Boolean {
+        val normalized = url.lowercase()
+        if (normalized.contains("adsappsvideostorage")) {
+            return true
+        }
+        if (normalized.contains("bingads") || normalized.contains("/bingads-")) {
+            return true
+        }
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return (host.endsWith("bing.com") && path.contains("/ads/")) ||
+            (host.contains("bingads")) ||
+            (host.contains("adsappsvideostorage"))
     }
 
     private fun isCvc9DailymotionMediaUrl(url: String): Boolean {

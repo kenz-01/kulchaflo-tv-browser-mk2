@@ -99,12 +99,19 @@
   let cbnVirginIslandsPointerSleepRequested = false;
   let cbnVirginIslandsPointerSleepTimer = null;
   let cnc3PlayerFirstApplied = false;
+  let gbnPlayerFirstApplied = false;
+  let gbnPlayerFirstObserverAttached = false;
+  let gbnPlayerFirstAppliedLogged = false;
+  let gbnPlayerFirstNoTargetLogged = false;
+  let gbnPlayerFirstRetryLogCount = 0;
+  let gbnConsentFrameDetectedLogged = false;
   let cvc9ConsentFrameDetectedLogged = false;
   let cvc9PlayerFirstApplied = false;
   let cvc9PlayerFirstObserverAttached = false;
   let cvc9PlayerFirstAppliedLogged = false;
   let cvc9PlayerFirstNoTargetLogged = false;
   let cvc9PlayerFirstRetryLogCount = 0;
+  const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
 
   function isVisible(element) {
@@ -176,6 +183,30 @@
     return path === "/live-stream" || path.indexOf("/live-stream/") === 0;
   }
 
+  function isGbnLiveTelevisionPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "gbn.gd") return false;
+    const path = String(window.location.pathname || "").toLowerCase();
+    return path === "/live-television" || path === "/live-television/";
+  }
+
+  function isGbnDailymotionConsentFrame() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host !== "consent.dailymotion.com") return false;
+    if (path !== "/index.html" && path.indexOf("/consent") < 0) return false;
+    const referrer = String(document.referrer || "").toLowerCase();
+    const search = String(window.location.search || "").toLowerCase();
+    const href = String(window.location.href || "").toLowerCase();
+    return (
+      referrer.indexOf("gbn.gd/live-television") >= 0 ||
+      referrer.indexOf("dailymotion.com/embed/video/x85vz1r") >= 0 ||
+      referrer.indexOf("x85vz1r") >= 0 ||
+      search.indexOf("x85vz1r") >= 0 ||
+      href.indexOf("x85vz1r") >= 0
+    );
+  }
+
   function isCvc9DailymotionWatchPage() {
     const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
     const path = String(window.location.pathname || "").toLowerCase();
@@ -213,6 +244,49 @@
 
   function isCvc9DailymotionConsentContext() {
     return isCvc9DailymotionWatchPage() || isCvc9DailymotionPlayerFrame() || isCvc9DailymotionConsentFrame();
+  }
+
+  function isGbnContext() {
+    return isGbnLiveTelevisionPage() || isGbnDailymotionConsentFrame();
+  }
+
+  function emitGbnConsentFrameDetected(source) {
+    if (gbnConsentFrameDetectedLogged || !isGbnDailymotionConsentFrame()) return false;
+    if (isCvc9AdclickPage()) return false;
+    gbnConsentFrameDetectedLogged = true;
+    promptPayload({
+      type: "gbn-live-state",
+      phase: "content-gbn-consent-frame-detected",
+      pageUrl: window.location.href,
+      candidateCount: 0,
+      source: String(source || "scan")
+    });
+    return true;
+  }
+
+  function ensureGbnConsentFrameDetector() {
+    if (!isGbnDailymotionConsentFrame()) {
+      return false;
+    }
+    emitGbnConsentFrameDetected("initial");
+    try {
+      const observer = new MutationObserver(() => {
+        if (!isGbnDailymotionConsentFrame() || gbnConsentFrameDetectedLogged) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        emitGbnConsentFrameDetected("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "aria-hidden"]
+      });
+    } catch (_) {}
+    return true;
   }
 
   function emitCvc9ConsentFrameDetected(source) {
@@ -496,6 +570,358 @@
           observer.disconnect();
         } catch (_) {}
         if (!cvc9PlayerFirstApplied) {
+          retryApply("observer-expire");
+        }
+      }, 15000);
+    } catch (_) {}
+    return true;
+  }
+
+  function gbnPlayerFirstLog(phase, source, candidateCount, details) {
+    const extra = details && typeof details === "object" ? details : {};
+    promptPayload(Object.assign({
+      type: "gbn-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown")
+    }, extra));
+  }
+
+  function scoreGbnOfficialIframe(node) {
+    if (!node || !isVisible(node)) return -1;
+    let rect;
+    try {
+      rect = node.getBoundingClientRect();
+    } catch (_) {
+      return -1;
+    }
+    if (!rect || rect.width < 120 || rect.height < 68) return -1;
+    const tag = String(node.tagName || "").toLowerCase();
+    const src = String((node.getAttribute && node.getAttribute("src")) || node.src || "").toLowerCase();
+    if (tag !== "iframe" || src.indexOf("x85vz1r") < 0 || src.indexOf("dailymotion") < 0) return -1;
+    let score = rect.width * rect.height;
+    if (src.indexOf("geo.dailymotion.com/player.html") >= 0) score += 5000000;
+    if (src.indexOf("geo.dailymotion.com/player") >= 0) score += 4000000;
+    if (src.indexOf("dailymotion.com/embed/video/x85vz1r") >= 0) score += 3000000;
+    return score;
+  }
+
+  function findGbnOfficialIframe() {
+    const selectors = [
+      "iframe[src*='dailymotion.com/embed/video/x85vz1r']",
+      "iframe[src*='geo.dailymotion.com/player.html'][src*='x85vz1r']",
+      "iframe[src*='geo.dailymotion.com/player'][src*='x85vz1r']",
+      "iframe[src*='x85vz1r'][src*='dailymotion']",
+      "iframe[src*='x85vz1r'][src*='geo.dailymotion.com']"
+    ];
+    const seen = new Set();
+    let best = null;
+    let bestScore = -1;
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || seen.has(node)) return;
+          seen.add(node);
+          const score = scoreGbnOfficialIframe(node);
+          if (score > bestScore) {
+            best = node;
+            bestScore = score;
+          }
+        });
+      } catch (_) {}
+    });
+    return bestScore >= 0 ? best : null;
+  }
+
+  function isGbnResponsiveWrapper(node) {
+    if (!node || !node.style) return false;
+    const style = String(node.getAttribute("style") || "").toLowerCase();
+    const cls = String(node.className || "").toLowerCase();
+    return (
+      style.indexOf("position:relative") >= 0 ||
+      cls.indexOf("video") >= 0 ||
+      cls.indexOf("player") >= 0 ||
+      cls.indexOf("embed") >= 0 ||
+      cls.indexOf("fluid") >= 0 ||
+      cls.indexOf("responsive") >= 0 ||
+      cls.indexOf("dailymotion") >= 0
+    ) && (
+      style.indexOf("padding-bottom:56.25%") >= 0 ||
+      style.indexOf("padding-bottom: 56.25%") >= 0 ||
+      cls.indexOf("fluid-width-video-wrapper") >= 0 ||
+      cls.indexOf("embed-responsive") >= 0
+    );
+  }
+
+  function isForbiddenGbnWrapper(node) {
+    if (!node) return true;
+    const tag = String(node.tagName || "").toLowerCase();
+    if (["html", "body", "script", "style", "link", "meta", "noscript"].indexOf(tag) >= 0) {
+      return true;
+    }
+    const cls = String(node.className || "").toLowerCase();
+    return cls.indexOf("et-l--header") >= 0 ||
+      cls.indexOf("et-l--footer") >= 0 ||
+      cls.indexOf("main-header") >= 0 ||
+      cls.indexOf("main-footer") >= 0;
+  }
+
+  function describeGbnTarget(node, label) {
+    if (!node) return String(label || "unknown");
+    const tag = String(node.tagName || "").toLowerCase();
+    const cls = String(node.className || "").trim().replace(/\s+/g, ".").slice(0, 80);
+    return `${String(label || tag)}:${tag}${cls ? "." + cls : ""}`;
+  }
+
+  function resolveGbnOfficialIframeWrapper(iframe) {
+    if (!iframe) return null;
+    let iframeRect;
+    try {
+      iframeRect = iframe.getBoundingClientRect();
+    } catch (_) {
+      iframeRect = null;
+    }
+    const iframeArea = iframeRect ? iframeRect.width * iframeRect.height : 0;
+    let best = iframe;
+    let bestScore = 60;
+    let cursor = iframe;
+    for (let depth = 0; cursor && depth <= 2; depth += 1) {
+      if (depth > 0) {
+        cursor = cursor.parentElement;
+      }
+      if (!cursor || isForbiddenGbnWrapper(cursor) || !isVisible(cursor)) {
+        continue;
+      }
+      let rect;
+      try {
+        rect = cursor.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+      if (!rect || rect.width < 120 || rect.height < 68) continue;
+      const area = rect.width * rect.height;
+      const tag = String(cursor.tagName || "").toLowerCase();
+      const cls = String(cursor.className || "").toLowerCase();
+      let score = depth === 0 ? 80 : (depth === 1 ? 120 : 95);
+      if (isGbnResponsiveWrapper(cursor)) score += 180;
+      if (area >= iframeArea * 0.95 && area <= iframeArea * 2.5) score += 140;
+      else if (area <= iframeArea * 6) score += 40;
+      else score -= 160;
+      if (["main", "article", "section", "header", "footer", "nav"].indexOf(tag) >= 0) score -= 180;
+      if (
+        cls.indexOf("et_pb_section") >= 0 ||
+        cls.indexOf("et_pb_row") >= 0 ||
+        cls.indexOf("et_pb_column") >= 0 ||
+        cls.indexOf("container") >= 0 ||
+        cls.indexOf("post") >= 0 ||
+        cls.indexOf("content") >= 0
+      ) {
+        score -= 80;
+      }
+      if (score > bestScore) {
+        best = cursor;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  function applyGbnPlayerFirstWrapperStyles(target, iframe) {
+    if (!target || !target.style || !iframe || !iframe.style) return;
+    target.style.setProperty("position", "fixed", "important");
+    target.style.setProperty("inset", "0", "important");
+    target.style.setProperty("left", "0", "important");
+    target.style.setProperty("top", "0", "important");
+    target.style.setProperty("width", "100vw", "important");
+    target.style.setProperty("height", "100vh", "important");
+    target.style.setProperty("max-width", "100vw", "important");
+    target.style.setProperty("max-height", "100vh", "important");
+    target.style.setProperty("z-index", "2147483647", "important");
+    target.style.setProperty("background", "#000", "important");
+    target.style.setProperty("overflow", "hidden", "important");
+    target.style.setProperty("margin", "0", "important");
+    target.style.setProperty("padding", "0", "important");
+    target.style.setProperty("transform", "none", "important");
+    if (target !== iframe) {
+      iframe.style.setProperty("position", "absolute", "important");
+      iframe.style.setProperty("left", "0", "important");
+      iframe.style.setProperty("top", "0", "important");
+      iframe.style.setProperty("width", "100%", "important");
+      iframe.style.setProperty("height", "100%", "important");
+    } else {
+      iframe.style.setProperty("position", "fixed", "important");
+      iframe.style.setProperty("left", "0", "important");
+      iframe.style.setProperty("top", "0", "important");
+      iframe.style.setProperty("width", "100vw", "important");
+      iframe.style.setProperty("height", "100vh", "important");
+    }
+    iframe.style.setProperty("border", "0", "important");
+    iframe.style.setProperty("background", "#000", "important");
+    iframe.style.setProperty("margin", "0", "important");
+    iframe.style.setProperty("padding", "0", "important");
+    iframe.style.setProperty("transform", "none", "important");
+  }
+
+  function applyGbnPlayerFirstRootStyles() {
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("min-width", "100vw", "important");
+      node.style.setProperty("min-height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+  }
+
+  function hideGbnVisualNode(node) {
+    if (!node || !node.style) return;
+    const tag = String(node.tagName || "").toLowerCase();
+    if (["script", "style", "link", "meta", "noscript"].indexOf(tag) >= 0) return;
+    node.style.setProperty("display", "none", "important");
+    node.style.setProperty("visibility", "hidden", "important");
+    node.style.setProperty("pointer-events", "none", "important");
+  }
+
+  function buildGbnPlayerPath(target) {
+    const path = new Set();
+    let cursor = target;
+    while (cursor && cursor !== document.documentElement) {
+      path.add(cursor);
+      cursor = cursor.parentElement;
+    }
+    if (document.documentElement) path.add(document.documentElement);
+    if (document.body) path.add(document.body);
+    return path;
+  }
+
+  function isOutsideGbnPlayerPath(node, target, path) {
+    if (!node || path.has(node)) return false;
+    if (node === target) return false;
+    if (node.contains(target) || target.contains(node)) return false;
+    return true;
+  }
+
+  function applyGbnWatchPageChromeSuppression(target) {
+    if (!isGbnLiveTelevisionPage()) return;
+    const path = buildGbnPlayerPath(target);
+    path.forEach((node) => {
+      const parent = node && node.parentElement;
+      if (!parent) return;
+      Array.from(parent.children || []).forEach((sibling) => {
+        if (!isOutsideGbnPlayerPath(sibling, target, path)) return;
+        hideGbnVisualNode(sibling);
+      });
+    });
+    const quietSelectors = [
+      "#main-header",
+      "#main-footer",
+      "#top-header",
+      ".et-l--header",
+      ".et-l--footer",
+      "header",
+      "footer",
+      "nav",
+      "[role='banner']",
+      "[role='navigation']",
+      "[class*='header']",
+      "[class*='Header']",
+      "[class*='nav']",
+      "[class*='Nav']",
+      "[class*='menu']",
+      "[class*='Menu']",
+      "[class*='social']",
+      "[class*='Social']"
+    ];
+    quietSelectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!isOutsideGbnPlayerPath(node, target, path)) return;
+          hideGbnVisualNode(node);
+        });
+      } catch (_) {}
+    });
+  }
+
+  function applyGbnDailymotionEmbedPlayerFirstLayout(source) {
+    if (gbnPlayerFirstApplied || isCvc9AdclickPage()) return false;
+    const livePage = isGbnLiveTelevisionPage();
+    if (!livePage) return false;
+    applyGbnPlayerFirstRootStyles();
+    const iframe = findGbnOfficialIframe();
+    const candidateCount = iframe ? 1 : 0;
+    const target = resolveGbnOfficialIframeWrapper(iframe);
+    if (!iframe || !target) {
+      const sourceText = String(source || "unknown");
+      if (sourceText.indexOf("retry-") === 0 && gbnPlayerFirstRetryLogCount < 3) {
+        gbnPlayerFirstRetryLogCount += 1;
+        gbnPlayerFirstLog("content-gbn-player-first-retry", sourceText, candidateCount);
+      } else if (!gbnPlayerFirstNoTargetLogged && (sourceText === "retry-12000" || sourceText === "observer-expire" || sourceText === "load")) {
+        gbnPlayerFirstNoTargetLogged = true;
+        gbnPlayerFirstLog("content-gbn-player-first-no-target", sourceText, candidateCount);
+      }
+      return false;
+    }
+    applyGbnPlayerFirstWrapperStyles(target, iframe);
+    try {
+      target.setAttribute("data-kf-gbn-player-first", "1");
+      iframe.setAttribute("data-kf-gbn-iframe", "1");
+    } catch (_) {}
+    applyGbnWatchPageChromeSuppression(target);
+    gbnPlayerFirstApplied = true;
+    if (!gbnPlayerFirstAppliedLogged) {
+      gbnPlayerFirstAppliedLogged = true;
+      gbnPlayerFirstLog("content-gbn-player-first-applied", source, 1, {
+        target: "gbn-outer-iframe",
+        targetSummary: describeGbnTarget(target, target === iframe ? "iframe-target" : "wrapper-target"),
+        iframeSrc: String((iframe.getAttribute && iframe.getAttribute("src")) || iframe.src || "")
+      });
+    }
+    return true;
+  }
+
+  function scheduleGbnDailymotionPlayerFirstLayout() {
+    if (isCvc9AdclickPage()) return false;
+    if (!isGbnLiveTelevisionPage()) return false;
+    applyGbnDailymotionEmbedPlayerFirstLayout("initial");
+    const retryApply = (source) => applyGbnDailymotionEmbedPlayerFirstLayout(source);
+    GBN_PLAYER_FIRST_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => retryApply(`retry-${delayMs}`), delayMs);
+    });
+    const domReady = () => retryApply("dom-content-loaded");
+    const loaded = () => retryApply("load");
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", domReady, { once: true });
+    } else {
+      domReady();
+    }
+    window.addEventListener("load", loaded, { once: true });
+    if (gbnPlayerFirstObserverAttached) return true;
+    gbnPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        if (gbnPlayerFirstApplied) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        retryApply("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "src"]
+      });
+      setTimeout(() => {
+        try {
+          observer.disconnect();
+        } catch (_) {}
+        if (!gbnPlayerFirstApplied) {
           retryApply("observer-expire");
         }
       }, 15000);
@@ -6025,6 +6451,7 @@
 
   function publish() {
     const payload = collect();
+    applyGbnDailymotionEmbedPlayerFirstLayout("publish");
     applyCvc9DailymotionPlayerFirstLayout("publish");
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
@@ -6057,8 +6484,10 @@
   if (absTegoUrlRedirected) {
     return;
   }
+  scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
+  ensureGbnConsentFrameDetector();
   ensureCvc9ConsentFrameDetector();
   applyTegoQualityPolicy();
   scheduleAbsTegoStartupReprobe();
