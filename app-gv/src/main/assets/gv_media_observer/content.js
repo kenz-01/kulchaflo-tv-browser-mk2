@@ -99,6 +99,7 @@
   let cbnVirginIslandsPointerSleepRequested = false;
   let cbnVirginIslandsPointerSleepTimer = null;
   let cnc3PlayerFirstApplied = false;
+  let cvc9ConsentFrameDetectedLogged = false;
 
   function isVisible(element) {
     if (!element) return false;
@@ -167,6 +168,85 @@
     if (host !== "cnc3.co.tt" && host !== "www.cnc3.co.tt") return false;
     const path = (window.location.pathname || "").toLowerCase();
     return path === "/live-stream" || path.indexOf("/live-stream/") === 0;
+  }
+
+  function isCvc9DailymotionWatchPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    return host === "dailymotion.com" && (path === "/video/x7gy059" || path.indexOf("/video/x7gy059/") === 0);
+  }
+
+  function isCvc9DailymotionPlayerFrame() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host !== "geo.dailymotion.com" || path.indexOf("/player/") !== 0) {
+      return false;
+    }
+    const referrer = String(document.referrer || "").toLowerCase();
+    return referrer.indexOf("colorvision.com.do/en-vivo") >= 0 || referrer.indexOf("dailymotion.com/video/x7gy059") >= 0;
+  }
+
+  function isCvc9DailymotionConsentFrame() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host !== "consent.dailymotion.com") {
+      return false;
+    }
+    if (path !== "/index.html" && path.indexOf("/consent") < 0) {
+      return false;
+    }
+    const referrer = String(document.referrer || "").toLowerCase();
+    const search = String(window.location.search || "").toLowerCase();
+    return (
+      referrer.indexOf("dailymotion.com/video/x7gy059") >= 0 ||
+      referrer.indexOf("geo.dailymotion.com/player/") >= 0 ||
+      search.indexOf("consent_origin=https%3a%2f%2fconsent.dailymotion.com") >= 0 ||
+      search.indexOf("preload_message=true") >= 0
+    );
+  }
+
+  function isCvc9DailymotionConsentContext() {
+    return isCvc9DailymotionWatchPage() || isCvc9DailymotionPlayerFrame() || isCvc9DailymotionConsentFrame();
+  }
+
+  function emitCvc9ConsentFrameDetected(source) {
+    if (cvc9ConsentFrameDetectedLogged || !isCvc9DailymotionConsentFrame()) return false;
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host === "adclick.g.doubleclick.net") return false;
+    cvc9ConsentFrameDetectedLogged = true;
+    promptPayload({
+      type: "cvc9-live-state",
+      phase: "content-cvc9-consent-frame-detected",
+      pageUrl: window.location.href,
+      candidateCount: 0,
+      source: String(source || "scan")
+    });
+    return true;
+  }
+
+  function ensureCvc9ConsentFrameDetector() {
+    if (!isCvc9DailymotionConsentFrame()) {
+      return false;
+    }
+    emitCvc9ConsentFrameDetected("initial");
+    try {
+      const observer = new MutationObserver(() => {
+        if (!isCvc9DailymotionConsentFrame() || cvc9ConsentFrameDetectedLogged) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        emitCvc9ConsentFrameDetected("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "aria-hidden"]
+      });
+    } catch (_) {}
+    return true;
   }
 
   function applyCvmVimeoPlayerFirstLayout() {
@@ -5723,6 +5803,7 @@
     return;
   }
   publish();
+  ensureCvc9ConsentFrameDetector();
   applyTegoQualityPolicy();
   scheduleAbsTegoStartupReprobe();
   scheduleAbsTegoPageFullscreenLike();

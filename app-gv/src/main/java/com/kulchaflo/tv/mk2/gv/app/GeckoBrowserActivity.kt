@@ -263,6 +263,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val tttConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cvc9ConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val cvc9ConsentWakeSentMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val cvc9ConsentFrameBurstGenerationBySession = LinkedHashMap<GeckoSession, Int>()
+    private val cvc9ConsentFrameNativeTapHandledMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val cvc9ConsentFrameSafety3500UsedBySession = LinkedHashMap<GeckoSession, Boolean>()
+    private val cvc9ConsentFrameSafety7000UsedBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val kulchaFloCookieConsentLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val liveLoadTimingBySession = LinkedHashMap<GeckoSession, LiveLoadTimingState>()
     private val absTegoStartupReprobeBySession = LinkedHashMap<GeckoSession, AbsTegoStartupReprobeState>()
@@ -1010,6 +1014,10 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     override fun onDestroy() {
         stopPointerRepeater()
         pointerHandler.removeCallbacksAndMessages(null)
+        cvc9ConsentFrameNativeTapHandledMsBySession.clear()
+        cvc9ConsentFrameSafety3500UsedBySession.clear()
+        cvc9ConsentFrameSafety7000UsedBySession.clear()
+        cvc9ConsentFrameBurstGenerationBySession.clear()
         browserMediaController.clear()
         promotedMediaPlayer.release()
         tabController.closeAll()
@@ -1048,6 +1056,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             progressBar.visibility = View.VISIBLE
             tabController.updateLoading(session, true)
             maybeStartLiveLoadTiming(session, url, event = "page-start")
+            if (isCvc9DailymotionWatchPageUrl(url)) {
+                resetCvc9ConsentFrameNativeTapState(session)
+            }
             if (isCnc3LiveStreamPageUrl(url)) {
                 cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
                 cnc3AutostartAttemptedBySession.remove(session)
@@ -1177,6 +1188,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             } else if (!isCvc9DailymotionConsentPageUrl(url.orEmpty())) {
                 cvc9ConsentLastDispatchMsBySession.remove(session)
                 cvc9ConsentWakeSentMsBySession.remove(session)
+                cvc9ConsentFrameBurstGenerationBySession.remove(session)
+                resetCvc9ConsentFrameNativeTapState(session)
             }
             applyMediaSessionDelegateForUrl(session, url, reason = "location-change")
             GvLogger.i("GvNav", "location change tabId=${tab?.id ?: "unknown"} url=${url ?: "none"} userGesture=$hasUserGesture")
@@ -1271,6 +1284,20 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 session.loadUri(CVC9_DAILYMOTION_WATCH_PAGE_URL)
                 return GeckoResult.fromValue(AllowOrDeny.DENY)
             }
+            val inCvc9Flow =
+                isCvc9DailymotionConsentContextUrl(triggerUri) ||
+                    isCvc9DailymotionConsentContextUrl(activeTabUrl) ||
+                    isCvc9DailymotionConsentContextUrl(currentUrl) ||
+                    isCvc9LivePageUrl(triggerUri) ||
+                    isCvc9LivePageUrl(activeTabUrl) ||
+                    isCvc9LivePageUrl(currentUrl)
+            if (inCvc9Flow && isCvc9AdclickUrl(requestUri)) {
+                GvLogger.i(
+                    "GvNav",
+                    "cvc9 adclick request denied uri=$requestUri"
+                )
+                return GeckoResult.fromValue(AllowOrDeny.DENY)
+            }
             captureNovusTelearubaProfileForSession(session, triggerUri, reason = "load-request-trigger")
             captureNovusTelearubaProfileForSession(session, activeTabUrl, reason = "load-request-active-tab")
             captureNovusTelearubaProfileForSession(session, currentUrl, reason = "load-request-current-url")
@@ -1297,6 +1324,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             uri: String,
         ): GeckoResult<GeckoSession>? {
             val sourceTabId = tabController.findTabBySession(session)?.id ?: "unknown"
+            val sourceTabUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            val inCvc9Flow =
+                isCvc9DailymotionConsentContextUrl(sourceTabUrl) ||
+                    isCvc9DailymotionConsentContextUrl(currentUrl) ||
+                    isCvc9LivePageUrl(sourceTabUrl) ||
+                    isCvc9LivePageUrl(currentUrl)
+            if (inCvc9Flow && isCvc9AdclickUrl(uri)) {
+                GvLogger.i(
+                    "GvNav",
+                    "cvc9 new session denied reason=dailymotion-adclick-popup sourceTabId=$sourceTabId"
+                )
+                return null
+            }
             if (isFacebookUrl(uri)) {
                 val staleFacebookTabs = tabController.getTabs().filter { tab ->
                     tab.id != sourceTabId && isFacebookUrl(tab.url)
@@ -1464,6 +1504,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         youtubeFullscreenStateBySession.remove(tab.session)
         browserFullscreenStateBySession.remove(tab.session)
         clearCgtvPlayAssistFallback(tab.session)
+        resetCvc9ConsentFrameNativeTapState(tab.session)
         browserMediaController.clearForTab(tab.id)
         GvLogger.i("GvTabs", "tab closed id=${tab.id} url=${tab.url}")
         applyPageInputModePolicy(tabController.getActiveTab()?.url.orEmpty(), reason = "tab-closed")
@@ -6450,26 +6491,136 @@ return changed>0;
                     "cvc9 consent compat follow-up tabId=${tab.id} reason=follow-up-$delayMs url=$currentTabUrl"
                 )
                 triggerUnifiedPageCompat(session, currentTabUrl)
-                dispatchCvc9ConsentNativeAcceptTap(reason = "follow-up-$delayMs")
-                if (!cvc9ConsentWakeSentMsBySession.containsKey(session)) {
-                    cvc9ConsentWakeSentMsBySession[session] = SystemClock.uptimeMillis()
-                    pointerHandler.postDelayed(
-                        {
-                            if (isFinishing || isDestroyed) {
-                                return@postDelayed
-                            }
-                            val wakeTab = tabController.findTabBySession(session) ?: return@postDelayed
-                            val wakeUrl = wakeTab.url
-                            if (!isCvc9DailymotionWatchPageUrl(wakeUrl) && !isCvc9DailymotionConsentPageUrl(wakeUrl)) {
-                                return@postDelayed
-                            }
-                            dispatchCvc9PlayerWakeTap(reason = "post-accept-$delayMs")
-                        },
-                        900L,
-                    )
+                val frameNativeHandled = cvc9ConsentFrameNativeTapHandledMsBySession.containsKey(session)
+                if (frameNativeHandled) {
+                    if (delayMs == 3500L && cvc9ConsentFrameSafety3500UsedBySession[session] != true) {
+                        cvc9ConsentFrameSafety3500UsedBySession[session] = true
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent follow-up allowed reason=frame-native-safety-3500 delayMs=$delayMs tabId=${tab.id} url=$currentTabUrl"
+                        )
+                    } else if (delayMs == 7000L && cvc9ConsentFrameSafety7000UsedBySession[session] != true) {
+                        cvc9ConsentFrameSafety7000UsedBySession[session] = true
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent follow-up allowed reason=frame-native-safety-7000 delayMs=$delayMs tabId=${tab.id} url=$currentTabUrl"
+                        )
+                    } else {
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent follow-up skipped reason=frame-native-already-handled delayMs=$delayMs tabId=${tab.id} url=$currentTabUrl"
+                        )
+                        return@postDelayed
+                    }
                 }
+                dispatchCvc9ConsentNativeAcceptTap(reason = "follow-up-$delayMs")
+                scheduleCvc9PlayerWakeTapOnce(session, reason = "post-accept-$delayMs")
             },
             delayMs,
+        )
+    }
+
+    private fun resetCvc9ConsentFrameNativeTapState(session: GeckoSession) {
+        cvc9ConsentFrameNativeTapHandledMsBySession.remove(session)
+        cvc9ConsentFrameSafety3500UsedBySession.remove(session)
+        cvc9ConsentFrameSafety7000UsedBySession.remove(session)
+        cvc9ConsentFrameBurstGenerationBySession.remove(session)
+    }
+
+    private fun scheduleCvc9ConsentFrameNativeTapBurst(session: GeckoSession) {
+        val tab = tabController.findTabBySession(session) ?: return
+        val currentUrl = tab.url
+        if (!isCvc9DailymotionConsentContextUrl(currentUrl) || isCvc9AdclickUrl(currentUrl)) {
+            return
+        }
+        cvc9ConsentFrameNativeTapHandledMsBySession.remove(session)
+        cvc9ConsentFrameSafety3500UsedBySession.remove(session)
+        val generation = (cvc9ConsentFrameBurstGenerationBySession[session] ?: 0) + 1
+        cvc9ConsentFrameBurstGenerationBySession[session] = generation
+        val tabId = tab.id
+        GvLogger.i(
+            "GvExt",
+            "cvc9 consent frame native tap burst scheduled tabId=$tabId url=$currentUrl"
+        )
+        CVC9_CONSENT_FRAME_NATIVE_TAP_BURST_DELAYS_MS.forEach { delayMs ->
+            pointerHandler.postDelayed(
+                {
+                    if (isFinishing || isDestroyed) {
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent frame native tap skipped reason=activity-ending delayMs=$delayMs"
+                        )
+                        return@postDelayed
+                    }
+                    if (cvc9ConsentFrameBurstGenerationBySession[session] != generation) {
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent frame native tap skipped reason=superseded delayMs=$delayMs"
+                        )
+                        return@postDelayed
+                    }
+                    val burstTab = tabController.findTabBySession(session)
+                    if (burstTab == null) {
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent frame native tap skipped reason=missing-tab delayMs=$delayMs"
+                        )
+                        return@postDelayed
+                    }
+                    val burstUrl = burstTab.url
+                    if (!isCvc9DailymotionConsentContextUrl(burstUrl)) {
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent frame native tap skipped reason=left-cvc9-consent-context delayMs=$delayMs tabId=${burstTab.id} url=$burstUrl"
+                        )
+                        return@postDelayed
+                    }
+                    if (isCvc9AdclickUrl(burstUrl)) {
+                        GvLogger.i(
+                            "GvExt",
+                            "cvc9 consent frame native tap skipped reason=adclick delayMs=$delayMs tabId=${burstTab.id} url=$burstUrl"
+                        )
+                        return@postDelayed
+                    }
+                    GvLogger.i(
+                        "GvExt",
+                        "cvc9 consent frame native tap attempt delayMs=$delayMs tabId=${burstTab.id} url=$burstUrl"
+                    )
+                    val handled = dispatchCvc9ConsentNativeAcceptTap(reason = "frame-detected-$delayMs")
+                    if (!handled) {
+                        return@postDelayed
+                    }
+                    cvc9ConsentFrameNativeTapHandledMsBySession[session] = SystemClock.uptimeMillis()
+                    cvc9ConsentFrameBurstGenerationBySession.remove(session)
+                    GvLogger.i(
+                        "GvExt",
+                        "cvc9 consent frame native tap detected delayMs=$delayMs tabId=${burstTab.id} url=$burstUrl"
+                    )
+                    scheduleCvc9PlayerWakeTapOnce(session, reason = "post-accept-frame-detected-$delayMs")
+                },
+                delayMs,
+            )
+        }
+    }
+
+    private fun scheduleCvc9PlayerWakeTapOnce(session: GeckoSession, reason: String) {
+        if (cvc9ConsentWakeSentMsBySession.containsKey(session)) {
+            return
+        }
+        cvc9ConsentWakeSentMsBySession[session] = SystemClock.uptimeMillis()
+        pointerHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed) {
+                    return@postDelayed
+                }
+                val wakeTab = tabController.findTabBySession(session) ?: return@postDelayed
+                val wakeUrl = wakeTab.url
+                if (!isCvc9DailymotionWatchPageUrl(wakeUrl) && !isCvc9DailymotionConsentPageUrl(wakeUrl)) {
+                    return@postDelayed
+                }
+                dispatchCvc9PlayerWakeTap(reason = reason)
+            },
+            900L,
         )
     }
 
@@ -12611,6 +12762,10 @@ return changed>0;
             "GvExt",
             "media observer message tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} type=$type phase=$phase pageUrl=$pageUrl candidateCount=${candidates.length()} source=$source"
         )
+        if (type == "cvc9-live-state" && phase == "content-cvc9-consent-frame-detected") {
+            scheduleCvc9ConsentFrameNativeTapBurst(session)
+            return
+        }
         if (type == "layout-evidence") {
             GvLogger.i(
                 "GvLayout",
@@ -14723,6 +14878,8 @@ return changed>0;
         private const val CARIBVISION_FULLSCREEN_STAGE_PENDING = "fullscreen-pending"
         private const val CARIBVISION_FULLSCREEN_STAGE_ENTERED = "fullscreen-entered"
         private const val CARIBVISION_FULLSCREEN_STAGE_FAILED = "fullscreen-failed"
+        private val CVC9_CONSENT_FRAME_NATIVE_TAP_BURST_DELAYS_MS =
+            longArrayOf(0L, 150L, 300L, 450L, 600L, 750L, 900L, 1050L, 1200L)
         // Fallback timeout used to release CGTV play-assist state if page-side playing=true
         // does not arrive within this window after an assisted native tap.
         private const val CGTV_PLAY_ASSIST_FALLBACK_TIMEOUT_MS = 5000L
@@ -16123,6 +16280,17 @@ return changed>0;
 
     private fun isCvc9DailymotionConsentContextUrl(url: String): Boolean {
         return isCvc9DailymotionWatchPageUrl(url) || isCvc9DailymotionConsentPageUrl(url)
+    }
+
+    private fun isCvc9AdclickUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "adclick.g.doubleclick.net" && path.startsWith("/pcs/click")
     }
 
     private fun isCvc9DailymotionMediaUrl(url: String): Boolean {
