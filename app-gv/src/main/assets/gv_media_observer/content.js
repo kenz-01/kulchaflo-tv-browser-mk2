@@ -100,6 +100,12 @@
   let cbnVirginIslandsPointerSleepTimer = null;
   let cnc3PlayerFirstApplied = false;
   let cvc9ConsentFrameDetectedLogged = false;
+  let cvc9PlayerFirstApplied = false;
+  let cvc9PlayerFirstObserverAttached = false;
+  let cvc9PlayerFirstAppliedLogged = false;
+  let cvc9PlayerFirstNoTargetLogged = false;
+  let cvc9PlayerFirstRetryLogCount = 0;
+  const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
 
   function isVisible(element) {
     if (!element) return false;
@@ -245,6 +251,254 @@
         attributes: true,
         attributeFilter: ["style", "class", "hidden", "aria-hidden"]
       });
+    } catch (_) {}
+    return true;
+  }
+
+  function isCvc9AdclickPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    return host === "adclick.g.doubleclick.net" && path.indexOf("/pcs/click") === 0;
+  }
+
+  function cvc9PlayerFirstLog(phase, source, candidateCount) {
+    promptPayload({
+      type: "cvc9-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown")
+    });
+  }
+
+  function scoreCvc9PlayerFirstCandidate(node) {
+    if (!node || !isVisible(node)) return -1;
+    let rect;
+    try {
+      rect = node.getBoundingClientRect();
+    } catch (_) {
+      return -1;
+    }
+    if (!rect || rect.width < 120 || rect.height < 68) return -1;
+    const tag = String(node.tagName || "").toLowerCase();
+    const src = String((node.getAttribute && node.getAttribute("src")) || node.src || "").toLowerCase();
+    const cls = String(node.className || "").toLowerCase();
+    let score = rect.width * rect.height;
+    if (tag === "iframe") score += 3000000;
+    if (tag === "video") score += 2500000;
+    if (src.indexOf("geo.dailymotion.com/player") >= 0) score += 4000000;
+    if (src.indexOf("dailymotion.com/embed") >= 0 || src.indexOf("dailymotion.com/player") >= 0) score += 2500000;
+    if (cls.indexOf("player") >= 0 || cls.indexOf("video") >= 0) score += 200000;
+    return score;
+  }
+
+  function findCvc9PlayerFirstCandidates() {
+    const selector = [
+      "iframe[src*='geo.dailymotion.com/player']",
+      "iframe[src*='dailymotion.com/embed']",
+      "iframe[src*='dailymotion.com/player']",
+      "video"
+    ].join(",");
+    return Array.from(document.querySelectorAll(selector)).filter((node) => scoreCvc9PlayerFirstCandidate(node) >= 0);
+  }
+
+  function resolveCvc9PlayerFirstTarget(node) {
+    if (!node) return null;
+    let target = node;
+    let bestScore = scoreCvc9PlayerFirstCandidate(node);
+    let cursor = node.parentElement;
+    for (let depth = 0; cursor && depth < 4; depth += 1) {
+      if (cursor === document.body || cursor === document.documentElement) break;
+      if (!isVisible(cursor)) {
+        cursor = cursor.parentElement;
+        continue;
+      }
+      let rect;
+      try {
+        rect = cursor.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+      if (!rect || rect.width < 120 || rect.height < 68) {
+        cursor = cursor.parentElement;
+        continue;
+      }
+      const parentScore = rect.width * rect.height;
+      if (parentScore >= bestScore * 0.92 && parentScore <= bestScore * 1.8) {
+        target = cursor;
+        bestScore = parentScore;
+      }
+      cursor = cursor.parentElement;
+    }
+    return target;
+  }
+
+  function fillCvc9PlayerFirstNode(node) {
+    if (!node || !node.style) return;
+    node.style.setProperty("position", "fixed", "important");
+    node.style.setProperty("inset", "0", "important");
+    node.style.setProperty("left", "0", "important");
+    node.style.setProperty("top", "0", "important");
+    node.style.setProperty("width", "100vw", "important");
+    node.style.setProperty("height", "100vh", "important");
+    node.style.setProperty("max-width", "100vw", "important");
+    node.style.setProperty("max-height", "100vh", "important");
+    node.style.setProperty("margin", "0", "important");
+    node.style.setProperty("padding", "0", "important");
+    node.style.setProperty("border", "0", "important");
+    node.style.setProperty("overflow", "hidden", "important");
+    node.style.setProperty("background", "#000", "important");
+    node.style.setProperty("z-index", "2147483647", "important");
+  }
+
+  function applyCvc9PlayerFirstRootStyles() {
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("min-width", "100vw", "important");
+      node.style.setProperty("min-height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+  }
+
+  function applyCvc9WatchPageChromeSuppression(target) {
+    if (!isCvc9DailymotionWatchPage()) return;
+    const quietSelectors = [
+      "header",
+      "footer",
+      "[class*='sidebar']",
+      "[class*='Sidebar']",
+      "[class*='recommend']",
+      "[class*='Recommend']",
+      "[class*='related']",
+      "[class*='Related']"
+    ];
+    quietSelectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || node === target || node.contains(target) || target.contains(node)) return;
+          if (!node.style) return;
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        });
+      } catch (_) {}
+    });
+  }
+
+  function applyCvc9DailymotionPlayerFirstLayout(source) {
+    if (cvc9PlayerFirstApplied || isCvc9AdclickPage()) return false;
+    const watchPage = isCvc9DailymotionWatchPage();
+    const playerFrame = isCvc9DailymotionPlayerFrame();
+    if (!watchPage && !playerFrame) return false;
+    applyCvc9PlayerFirstRootStyles();
+    const candidates = playerFrame
+      ? Array.from(document.querySelectorAll("video,iframe,[id*='player'],[class*='player'],main,body")).filter((node) => {
+          if (!node || node === document.documentElement) return false;
+          try {
+            const rect = node.getBoundingClientRect();
+            return rect.width > 120 && rect.height > 68;
+          } catch (_) {
+            return false;
+          }
+        })
+      : findCvc9PlayerFirstCandidates();
+    const sortedCandidates = candidates.slice().sort((a, b) => scoreCvc9PlayerFirstCandidate(b) - scoreCvc9PlayerFirstCandidate(a));
+    const target = resolveCvc9PlayerFirstTarget(sortedCandidates[0] || (playerFrame ? (document.querySelector("video") || document.body) : null));
+    if (!target) {
+      const sourceText = String(source || "unknown");
+      if (sourceText.indexOf("retry-") === 0 && cvc9PlayerFirstRetryLogCount < 3) {
+        cvc9PlayerFirstRetryLogCount += 1;
+        cvc9PlayerFirstLog("content-cvc9-player-first-retry", sourceText, candidates.length);
+      } else if (!cvc9PlayerFirstNoTargetLogged && (sourceText === "retry-12000" || sourceText === "observer-expire" || sourceText === "load")) {
+        cvc9PlayerFirstNoTargetLogged = true;
+        cvc9PlayerFirstLog("content-cvc9-player-first-no-target", sourceText, candidates.length);
+      }
+      return false;
+    }
+    fillCvc9PlayerFirstNode(target);
+    try {
+      Array.from(target.querySelectorAll("iframe,video,[class*='player'],[id*='player']")).forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("width", "100%", "important");
+        node.style.setProperty("height", "100%", "important");
+        node.style.setProperty("max-width", "100%", "important");
+        node.style.setProperty("max-height", "100%", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("background", "#000", "important");
+      });
+    } catch (_) {}
+    if (playerFrame) {
+      [document.body, document.querySelector("main"), document.querySelector("#root"), document.querySelector("[id*='player']")].forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("overflow", "hidden", "important");
+        node.style.setProperty("background", "#000", "important");
+      });
+    } else {
+      applyCvc9WatchPageChromeSuppression(target);
+    }
+    try {
+      target.setAttribute("data-kf-cvc9-player-first", "1");
+    } catch (_) {}
+    cvc9PlayerFirstApplied = true;
+    if (!cvc9PlayerFirstAppliedLogged) {
+      cvc9PlayerFirstAppliedLogged = true;
+      cvc9PlayerFirstLog("content-cvc9-player-first-applied", source, candidates.length);
+    }
+    return true;
+  }
+
+  function scheduleCvc9DailymotionPlayerFirstLayout() {
+    if (isCvc9AdclickPage()) return false;
+    if (!isCvc9DailymotionWatchPage() && !isCvc9DailymotionPlayerFrame()) return false;
+    applyCvc9DailymotionPlayerFirstLayout("initial");
+    const retryApply = (source) => applyCvc9DailymotionPlayerFirstLayout(source);
+    CVC9_PLAYER_FIRST_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => retryApply(`retry-${delayMs}`), delayMs);
+    });
+    const domReady = () => retryApply("dom-content-loaded");
+    const loaded = () => retryApply("load");
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", domReady, { once: true });
+    } else {
+      domReady();
+    }
+    window.addEventListener("load", loaded, { once: true });
+    if (cvc9PlayerFirstObserverAttached) return true;
+    cvc9PlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        if (cvc9PlayerFirstApplied) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        retryApply("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "src"]
+      });
+      setTimeout(() => {
+        try {
+          observer.disconnect();
+        } catch (_) {}
+        if (!cvc9PlayerFirstApplied) {
+          retryApply("observer-expire");
+        }
+      }, 15000);
     } catch (_) {}
     return true;
   }
@@ -5771,6 +6025,7 @@
 
   function publish() {
     const payload = collect();
+    applyCvc9DailymotionPlayerFirstLayout("publish");
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
     applyCbnVirginIslandsPlayerFirstLayout();
@@ -5802,6 +6057,7 @@
   if (absTegoUrlRedirected) {
     return;
   }
+  scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
   ensureCvc9ConsentFrameDetector();
   applyTegoQualityPolicy();
