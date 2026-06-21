@@ -339,6 +339,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val cnc3AutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val cnc3AutostartAttemptedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
+    private val compassPlayTapSentBySession =
+        Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pointerDirectionKeys = LinkedHashSet<Int>()
@@ -1063,6 +1065,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
                 cnc3AutostartAttemptedBySession.remove(session)
             }
+            if (isCompassTvHomePageUrl(url)) {
+                compassPlayTapSentBySession.remove(session)
+            }
             GvLogger.i("GvNav", "page start tabId=${tab?.id ?: "unknown"} url=$url")
         }
 
@@ -1077,6 +1082,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             GvLogger.i("GvNav", "page stop tabId=${tab?.id ?: "unknown"} success=$success url=$pageUrl")
             logLiveLoadTimingPageStop(session, pageUrl, success)
             maybeDispatchCvmVimeoDiagnostic(session, pageUrl, reason = "page-stop")
+            if (!isCompassTvHomePageUrl(pageUrl)) {
+                compassPlayTapSentBySession.remove(session)
+            }
             if (success) {
                 maybeScheduleCnc3AutostartTap(session, pageUrl)
             }
@@ -9635,6 +9643,15 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val compassTopContext = isCompassTvHomePageUrl(activeSessionUrl) || isCompassTvHomePageUrl(currentRootUrl)
+            val compassPermissionUri = isCompassTvHomePageUrl(permission.uri.orEmpty()) || isCompassJwPlayerHost(uriHost)
+            val compassThirdPartyJw = isCompassJwPlayerHost(thirdPartyHost)
+            val compassAutoplayScoped =
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                    (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9646,6 +9663,7 @@ return changed>0;
                 cvc9AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -9720,6 +9738,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "gbn dailymotion embed autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (compassAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "compass jwplayer autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (ENABLE_CVM_VIMEO_DIAGNOSTIC &&
@@ -10611,6 +10635,47 @@ return changed>0;
 
     private fun isCbnVirginIslandsBrowserPlaybackActive(session: GeckoSession): Boolean {
         return browserMediaController.describeSessionState(session).contains("playing=true")
+    }
+
+    private fun dispatchCompassPlayTap(session: GeckoSession, payload: JSONObject): Boolean {
+        val tab = tabController.findTabBySession(session)
+        val tabId = tab?.id ?: "unknown"
+        val pageUrl = payload.optString("pageUrl").ifBlank { tab?.url.orEmpty() }
+        if (!isCompassTvHomePageUrl(pageUrl) && !isCompassTvHomePageUrl(tab?.url.orEmpty())) {
+            GvLogger.i("GvMedia", "compass play tap skipped reason=url-mismatch tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        if (compassPlayTapSentBySession.contains(session)) {
+            GvLogger.i("GvMedia", "compass play tap skipped reason=already-sent tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        val viewWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val viewHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val centerX = payload.optDouble("centerX", -1.0).toFloat()
+        val centerY = payload.optDouble("centerY", -1.0).toFloat()
+        val targetCenterX = payload.optDouble("playerTargetCenterX", -1.0).toFloat()
+        val targetCenterY = payload.optDouble("playerTargetCenterY", -1.0).toFloat()
+        val collapsedControl = centerY in 0f..80f && targetCenterX > 0f && targetCenterY > 0f
+        val tapX = (if (collapsedControl) targetCenterX else centerX).takeIf { it > 0f } ?: (viewWidth * 0.5f)
+        val tapY = (if (collapsedControl) targetCenterY else centerY).takeIf { it > 0f } ?: (viewHeight * 0.5f)
+        val clampedX = tapX.coerceIn(1f, viewWidth - 1f)
+        val clampedY = tapY.coerceIn(1f, viewHeight - 1f)
+        val reason = if (collapsedControl) "collapsed-control-fallback" else "play-control"
+        compassPlayTapSentBySession.add(session)
+        GvLogger.i("GvMedia", "compass play tap scheduled reason=$reason tabId=$tabId pageUrl=$pageUrl x=${clampedX.toInt()} y=${clampedY.toInt()}")
+        pointerHandler.post {
+            if (isFinishing || isDestroyed) {
+                return@post
+            }
+            val currentPageUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            if (!isCompassTvHomePageUrl(currentPageUrl) && !isCompassTvHomePageUrl(pageUrl)) {
+                GvLogger.i("GvMedia", "compass play tap skipped reason=page-changed tabId=$tabId pageUrl=$pageUrl activeUrl=$currentPageUrl")
+                return@post
+            }
+            val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "compass-play-control")
+            GvLogger.i("GvMedia", "compass play tap dispatched handled=$handled reason=$reason tabId=$tabId x=${clampedX.toInt()} y=${clampedY.toInt()}")
+        }
+        return true
     }
 
     private fun ensurePointerVisible() {
@@ -13029,6 +13094,17 @@ return changed>0;
             }
             return
         }
+        if (type == "compass-live-state") {
+            GvLogger.i(
+                "GvMedia",
+                "compass live state phase=$phase pageUrl=$pageUrl candidateCount=${payload.optInt("candidateCount")} scriptVersion=${payload.optString("scriptVersion")}"
+            )
+            when (phase) {
+                "content-compass-player-first-applied" -> enterBrowserFullscreenPointerSleep(reason = "compass-player-first")
+                "content-compass-play-control-found" -> dispatchCompassPlayTap(session, payload)
+            }
+            return
+        }
         if (type == "ttt-consent-autoclick") {
             GvLogger.i(
                 "GvLayout",
@@ -15196,6 +15272,36 @@ return changed>0;
             (host == "geo.dailymotion.com" &&
                 (path == "/player.html" || path.startsWith("/player/") || path.startsWith("/player.html")) &&
                 (videoId == "x85vz1r" || isGbnLivePageUrl(currentUrl) || isGbnLivePageUrl(activeUrl)))
+    }
+
+    private fun isCompassTvUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        return uri.host?.lowercase().orEmpty().removePrefix("www.") == "compasstv.ky"
+    }
+
+    private fun isCompassTvHomePageUrl(url: String): Boolean {
+        if (!isCompassTvUrl(url)) {
+            return false
+        }
+        val path = runCatching { android.net.Uri.parse(url).encodedPath.orEmpty().lowercase() }.getOrDefault("")
+        return path.isBlank() || path == "/"
+    }
+
+    private fun isCompassJwPlayerHost(hostValue: String?): Boolean {
+        val host = hostValue?.lowercase().orEmpty().removePrefix("www.")
+        return host == "cdn.jwplayer.com" ||
+            host == "jwplayer.com" ||
+            host.endsWith(".jwplayer.com") ||
+            host == "jwpcdn.com" ||
+            host.endsWith(".jwpcdn.com") ||
+            host == "jwplatform.com" ||
+            host.endsWith(".jwplatform.com") ||
+            host == "content.jwplatform.com" ||
+            host == "ssl.p.jwpcdn.com"
     }
 
     private fun isYouTubePageUrl(url: String): Boolean {

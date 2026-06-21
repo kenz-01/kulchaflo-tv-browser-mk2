@@ -111,8 +111,17 @@
   let cvc9PlayerFirstAppliedLogged = false;
   let cvc9PlayerFirstNoTargetLogged = false;
   let cvc9PlayerFirstRetryLogCount = 0;
+  let compassPlayerFirstApplied = false;
+  let compassPlayerFirstObserverAttached = false;
+  let compassPlayerFirstAppliedLogged = false;
+  let compassPlayControlFoundLogged = false;
+  let compassTrustedAudioListenerAttached = false;
+  let compassAudioHooksAttached = false;
+  let compassAudioRetryTimers = [];
+  let compassAudioReady = false;
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
+  const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
 
   function isVisible(element) {
     if (!element) return false;
@@ -188,6 +197,13 @@
     if (host !== "gbn.gd") return false;
     const path = String(window.location.pathname || "").toLowerCase();
     return path === "/live-television" || path === "/live-television/";
+  }
+
+  function isCompassTvHomePage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "compasstv.ky") return false;
+    const path = String(window.location.pathname || "").toLowerCase();
+    return path === "" || path === "/";
   }
 
   function isGbnDailymotionConsentFrame() {
@@ -925,6 +941,328 @@
           retryApply("observer-expire");
         }
       }, 15000);
+    } catch (_) {}
+    return true;
+  }
+
+  function compassLog(phase, source, candidateCount, details) {
+    promptPayload(Object.assign({
+      type: "compass-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown"),
+      scriptVersion: COMPASS_TV_SCRIPT_VERSION
+    }, details && typeof details === "object" ? details : {}));
+  }
+
+  function findCompassTarget() {
+    if (!isCompassTvHomePage()) return null;
+    const selectors = [
+      ".container.jw-player-container",
+      ".jw-player",
+      ".video-player",
+      ".live-feed-wrapper",
+      `#videoPlayer-${COMPASS_TV_PLAYER_ID}`
+    ];
+    for (const selector of selectors) {
+      try {
+        const node = document.querySelector(selector);
+        if (node && isVisible(node)) return node;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function hideCompassChrome(target) {
+    const selectors = [
+      "header.site-header",
+      ".utility-header-menu-wrapper",
+      ".header-menu-wrapper",
+      ".live-tv-btn-svg-cont",
+      ".video-grid-block",
+      "footer.site-footer"
+    ];
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || node === target || node.contains(target) || target.contains(node)) return;
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        });
+      } catch (_) {}
+    });
+  }
+
+  function applyCompassPlayerFirst(source) {
+    if (compassPlayerFirstApplied || !isCompassTvHomePage()) return false;
+    const target = findCompassTarget();
+    if (!target) return false;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    target.style.setProperty("position", "fixed", "important");
+    target.style.setProperty("inset", "0", "important");
+    target.style.setProperty("left", "0", "important");
+    target.style.setProperty("top", "0", "important");
+    target.style.setProperty("right", "0", "important");
+    target.style.setProperty("bottom", "0", "important");
+    target.style.setProperty("width", "100vw", "important");
+    target.style.setProperty("height", "100vh", "important");
+    target.style.setProperty("min-width", "100vw", "important");
+    target.style.setProperty("min-height", "100vh", "important");
+    target.style.setProperty("max-width", "none", "important");
+    target.style.setProperty("max-height", "none", "important");
+    target.style.setProperty("margin", "0", "important");
+    target.style.setProperty("padding", "0", "important");
+    target.style.setProperty("border", "0", "important");
+    target.style.setProperty("border-radius", "0", "important");
+    target.style.setProperty("box-shadow", "none", "important");
+    target.style.setProperty("background", "#000", "important");
+    target.style.setProperty("overflow", "hidden", "important");
+    target.style.setProperty("transform", "none", "important");
+    target.style.setProperty("translate", "none", "important");
+    target.style.setProperty("z-index", "2147483647", "important");
+    [".jw-player", ".video-player", ".live-feed-wrapper", `#videoPlayer-${COMPASS_TV_PLAYER_ID}`, ".jwplayer", ".jw-wrapper", ".jw-aspect", ".jw-media"].forEach((selector) => {
+      try {
+        Array.from(target.querySelectorAll(selector)).forEach((node) => {
+          if (!node || !node.style) return;
+          node.style.setProperty("margin", "0", "important");
+          node.style.setProperty("padding", "0", "important");
+          node.style.setProperty("border", "0", "important");
+          node.style.setProperty("border-radius", "0", "important");
+          node.style.setProperty("box-shadow", "none", "important");
+          node.style.setProperty("overflow", "hidden", "important");
+          node.style.setProperty("background", "#000", "important");
+          node.style.setProperty("width", "100%", "important");
+          node.style.setProperty("height", "100%", "important");
+          node.style.setProperty("max-width", "none", "important");
+          node.style.setProperty("max-height", "none", "important");
+        });
+      } catch (_) {}
+    });
+    let parent = target.parentElement;
+    for (let depth = 0; parent && parent !== document.body && depth < 2; depth += 1, parent = parent.parentElement) {
+      if (!parent.style) continue;
+      parent.style.setProperty("margin", "0", "important");
+      parent.style.setProperty("padding", "0", "important");
+      parent.style.setProperty("border", "0", "important");
+      parent.style.setProperty("border-radius", "0", "important");
+      parent.style.setProperty("background", "#000", "important");
+    }
+    hideCompassChrome(target);
+    compassPlayerFirstApplied = true;
+    if (!compassPlayerFirstAppliedLogged) {
+      compassPlayerFirstAppliedLogged = true;
+      compassLog("content-compass-player-first-applied", source, 1, { playerId: COMPASS_TV_PLAYER_ID });
+    }
+    return true;
+  }
+
+  function compassAudioAlreadyReady(video) {
+    return !!(video && video.muted === false && typeof video.volume === "number" && video.volume > 0);
+  }
+
+  function clearCompassAudioRetryTimers() {
+    compassAudioRetryTimers.forEach((timerId) => {
+      try { clearTimeout(timerId); } catch (_) {}
+    });
+    compassAudioRetryTimers = [];
+  }
+
+  function silentCompassUnmute() {
+    if (compassAudioReady || !isCompassTvHomePage()) return compassAudioReady;
+    const target = findCompassTarget() || document;
+    const video = target.querySelector ? target.querySelector("video") : document.querySelector("video");
+    if (compassAudioAlreadyReady(video)) {
+      compassAudioReady = true;
+      clearCompassAudioRetryTimers();
+      return true;
+    }
+    try {
+      const api = typeof window.jwplayer === "function" ? window.jwplayer(COMPASS_TV_PLAYER_ID) : null;
+      if (api && typeof api.setMute === "function") api.setMute(false);
+      if (api && typeof api.setVolume === "function") api.setVolume(100);
+    } catch (_) {}
+    if (video) {
+      try { video.defaultMuted = false; } catch (_) {}
+      try { video.muted = false; } catch (_) {}
+      try { if (typeof video.volume === "number") video.volume = 1; } catch (_) {}
+    }
+    if (compassAudioAlreadyReady(video)) {
+      compassAudioReady = true;
+      clearCompassAudioRetryTimers();
+      return true;
+    }
+    try {
+      const api = typeof window.jwplayer === "function" ? window.jwplayer(COMPASS_TV_PLAYER_ID) : null;
+      if (api && typeof api.getMute === "function" && typeof api.getVolume === "function" && api.getMute() === false && Number(api.getVolume()) > 0) {
+        compassAudioReady = true;
+        clearCompassAudioRetryTimers();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function scheduleCompassSilentUnmuteBurst(source) {
+    if (compassAudioReady || !isCompassTvHomePage()) return;
+    clearCompassAudioRetryTimers();
+    [0, 250, 750, 1500, 3000, 6000, 10000, 15000].forEach((delayMs) => {
+      const timerId = setTimeout(() => {
+        compassAudioRetryTimers = compassAudioRetryTimers.filter((item) => item !== timerId);
+        if (compassAudioReady || !isCompassTvHomePage()) return;
+        silentCompassUnmute(source);
+      }, delayMs);
+      compassAudioRetryTimers.push(timerId);
+    });
+  }
+
+  function attachCompassAudioHooksOnce() {
+    if (compassAudioHooksAttached || !isCompassTvHomePage()) return;
+    compassAudioHooksAttached = true;
+    let videoHooked = false;
+    let jwHooked = false;
+    const attachVideoHooks = () => {
+      if (videoHooked || !isCompassTvHomePage()) return;
+      const target = findCompassTarget() || document;
+      const video = target.querySelector ? target.querySelector("video") : document.querySelector("video");
+      if (!video) return;
+      videoHooked = true;
+      ["loadedmetadata", "canplay", "play", "playing", "volumechange"].forEach((eventName) => {
+        try { video.addEventListener(eventName, () => scheduleCompassSilentUnmuteBurst(eventName), true); } catch (_) {}
+      });
+      scheduleCompassSilentUnmuteBurst("video-hooks");
+    };
+    const attachJwHooks = () => {
+      if (jwHooked || !isCompassTvHomePage()) return;
+      try {
+        if (typeof window.jwplayer !== "function") return;
+        const api = window.jwplayer(COMPASS_TV_PLAYER_ID);
+        if (!api || typeof api.on !== "function") return;
+        jwHooked = true;
+        ["ready", "play", "firstFrame", "levelsChanged"].forEach((eventName) => {
+          try { api.on(eventName, () => scheduleCompassSilentUnmuteBurst(`jw-${eventName}`)); } catch (_) {}
+        });
+        scheduleCompassSilentUnmuteBurst("jw-hooks");
+      } catch (_) {}
+    };
+    attachVideoHooks();
+    attachJwHooks();
+    [500, 1500, 3000, 6000, 10000].forEach((delayMs) => {
+      setTimeout(() => {
+        if (compassAudioReady || !isCompassTvHomePage()) return;
+        attachVideoHooks();
+        attachJwHooks();
+      }, delayMs);
+    });
+  }
+
+  function attachCompassTrustedAudioOnce() {
+    if (compassTrustedAudioListenerAttached || !isCompassTvHomePage()) return;
+    compassTrustedAudioListenerAttached = true;
+    const listener = (event) => {
+      const target = findCompassTarget();
+      if (!target || !event || !event.target || !target.contains(event.target)) return;
+      scheduleCompassSilentUnmuteBurst("trusted-interaction");
+    };
+    document.addEventListener("click", listener, true);
+    document.addEventListener("pointerup", listener, true);
+  }
+
+  function findCompassPlayControl() {
+    if (!isCompassTvHomePage()) return null;
+    const selectors = [
+      ".jw-player #play-btn",
+      "#play-btn",
+      ".jwplayer .jw-icon-playback",
+      "button[aria-label*='play' i]",
+      "[role='button'][aria-label*='play' i]"
+    ];
+    const rejected = ["share", "search", "menu", "close", "mute", "volume", "settings", "next", "previous"];
+    for (const selector of selectors) {
+      try {
+        for (const node of Array.from(document.querySelectorAll(selector))) {
+          if (!isVisible(node)) continue;
+          const blob = [
+            node.getAttribute && node.getAttribute("aria-label"),
+            node.getAttribute && node.getAttribute("title"),
+            node.textContent,
+            node.className
+          ].join(" ").toLowerCase();
+          if (rejected.some((word) => blob.indexOf(word) >= 0)) continue;
+          if (blob.indexOf("play") < 0 && blob.indexOf("jw-icon-playback") < 0) continue;
+          return node;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function emitCompassPlayControl(source) {
+    if (compassPlayControlFoundLogged || !isCompassTvHomePage()) return false;
+    const control = findCompassPlayControl();
+    if (!control) return false;
+    const target = findCompassTarget();
+    let rect = null;
+    let targetRect = null;
+    try { rect = control.getBoundingClientRect(); } catch (_) {}
+    try { targetRect = target && target.getBoundingClientRect ? target.getBoundingClientRect() : null; } catch (_) {}
+    compassPlayControlFoundLogged = true;
+    scheduleCompassSilentUnmuteBurst("play-control-found");
+    compassLog("content-compass-play-control-found", source, 1, {
+      playerId: COMPASS_TV_PLAYER_ID,
+      x: rect ? Math.round(rect.left) : -1,
+      y: rect ? Math.round(rect.top) : -1,
+      width: rect ? Math.round(rect.width) : -1,
+      height: rect ? Math.round(rect.height) : -1,
+      centerX: rect ? Math.round(rect.left + rect.width / 2) : -1,
+      centerY: rect ? Math.round(rect.top + rect.height / 2) : -1,
+      playerTargetLeft: targetRect ? Math.round(targetRect.left) : -1,
+      playerTargetTop: targetRect ? Math.round(targetRect.top) : -1,
+      playerTargetWidth: targetRect ? Math.round(targetRect.width) : -1,
+      playerTargetHeight: targetRect ? Math.round(targetRect.height) : -1,
+      playerTargetCenterX: targetRect ? Math.round(targetRect.left + targetRect.width / 2) : -1,
+      playerTargetCenterY: targetRect ? Math.round(targetRect.top + targetRect.height / 2) : -1
+    });
+    return true;
+  }
+
+  function scheduleCompassMinimalHelper() {
+    if (!isCompassTvHomePage()) return false;
+    attachCompassTrustedAudioOnce();
+    attachCompassAudioHooksOnce();
+    const apply = (source) => {
+      applyCompassPlayerFirst(source);
+      emitCompassPlayControl(source);
+    };
+    apply("initial");
+    const delays = [250, 750, 1500, 3000];
+    delays.forEach((delayMs) => setTimeout(() => apply(`retry-${delayMs}`), delayMs));
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => apply("dom-content-loaded"), { once: true });
+    } else {
+      apply("dom-content-loaded");
+    }
+    window.addEventListener("load", () => apply("load"), { once: true });
+    if (compassPlayerFirstObserverAttached) return true;
+    compassPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        apply("mutation");
+        if (compassPlayerFirstApplied && compassPlayControlFoundLogged) {
+          try { observer.disconnect(); } catch (_) {}
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (_) {}
+      }, 5000);
     } catch (_) {}
     return true;
   }
@@ -6484,6 +6822,7 @@
   if (absTegoUrlRedirected) {
     return;
   }
+  scheduleCompassMinimalHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
