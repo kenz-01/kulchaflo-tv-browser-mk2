@@ -447,28 +447,50 @@ GBN is the warning case for Dailymotion browser player duplication. Do not promo
 
 ## Compass TV Cayman
 
-**Type:** planned official page with JWPlayer.
+**Type:** official page with JWPlayer.
 
-**Known HTML evidence from user:**
+**Route/context:**
 
-- official page: `compasstv.ky`
-- JW script: `cdn.jwplayer.com/players/HRQZA1oT-SkbOASt9.js`
-- player container: `#videoPlayer-HRQZA1oT-SkbOASt9`
-- wrapper: `.container.jw-player-container`, `.jw-player`, `.video-player`, `.live-feed-wrapper`
-- custom play button: `.jw-player #play-btn`
-- page chrome: `header.site-header`, utility/header menus, live TV badge, video grid, footer
+- official page: `compasstv.ky/?utm_source=KulchaFlo`
+- player type: official-page JWPlayer
+- player evidence:
+  - JW script: `https://cdn.jwplayer.com/players/HRQZA1oT-SkbOASt9.js`
+  - player container: `#videoPlayer-HRQZA1oT-SkbOASt9`
+  - wrappers: `.jw-player-container`, `.jw-player`, `.video-player`, `.live-feed-wrapper`
+  - custom play button: `.jw-player #play-btn`
 
-**Recommended family:** official JWPlayer page helper.
+**Status:** NOT ACCEPTED / no committed helper yet.
 
-**Do not start with:** Dailymotion consent, watch-page rewrite, or native promotion block.
+**App source status:** no Compass helper should currently be present in HEAD.
 
-**Likely implementation:**
+**Failed attempts:**
 
-- add provider URL helpers for `compasstv.ky/`
-- content.js player-first on JW player wrapper
-- hide Compass page chrome
-- detect visible custom/JW play button
-- Kotlin one-shot native tap to real play control only if needed
-- scoped JW/autoplay permission if logs show it is required
-- native promotion guard only if device logs show duplicate playback
+1. **Compass v1**
+   - picture worked
+   - header/footer/grid were hidden
+   - player filled roughly 95% of screen
+   - audio remained muted
+2. **Compass v2**
+   - audio unmute worked
+   - video collapsed to black screen
+   - diagnostic showed `targetRect=0,0 1200x720`
+   - diagnostic showed `videoRect=0,32 1200x0`
+   - lesson: do not force broad JW/video descendants into absolute/inset layout
+3. **Compass v3**
+   - tried to combine layout rechecks and audio assist
+   - created repeated `content-compass-audio-unmute-attempt` prompt spam
+   - logs repeatedly showed `videoMuted=false` and `videoVolume=1` with `changed=false`
+   - page/player did not settle
+   - lesson: do not emit audio diagnostics/prompts inside MutationObserver or layout reapply paths
 
+**Future Compass attempt principles:**
+
+- start fresh from clean HEAD
+- use v1 visual baseline
+- add only silent, bounded unmute attempts
+- do not add a layout retry loop
+- do not add audio diagnostic spam
+- do not trigger unmute from MutationObserver
+- do not apply broad JW descendant CSS
+- do not add a native promotion block unless logs prove duplicate browser/native playback
+- do not add extra taps, wake loops, consent loops, or Dailymotion/Facebook patterns

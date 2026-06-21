@@ -298,6 +298,58 @@ For Dailymotion, ad/no-ad variation is normal. The failure is duplicate layers, 
 
 ---
 
+## JWPlayer Compass TV caution / failed-pattern bank
+
+Compass TV was a useful failure case for JWPlayer browser-first work. Bank the lessons below before trying another Compass pass.
+
+### 1. Audio assist rule
+
+- If `videoMuted=false` and `videoVolume=1`, stop trying to unmute.
+- Do not repeatedly publish `audio-unmute-attempt` or `audio-state` when the state is already correct.
+- Prefer silent bounded unmute attempts.
+- Diagnostic logging must be sparse and not tied to `MutationObserver` loops.
+
+### 2. JW layout rule
+
+- Do not blindly force `.jw-video`, `video`, `.jw-media`, `.jw-controls`, `.jw-display`, `.jw-controlbar` to `position:absolute/inset:0`.
+- Broad absolute positioning can collapse video height to `0`.
+- Start with a stable outer player-first wrapper.
+- Only adjust the actual JW root/wrapper after it exists and has non-zero dimensions.
+- Keep the v1 visual stability as the baseline before adding audio fixes.
+
+### 3. Prompt bridge rule
+
+- Do not flood the Gecko prompt bridge with repeated provider-state messages.
+- Prompt spam can destabilize page settling even without `AndroidRuntime` or `FATAL` crashes.
+- Retry loops should be bounded and should not publish every iteration unless debugging a temporary local test.
+
+### 4. Applied guard rule
+
+- Do not remove a `playerFirstApplied` guard unless layout reapply is separated from logging and audio side effects.
+- Reapply CSS must not re-trigger play-control detection, audio assist logging, or prompt publishing repeatedly.
+
+### 5. ADB discipline reminder
+
+- Codex/Copilot must not use plain `adb`.
+- Do not run `adb kill-server` or `adb start-server` unless the user explicitly authorizes an ADB reset.
+- Use the project-approved absolute ADB path and serial if device testing is requested by the user only.
+- Docs/source-only tasks must not run `adb`.
+
+### 6. Compass future template
+
+- First attempt should be minimal:
+  - official page only
+  - hide page chrome
+  - target the JW wrapper
+  - one-shot real play tap only if needed
+  - one or two silent unmute attempts after trusted click/play
+  - no native promotion block
+  - no repeated audio logs
+  - no `MutationObserver`-triggered audio
+  - no broad JW CSS
+
+---
+
 ## 13. New helper prompt template
 
 ```text
