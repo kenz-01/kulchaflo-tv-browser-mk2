@@ -298,6 +298,30 @@ For Dailymotion, ad/no-ad variation is normal. The failure is duplicate layers, 
 
 ---
 
+## Island TV Vimeo single-player shell pattern
+
+Island TV proved that some official-page Vimeo providers need more than simple player-first layout.
+
+### Accepted pattern
+
+- Use the official page only.
+- Keep marker `islandtv-vimeo-v1`.
+- Build a clean single-player shell around the selected official Vimeo iframe.
+- Move or recreate the selected iframe inside `#kf-islandtv-player-shell`.
+- Remove or blank every non-selected Island TV Vimeo iframe before trusting playback.
+- Guard body children outside the shell so page overlays do not sit above the player.
+- Let the selected frame resolve before the one-shot tap lands near fullscreen centre.
+- Keep Kotlin scope narrow to the Island TV home page and the two exact Vimeo event URLs.
+
+### Failure lesson
+
+- The first iframe/tab approach failed because the WordPress page loads multiple Vimeo embeds, including main, plus, interaction and non-interaction variants.
+- Hidden/background Vimeo iframes can still remain playable and produce simultaneous audio.
+- Hiding sibling tabs alone is not enough.
+- Early logs may mention both event ids while the page is still creating frames, but accepted success means only the selected event remains audible and active.
+
+---
+
 ## JWPlayer Compass TV caution / failed-pattern bank
 
 Compass TV was a useful failure case for JWPlayer browser-first work. Bank the lessons below before trying another Compass pass.

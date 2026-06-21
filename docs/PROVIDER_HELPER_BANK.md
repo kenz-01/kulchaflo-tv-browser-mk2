@@ -335,6 +335,51 @@ For Vimeo event players, prefer official embed and use player API only for quali
 
 ---
 
+## Island TV / Island TV+
+
+**Type:** official page with dual Vimeo event embeds.
+
+**Route/context:**
+
+- official page: `islandtv.tv/?utm_source=KulchaFlo`
+- Island TV+ variant: `islandtv.tv/?utm_source=KulchaFlo&kf_channel=island-tv-plus`
+
+**Accepted commit:** `9a021a7`
+
+**Accepted helper marker:** `islandtv-vimeo-v1`
+
+**Accepted shell marker:** `kf-islandtv-player-shell`
+
+**Accepted behavior:**
+
+- Main Island TV defaults to Vimeo event `5561018`.
+- Island TV+ uses `kf_channel=island-tv-plus` and selects Vimeo event `4894719`.
+- The accepted implementation uses a clean single-player shell.
+- The selected official Vimeo iframe is moved or recreated inside `#kf-islandtv-player-shell`.
+- Non-selected Island TV Vimeo iframes are removed or blanked.
+- Duplicate selected-event iframes are removed or blanked.
+- Body children outside the Island TV player shell are guarded or removed so page overlays do not sit over the player.
+- Kotlin scope is narrow to the Island TV home page and the two exact Vimeo event URLs.
+- One-shot tap happens after shell layout and lands near fullscreen centre.
+- No raw stream extraction.
+- No native promotion.
+- No repeated tap loops.
+- No audio/layout diagnostics.
+
+**Failure lessons to bank:**
+
+1. The first iframe/tab approach failed because the official WordPress page loads multiple Vimeo embeds: main, plus, interaction and non-interaction variants.
+2. Hidden/background Vimeo iframes could still become playable and cause simultaneous audio.
+3. Hiding sibling tabs alone was not enough.
+4. The accepted pattern for this provider is single-player shell isolation, not simple player-first layout.
+5. Early logs may still mention both event ids because the page starts creating iframes before shell cleanup, but accepted success means only the selected event becomes playable and audible.
+
+**Lessons to bank:**
+
+Island TV is the clean example for official-page Vimeo multi-embed handling. Do not rely on tab ids or tab labels. Select by event id, then isolate a single shell and disable every other Vimeo iframe before relying on any tap or playback signal.
+
+---
+
 ## CBN Virgin Islands
 
 **Type:** official page with embedded Wix/filesusr/JW-style player.
