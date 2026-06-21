@@ -334,6 +334,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val youtubeFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val browserFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
+    private val islandTvPlayTapSentBySession =
+        Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val cbnVirginIslandsAutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val cbnVirginIslandsAutostartTapCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val cnc3AutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
@@ -1065,6 +1067,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
                 cnc3AutostartAttemptedBySession.remove(session)
             }
+            if (isIslandTvContextUrl(url)) {
+                islandTvPlayTapSentBySession.remove(session)
+            }
             if (isCompassTvHomePageUrl(url)) {
                 compassPlayTapSentBySession.remove(session)
             }
@@ -1084,6 +1089,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             maybeDispatchCvmVimeoDiagnostic(session, pageUrl, reason = "page-stop")
             if (!isCompassTvHomePageUrl(pageUrl)) {
                 compassPlayTapSentBySession.remove(session)
+            }
+            if (!isIslandTvContextUrl(pageUrl)) {
+                islandTvPlayTapSentBySession.remove(session)
             }
             if (success) {
                 maybeScheduleCnc3AutostartTap(session, pageUrl)
@@ -1190,6 +1198,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             if (!isCnc3LiveStreamPageUrl(url.orEmpty()) && !isCnc3DailymotionPlayerUrl(url.orEmpty())) {
                 cnc3AutostartTapRunnableBySession.remove(session)?.let(pointerHandler::removeCallbacks)
                 cnc3AutostartAttemptedBySession.remove(session)
+            }
+            if (!isIslandTvContextUrl(url.orEmpty())) {
+                islandTvPlayTapSentBySession.remove(session)
             }
             if (isCvc9DailymotionWatchPageUrl(url.orEmpty())) {
                 enterBrowserFullscreenPointerSleep(reason = "cvc9-dailymotion-watch-page")
@@ -9606,6 +9617,18 @@ return changed>0;
                         cvmPermissionUri ||
                         (cvmThirdPartyVimeo && cvmTopContext)
                     )
+            val islandTvTopContext = isIslandTvContextUrl(activeSessionUrl) || isIslandTvContextUrl(currentRootUrl)
+            val islandTvPermissionUri = isIslandTvContextUrl(permission.uri.orEmpty())
+            val islandTvThirdPartyVimeo = isVimeoHostForIslandTv(thirdPartyHost)
+            val islandTvAutoplayScoped = ENABLE_ISLANDTV_VIMEO_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    islandTvPermissionUri ||
+                        (islandTvThirdPartyVimeo && islandTvTopContext)
+                    )
             val cvc9TopContext = isCvc9DailymotionWatchPageUrl(activeSessionUrl) || isCvc9DailymotionWatchPageUrl(currentRootUrl)
             val cvc9PermissionUri = isCvc9DailymotionWatchPageUrl(permission.uri.orEmpty())
             val cvc9ThirdPartyDailymotion = thirdPartyHost?.lowercase().orEmpty().removePrefix("www.") == "geo.dailymotion.com"
@@ -9660,6 +9683,7 @@ return changed>0;
                 chtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 caribvisionAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                islandTvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvc9AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9682,6 +9706,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "cvm vimeo autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (islandTvAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "islandtv vimeo autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (absAutoplayScoped) {
@@ -10674,6 +10704,47 @@ return changed>0;
             }
             val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "compass-play-control")
             GvLogger.i("GvMedia", "compass play tap dispatched handled=$handled reason=$reason tabId=$tabId x=${clampedX.toInt()} y=${clampedY.toInt()}")
+        }
+        return true
+    }
+
+    private fun dispatchIslandTvPlayTap(session: GeckoSession, payload: JSONObject): Boolean {
+        val tab = tabController.findTabBySession(session)
+        val tabId = tab?.id ?: "unknown"
+        val pageUrl = payload.optString("pageUrl").ifBlank { tab?.url.orEmpty() }
+        if (!isIslandTvContextUrl(pageUrl) && !isIslandTvContextUrl(tab?.url.orEmpty())) {
+            GvLogger.i("GvMedia", "islandtv play tap skipped reason=url-mismatch tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        if (islandTvPlayTapSentBySession.contains(session)) {
+            GvLogger.i("GvMedia", "islandtv play tap skipped reason=already-sent tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        val viewWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val viewHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val centerX = payload.optDouble("centerX", -1.0).toFloat()
+        val centerY = payload.optDouble("centerY", -1.0).toFloat()
+        val targetCenterX = payload.optDouble("targetCenterX", -1.0).toFloat()
+        val targetCenterY = payload.optDouble("targetCenterY", -1.0).toFloat()
+        val collapsedControl = centerY in 0f..80f && targetCenterX > 0f && targetCenterY > 0f
+        val tapX = (if (collapsedControl) targetCenterX else centerX).takeIf { it > 0f } ?: (viewWidth * 0.5f)
+        val tapY = (if (collapsedControl) targetCenterY else centerY).takeIf { it > 0f } ?: (viewHeight * 0.5f)
+        val clampedX = tapX.coerceIn(1f, viewWidth - 1f)
+        val clampedY = tapY.coerceIn(1f, viewHeight - 1f)
+        val reason = if (collapsedControl) "collapsed-control-fallback" else "selected-frame-found"
+        islandTvPlayTapSentBySession.add(session)
+        GvLogger.i("GvMedia", "islandtv play tap scheduled reason=$reason tabId=$tabId pageUrl=$pageUrl x=${clampedX.toInt()} y=${clampedY.toInt()}")
+        pointerHandler.post {
+            if (isFinishing || isDestroyed) {
+                return@post
+            }
+            val currentPageUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            if (!isIslandTvContextUrl(currentPageUrl) && !isIslandTvContextUrl(pageUrl)) {
+                GvLogger.i("GvMedia", "islandtv play tap skipped reason=page-changed tabId=$tabId pageUrl=$pageUrl activeUrl=$currentPageUrl")
+                return@post
+            }
+            val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "islandtv-play-control")
+            GvLogger.i("GvMedia", "islandtv play tap dispatched handled=$handled reason=$reason tabId=$tabId x=${clampedX.toInt()} y=${clampedY.toInt()}")
         }
         return true
     }
@@ -13105,6 +13176,17 @@ return changed>0;
             }
             return
         }
+        if (type == "islandtv-live-state") {
+            GvLogger.i(
+                "GvMedia",
+                "islandtv live state phase=$phase pageUrl=$pageUrl candidateCount=${payload.optInt("candidateCount")} scriptVersion=${payload.optString("scriptVersion")}"
+            )
+            when (phase) {
+                "content-islandtv-player-first-applied" -> enterBrowserFullscreenPointerSleep(reason = "islandtv-player-first")
+                "content-islandtv-selected-frame-found" -> dispatchIslandTvPlayTap(session, payload)
+            }
+            return
+        }
         if (type == "ttt-consent-autoclick") {
             GvLogger.i(
                 "GvLayout",
@@ -14928,6 +15010,7 @@ return changed>0;
         private const val TTT_CONSENT_AUTOCLICK_ENABLED = true
         private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = false
         private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_ISLANDTV_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
@@ -15753,6 +15836,45 @@ return changed>0;
         return host == "vimeo.com" || host.endsWith(".vimeo.com")
     }
 
+    private fun isIslandTvHomePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "islandtv.tv" && (path.isEmpty() || path == "/")
+    }
+
+    private fun isIslandTvVimeoEventUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "vimeo.com") {
+            return false
+        }
+        val path = uri.encodedPath.orEmpty().lowercase()
+        val isMainEvent = path.startsWith("/event/5561018/")
+        val isPlusEvent = path.startsWith("/event/4894719/")
+        if (!isMainEvent && !isPlusEvent) {
+            return false
+        }
+        return path.contains("/embed") || path.contains("/interaction")
+    }
+
+    private fun isIslandTvContextUrl(url: String): Boolean {
+        return isIslandTvHomePageUrl(url) || isIslandTvVimeoEventUrl(url)
+    }
+
+    private fun isVimeoHostForIslandTv(hostValue: String?): Boolean {
+        val host = hostValue?.lowercase().orEmpty().removePrefix("www.")
+        return host == "vimeo.com" || host.endsWith(".vimeo.com") || host == "vimeocdn.com" || host.endsWith(".vimeocdn.com")
+    }
+
     private fun liveLoadTimingSurface(url: String): String? {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -15777,6 +15899,7 @@ return changed>0;
             isCnc3DailymotionPlayerUrl(url) -> "cnc3-dailymotion-player"
             isCvmLiveStreamUrl(url) -> "cvm-vimeo-player"
             isCvmVimeoEmbedUrl(uri) -> "cvm-vimeo-player"
+            isIslandTvContextUrl(url) -> "islandtv-vimeo-player"
             isLiveMediaSurfaceUrl(url) -> "live-media-surface"
             else -> null
         }

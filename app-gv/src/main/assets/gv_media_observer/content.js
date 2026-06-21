@@ -91,6 +91,11 @@
   let caribvisionFullscreenDomClickDone = false;
   let cvmVimeoPlayerFirstApplied = false;
   let cvmVimeoQualityPreferenceResolved = false;
+  let islandTvPlayerFirstApplied = false;
+  let islandTvPlayerFirstObserverAttached = false;
+  let islandTvPlayerFirstAppliedLogged = false;
+  let islandTvSelectedFrameFoundLogged = false;
+  let islandTvShellGuardAttached = false;
   let cbnVirginIslandsLayoutApplied = false;
   let cbnVirginIslandsAutoplayAttempted = false;
   let cbnVirginIslandsMutedFallbackAttempted = false;
@@ -122,6 +127,8 @@
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
+  const ISLANDTV_VIMEO_SCRIPT_VERSION = "islandtv-vimeo-v1";
+  const ISLANDTV_PLAYER_SHELL_ID = "kf-islandtv-player-shell";
 
   function isVisible(element) {
     if (!element) return false;
@@ -171,6 +178,56 @@
     if (host !== "vimeo.com" && !host.endsWith(".vimeo.com")) return false;
     const path = (window.location.pathname || "").toLowerCase();
     return path.indexOf("/event/") === 0 && path.endsWith("/embed");
+  }
+
+  function isIslandTvHomePage() {
+    const host = (window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "islandtv.tv") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "" || path === "/";
+  }
+
+  function islandTvSelectedEventId() {
+    const channel = String(new URLSearchParams(window.location.search || "").get("kf_channel") || "").trim().toLowerCase();
+    return channel === "island-tv-plus" ? "4894719" : "5561018";
+  }
+
+  function islandTvSelectedEventIdFromUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""), window.location.href);
+      const channel = String(parsed.searchParams.get("kf_channel") || "").trim().toLowerCase();
+      return channel === "island-tv-plus" ? "4894719" : "5561018";
+    } catch (_) {
+      return islandTvSelectedEventId();
+    }
+  }
+
+  function islandTvCanonicalEmbedSrc(eventId) {
+    if (String(eventId || "") === "4894719") {
+      return "https://vimeo.com/event/4894719/embed/f5862251f9/interaction";
+    }
+    return "https://vimeo.com/event/5561018/embed/a24357f7a8/interaction";
+  }
+
+  function isIslandTvVimeoEventFrame() {
+    const host = (window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "vimeo.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path.indexOf("/event/") === 0 && (path.indexOf("/embed") >= 0 || path.indexOf("/interaction") >= 0);
+  }
+
+  function isIslandTvContextUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""), window.location.href);
+      const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+      const path = parsed.pathname.toLowerCase();
+      if (host === "islandtv.tv" && (path === "" || path === "/")) {
+        return true;
+      }
+      return host === "vimeo.com" && path.indexOf("/event/") === 0 && (path.indexOf("/embed") >= 0 || path.indexOf("/interaction") >= 0);
+    } catch (_) {
+      return false;
+    }
   }
 
   function isCbnVirginIslandsLivePage() {
@@ -1356,6 +1413,380 @@
     } catch (_) {
       return false;
     }
+  }
+
+  function islandTvLog(phase, source, candidateCount, details) {
+    promptPayload(Object.assign({
+      type: "islandtv-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown"),
+      scriptVersion: ISLANDTV_VIMEO_SCRIPT_VERSION
+    }, details && typeof details === "object" ? details : {}));
+  }
+
+  function isIslandTvDesktopHiddenAncestor(node) {
+    let current = node;
+    while (current && current !== document.body) {
+      if (current.classList && current.classList.contains("grve-desktop-row-hide")) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
+
+  function findIslandTvSelectedIframe() {
+    if (!isIslandTvHomePage()) return null;
+    const eventId = islandTvSelectedEventId();
+    const selectors = [
+      `iframe[src*="/event/${eventId}/"]`,
+      `iframe[src*="vimeo.com/event/${eventId}/"]`
+    ];
+    const matches = [];
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (node && matches.indexOf(node) < 0) {
+            matches.push(node);
+          }
+        });
+      } catch (_) {}
+    });
+    const visible = matches.find((node) => {
+      if (!isVisible(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 8 && rect.height > 8;
+    });
+    const preferredHidden = matches.find((node) => !isIslandTvDesktopHiddenAncestor(node));
+    return {
+      eventId,
+      matches,
+      iframe: visible || preferredHidden || matches[0] || null
+    };
+  }
+
+  function islandTvSelectedEmbedSrc(selected) {
+    const eventId = selected && selected.eventId ? selected.eventId : islandTvSelectedEventId();
+    const iframe = selected && selected.iframe ? selected.iframe : null;
+    const rawSrc = iframe ? String(iframe.src || iframe.getAttribute("src") || "").trim() : "";
+    return rawSrc || islandTvCanonicalEmbedSrc(eventId);
+  }
+
+  function revealIslandTvSelectedFramePath(iframe) {
+    if (!iframe) return;
+    let current = iframe;
+    while (current && current !== document.body) {
+      if (current.style) {
+        const classList = current.classList || { contains: () => false };
+        const looksLikePane =
+          classList.contains("lvca-tab-pane") ||
+          classList.contains("lvca-tab") ||
+          classList.contains("lvca-panel") ||
+          classList.contains("lvca-content") ||
+          classList.contains("grve-tab-content") ||
+          classList.contains("tab-pane") ||
+          classList.contains("tabs-panel");
+        if (looksLikePane || current === iframe.parentElement) {
+          current.style.setProperty("display", "block", "important");
+          current.style.setProperty("visibility", "visible", "important");
+          current.style.setProperty("opacity", "1", "important");
+          current.style.setProperty("pointer-events", "auto", "important");
+        }
+      }
+      const parent = current.parentElement;
+      if (parent && parent.classList && parent.classList.contains("lvca-tab-panes")) {
+        Array.from(parent.children).forEach((child) => {
+          if (!(child instanceof Element)) return;
+          if (child.contains(iframe)) {
+            child.style.setProperty("display", "block", "important");
+            child.style.setProperty("visibility", "visible", "important");
+            child.style.setProperty("opacity", "1", "important");
+            child.style.setProperty("pointer-events", "auto", "important");
+          } else if (child.classList && child.classList.contains("lvca-tab-pane")) {
+            child.style.setProperty("display", "none", "important");
+            child.style.setProperty("visibility", "hidden", "important");
+            child.style.setProperty("opacity", "0", "important");
+            child.style.setProperty("pointer-events", "none", "important");
+          }
+        });
+      }
+      current = parent;
+    }
+  }
+
+  function isIslandTvChromeNode(node, target) {
+    return !!(node && target && (node === target || node.contains(target) || target.contains(node)));
+  }
+
+  function hideIslandTvChrome(target) {
+    const selectors = [
+      "#grve-header",
+      "#grve-anchor-menu",
+      "footer",
+      "aside",
+      ".sidebar",
+      ".widget",
+      ".widgets",
+      ".popup",
+      ".modal",
+      ".overlay",
+      ".et_pb_column",
+      ".et_pb_sidebar",
+      ".grve-widget"
+    ];
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || isIslandTvChromeNode(node, target)) return;
+          if (!isVisible(node)) return;
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        });
+      } catch (_) {}
+    });
+    const ancestors = [];
+    let current = target;
+    while (current && current !== document.body && current.parentElement) {
+      ancestors.push(current);
+      current = current.parentElement;
+    }
+    ancestors.forEach((ancestor) => {
+      const parent = ancestor.parentElement;
+      if (!parent) return;
+      Array.from(parent.children).forEach((child) => {
+        if (ancestors.indexOf(child) >= 0 || child === target || child.contains(target)) return;
+        if (child.tagName && String(child.tagName).toLowerCase() === "script") return;
+        if (!isVisible(child)) return;
+        child.style.setProperty("display", "none", "important");
+        child.style.setProperty("visibility", "hidden", "important");
+        child.style.setProperty("pointer-events", "none", "important");
+      });
+    });
+  }
+
+  function isIslandTvAdUrl(value) {
+    const text = String(value || "").toLowerCase();
+    return text.indexOf("googleads") >= 0 ||
+      text.indexOf("doubleclick") >= 0 ||
+      text.indexOf("googletagmanager") >= 0 ||
+      text.indexOf("googlesyndication") >= 0 ||
+      text.indexOf("google-analytics") >= 0 ||
+      text.indexOf("analytics.google") >= 0 ||
+      text.indexOf("pagead") >= 0;
+  }
+
+  function disableIslandTvExtraFrames(selectedIframe) {
+    let disabledFrameCount = 0;
+    const frames = Array.from(document.querySelectorAll("iframe"));
+    frames.forEach((node) => {
+      if (!node || node === selectedIframe) return;
+      const src = String(node.src || node.getAttribute("src") || "").toLowerCase();
+      if (src.indexOf("/event/5561018/") < 0 && src.indexOf("/event/4894719/") < 0) return;
+      try { node.setAttribute("src", "about:blank"); } catch (_) {}
+      try { node.removeAttribute("srcdoc"); } catch (_) {}
+      try { node.remove(); } catch (_) {
+        try {
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        } catch (_) {}
+      }
+      disabledFrameCount += 1;
+    });
+    return disabledFrameCount;
+  }
+
+  function suppressIslandTvOutsideShell(shell) {
+    if (!shell || !document.body) return;
+    Array.from(document.body.children).forEach((child) => {
+      if (!(child instanceof Element) || child === shell) return;
+      const tagName = String(child.tagName || "").toLowerCase();
+      if (tagName === "script") {
+        if (isIslandTvAdUrl(child.getAttribute("src") || "")) {
+          try { child.remove(); } catch (_) {}
+        }
+        return;
+      }
+      const childSrc = child.getAttribute && (child.getAttribute("src") || child.getAttribute("data-src") || "");
+      const shouldRemove = tagName === "iframe" || isIslandTvAdUrl(childSrc) || isIslandTvAdUrl(child.className) || isIslandTvAdUrl(child.id);
+      if (shouldRemove) {
+        try { child.remove(); } catch (_) {}
+        return;
+      }
+      try {
+        child.style.setProperty("display", "none", "important");
+        child.style.setProperty("visibility", "hidden", "important");
+        child.style.setProperty("pointer-events", "none", "important");
+      } catch (_) {}
+    });
+  }
+
+  function guardIslandTvSinglePlayerShell() {
+    if (islandTvShellGuardAttached || !isIslandTvHomePage()) return;
+    const shell = document.getElementById(ISLANDTV_PLAYER_SHELL_ID);
+    if (!shell || !document.body) return;
+    islandTvShellGuardAttached = true;
+    suppressIslandTvOutsideShell(shell);
+    try {
+      const observer = new MutationObserver(() => {
+        suppressIslandTvOutsideShell(shell);
+      });
+      observer.observe(document.body, { childList: true, subtree: false });
+    } catch (_) {}
+  }
+
+  function ensureIslandTvSinglePlayerShell(selected) {
+    if (!selected || !selected.iframe || !document.body) return null;
+    const eventId = selected.eventId || islandTvSelectedEventId();
+    const embedSrc = islandTvSelectedEmbedSrc(selected);
+    const shell = document.getElementById(ISLANDTV_PLAYER_SHELL_ID) || document.createElement("div");
+    shell.id = ISLANDTV_PLAYER_SHELL_ID;
+    shell.style.setProperty("position", "fixed", "important");
+    shell.style.setProperty("inset", "0", "important");
+    shell.style.setProperty("left", "0", "important");
+    shell.style.setProperty("top", "0", "important");
+    shell.style.setProperty("right", "0", "important");
+    shell.style.setProperty("bottom", "0", "important");
+    shell.style.setProperty("width", "100vw", "important");
+    shell.style.setProperty("height", "100vh", "important");
+    shell.style.setProperty("margin", "0", "important");
+    shell.style.setProperty("padding", "0", "important");
+    shell.style.setProperty("border", "0", "important");
+    shell.style.setProperty("border-radius", "0", "important");
+    shell.style.setProperty("box-shadow", "none", "important");
+    shell.style.setProperty("background", "#000", "important");
+    shell.style.setProperty("overflow", "hidden", "important");
+    shell.style.setProperty("z-index", "2147483647", "important");
+    if (!shell.parentElement) {
+      document.body.appendChild(shell);
+    }
+    let shellIframe = shell.querySelector("iframe");
+    const expectedSrc = islandTvCanonicalEmbedSrc(eventId);
+    if (!shellIframe) {
+      shellIframe = document.createElement("iframe");
+      shell.appendChild(shellIframe);
+    }
+    const activeSrc = String(shellIframe.getAttribute("src") || shellIframe.src || "").trim();
+    if (activeSrc !== embedSrc && activeSrc !== expectedSrc) {
+      shellIframe.setAttribute("src", embedSrc || expectedSrc);
+    }
+    shellIframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture; encrypted-media");
+    shellIframe.setAttribute("allowfullscreen", "");
+    shellIframe.setAttribute("frameborder", "0");
+    shellIframe.style.setProperty("position", "absolute", "important");
+    shellIframe.style.setProperty("inset", "0", "important");
+    shellIframe.style.setProperty("left", "0", "important");
+    shellIframe.style.setProperty("top", "0", "important");
+    shellIframe.style.setProperty("right", "0", "important");
+    shellIframe.style.setProperty("bottom", "0", "important");
+    shellIframe.style.setProperty("width", "100vw", "important");
+    shellIframe.style.setProperty("height", "100vh", "important");
+    shellIframe.style.setProperty("margin", "0", "important");
+    shellIframe.style.setProperty("padding", "0", "important");
+    shellIframe.style.setProperty("border", "0", "important");
+    shellIframe.style.setProperty("border-radius", "0", "important");
+    shellIframe.style.setProperty("box-shadow", "none", "important");
+    shellIframe.style.setProperty("background", "#000", "important");
+    const disabledFrameCount = disableIslandTvExtraFrames(shellIframe);
+    suppressIslandTvOutsideShell(shell);
+    guardIslandTvSinglePlayerShell();
+    return {
+      shell,
+      iframe: shellIframe,
+      eventId,
+      iframeSrc: String(shellIframe.getAttribute("src") || shellIframe.src || "").trim(),
+      disabledFrameCount
+    };
+  }
+
+  function applyIslandTvPlayerFirstLayout(source) {
+    if (islandTvPlayerFirstApplied || !isIslandTvHomePage()) return false;
+    const selected = findIslandTvSelectedIframe();
+    if (!selected || !selected.iframe) return false;
+    revealIslandTvSelectedFramePath(selected.iframe);
+    const shellState = ensureIslandTvSinglePlayerShell(selected);
+    if (!shellState || !shellState.iframe || !shellState.shell) return false;
+    const iframe = shellState.iframe;
+    const target = shellState.shell;
+    const iframeRect = iframe.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect ? target.getBoundingClientRect() : null;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    hideIslandTvChrome(target);
+    if (!islandTvSelectedFrameFoundLogged) {
+      islandTvSelectedFrameFoundLogged = true;
+      islandTvLog("content-islandtv-selected-frame-found", source, selected.matches.length || 1, {
+        eventId: shellState.eventId,
+        iframeSrc: shellState.iframeSrc,
+        targetKind: "shell",
+        x: Math.round(iframeRect.left),
+        y: Math.round(iframeRect.top),
+        width: Math.round(iframeRect.width),
+        height: Math.round(iframeRect.height),
+        centerX: Math.round(iframeRect.left + iframeRect.width / 2),
+        centerY: Math.round(iframeRect.top + iframeRect.height / 2),
+        targetLeft: targetRect ? Math.round(targetRect.left) : -1,
+        targetTop: targetRect ? Math.round(targetRect.top) : -1,
+        targetWidth: targetRect ? Math.round(targetRect.width) : -1,
+        targetHeight: targetRect ? Math.round(targetRect.height) : -1,
+        targetCenterX: targetRect ? Math.round(targetRect.left + targetRect.width / 2) : -1,
+        targetCenterY: targetRect ? Math.round(targetRect.top + targetRect.height / 2) : -1
+      });
+    }
+    islandTvPlayerFirstApplied = true;
+    if (!islandTvPlayerFirstAppliedLogged) {
+      islandTvPlayerFirstAppliedLogged = true;
+      islandTvLog("content-islandtv-player-first-applied", source, 1, {
+        eventId: shellState.eventId,
+        targetKind: "shell",
+        iframeSrc: shellState.iframeSrc,
+        disabledFrameCount: shellState.disabledFrameCount,
+        shellApplied: true
+      });
+    }
+    return true;
+  }
+
+  function scheduleIslandTvMinimalHelper() {
+    if (!isIslandTvHomePage()) return false;
+    const apply = (source) => {
+      applyIslandTvPlayerFirstLayout(source);
+    };
+    apply("initial");
+    [250, 750, 1500, 3000, 5000, 8000].forEach((delayMs) => {
+      setTimeout(() => apply(`retry-${delayMs}`), delayMs);
+    });
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => apply("dom-content-loaded"), { once: true });
+    } else {
+      apply("dom-content-loaded");
+    }
+    window.addEventListener("load", () => apply("load"), { once: true });
+    if (islandTvPlayerFirstObserverAttached) return true;
+    islandTvPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        apply("mutation");
+        if (islandTvPlayerFirstApplied) {
+          try { observer.disconnect(); } catch (_) {}
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (_) {}
+      }, 12000);
+    } catch (_) {}
+    return true;
   }
 
   function isCbnVirginIslandsPlaybackActive() {
@@ -6793,6 +7224,7 @@
     applyCvc9DailymotionPlayerFirstLayout("publish");
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
+    applyIslandTvPlayerFirstLayout("publish");
     applyCbnVirginIslandsPlayerFirstLayout();
     maybeKickCbnVirginIslandsPlayer();
     applyCnc3PlayerFirstLayout();
@@ -6823,6 +7255,7 @@
     return;
   }
   scheduleCompassMinimalHelper();
+  scheduleIslandTvMinimalHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
