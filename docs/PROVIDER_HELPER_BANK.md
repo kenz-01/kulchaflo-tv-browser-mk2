@@ -459,9 +459,13 @@ GBN is the warning case for Dailymotion browser player duplication. Do not promo
   - wrappers: `.jw-player-container`, `.jw-player`, `.video-player`, `.live-feed-wrapper`
   - custom play button: `.jw-player #play-btn`
 
-**Status:** NOT ACCEPTED / no committed helper yet.
+**Status:** ACCEPTED
 
-**App source status:** no Compass helper should currently be present in HEAD.
+**Accepted commit:** `ed8eb89 Add Compass TV JWPlayer helper`
+
+**Accepted helper marker:** `compass-jw-v4-minimal`
+
+**App source status:** Compass helper is present in source and accepted in the APK.
 
 **Failed attempts:**
 
@@ -494,3 +498,24 @@ GBN is the warning case for Dailymotion browser player duplication. Do not promo
 - do not apply broad JW descendant CSS
 - do not add a native promotion block unless logs prove duplicate browser/native playback
 - do not add extra taps, wake loops, consent loops, or Dailymotion/Facebook patterns
+
+**Accepted Compass pattern:**
+
+- official page only
+- outer-wrapper player-first
+- one-shot play tap only once per page load
+- silent bounded playback-tied unmute
+- no native promotion block
+- no consent/autostart/wake loops
+- no audio diagnostic prompt spam
+- no layout diagnostic prompt spam
+- no old v1/v2/v3 Compass markers
+
+**Accepted test evidence:**
+
+- 10-run fresh/relaunch test completed
+- 10/10 runs reached browser media play
+- 10/10 runs had exactly one Compass play tap
+- 0 native promotion
+- 0 old Compass v1/v2/v3/audio/layout diagnostic markers
+- manual observation: audio is reliable enough to accept

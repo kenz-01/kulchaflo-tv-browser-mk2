@@ -348,6 +348,26 @@ Compass TV was a useful failure case for JWPlayer browser-first work. Bank the l
   - no `MutationObserver`-triggered audio
   - no broad JW CSS
 
+### 7. Accepted Compass JWPlayer pattern
+
+- Compass accepted commit: `ed8eb89 Add Compass TV JWPlayer helper`
+- Keep marker: `compass-jw-v4-minimal`
+- Use official page only.
+- Apply fullscreen only to the stable outer wrapper.
+- Remove wrapper border-radius, margin, padding, shadow, and page chrome.
+- Do not force `video` or `.jw-video` to `absolute`, `inset: 0`, or `100vh`.
+- Use one-shot native tap only when the play control is found.
+- Use silent bounded audio bursts after:
+  - `play-control-found`
+  - trusted player interaction
+  - JW `ready`, `play`, `firstFrame` events
+  - video `loadedmetadata`, `canplay`, `play`, `playing`, `volumechange` events
+- Audio retries should be silent and stop once `video.muted=false` and `video.volume>0` or JW reports unmuted volume.
+- Do not publish audio state via `promptPayload`.
+- Do not use `MutationObserver` for audio.
+- Do not add native promotion unless logs prove it is needed.
+- Test result: 10/10 runs reached browser media play with one tap per run and no native promotion or old-marker regressions.
+
 ---
 
 ## 13. New helper prompt template
