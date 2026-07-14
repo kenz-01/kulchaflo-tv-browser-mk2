@@ -336,6 +336,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val islandTvPlayTapSentBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
+    private val dbsTvPlayTapSentBySession =
+        Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val cbnVirginIslandsAutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val cbnVirginIslandsAutostartTapCountBySession = LinkedHashMap<GeckoSession, Int>()
     private val cnc3AutostartTapRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
@@ -1070,6 +1072,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             if (isIslandTvContextUrl(url)) {
                 islandTvPlayTapSentBySession.remove(session)
             }
+            if (isDbsTvLivePageUrl(url)) {
+                dbsTvPlayTapSentBySession.remove(session)
+            }
             if (isCompassTvHomePageUrl(url)) {
                 compassPlayTapSentBySession.remove(session)
             }
@@ -1092,6 +1097,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
             if (!isIslandTvContextUrl(pageUrl)) {
                 islandTvPlayTapSentBySession.remove(session)
+            }
+            if (!isDbsTvLivePageUrl(pageUrl)) {
+                dbsTvPlayTapSentBySession.remove(session)
             }
             if (success) {
                 maybeScheduleCnc3AutostartTap(session, pageUrl)
@@ -1201,6 +1209,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
             if (!isIslandTvContextUrl(url.orEmpty())) {
                 islandTvPlayTapSentBySession.remove(session)
+            }
+            if (!isDbsTvLivePageUrl(url.orEmpty())) {
+                dbsTvPlayTapSentBySession.remove(session)
             }
             if (isCvc9DailymotionWatchPageUrl(url.orEmpty())) {
                 enterBrowserFullscreenPointerSleep(reason = "cvc9-dailymotion-watch-page")
@@ -9629,6 +9640,21 @@ return changed>0;
                     islandTvPermissionUri ||
                         (islandTvThirdPartyVimeo && islandTvTopContext)
                     )
+            val dbsTvTopContext = isDbsTvLivePageUrl(activeSessionUrl) || isDbsTvLivePageUrl(currentRootUrl)
+            val dbsTvPermissionUri =
+                isDbsTvLivePageUrl(permission.uri.orEmpty()) ||
+                    isDbsTvOfficialStreamUrl(permission.uri.orEmpty()) ||
+                    isDbsTvOfficialStreamUrl(permission.thirdPartyOrigin.orEmpty())
+            val dbsTvThirdParty = thirdPartyHost?.lowercase().orEmpty().removePrefix("www.") in setOf("dbstvstlucia.com", DBSTV_OFFICIAL_HLS_HOST)
+            val dbsTvAutoplayScoped = ENABLE_DBSTV_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    dbsTvPermissionUri ||
+                        (dbsTvTopContext && dbsTvThirdParty)
+                    )
             val cvc9TopContext = isCvc9DailymotionWatchPageUrl(activeSessionUrl) || isCvc9DailymotionWatchPageUrl(currentRootUrl)
             val cvc9PermissionUri = isCvc9DailymotionWatchPageUrl(permission.uri.orEmpty())
             val cvc9ThirdPartyDailymotion = thirdPartyHost?.lowercase().orEmpty().removePrefix("www.") == "geo.dailymotion.com"
@@ -9684,6 +9710,7 @@ return changed>0;
                 caribvisionAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvmAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 islandTvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                dbsTvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cvc9AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9712,6 +9739,12 @@ return changed>0;
                 GvLogger.i(
                     "GvMedia",
                     "islandtv vimeo autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
+                )
+            }
+            if (dbsTvAutoplayScoped) {
+                GvLogger.i(
+                    "GvMedia",
+                    "dbstv autoplay permission allow uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision activeUrl=$activeSessionUrl currentUrl=$currentRootUrl"
                 )
             }
             if (absAutoplayScoped) {
@@ -10745,6 +10778,52 @@ return changed>0;
             }
             val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "islandtv-play-control")
             GvLogger.i("GvMedia", "islandtv play tap dispatched handled=$handled reason=$reason tabId=$tabId x=${clampedX.toInt()} y=${clampedY.toInt()}")
+        }
+        return true
+    }
+
+    private fun dispatchDbsTvPlayTap(session: GeckoSession, payload: JSONObject): Boolean {
+        val tab = tabController.findTabBySession(session)
+        val tabId = tab?.id ?: "unknown"
+        val pageUrl = payload.optString("pageUrl").ifBlank { tab?.url.orEmpty() }
+        if (!isDbsTvLivePageUrl(pageUrl) && !isDbsTvLivePageUrl(tab?.url.orEmpty())) {
+            GvLogger.i("GvMedia", "dbstv play tap skipped reason=url-mismatch tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        val hasVideo = payload.optBoolean("hasVideo", false)
+        val paused = payload.optBoolean("paused", true)
+        val readyState = payload.optInt("readyState", 0)
+        if (hasVideo && !paused && readyState >= 2) {
+            GvLogger.i("GvMedia", "dbstv play tap skipped reason=already-playing tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        if (dbsTvPlayTapSentBySession.contains(session)) {
+            GvLogger.i("GvMedia", "dbstv play tap skipped reason=already-sent tabId=$tabId pageUrl=$pageUrl")
+            return false
+        }
+        val viewWidth = (geckoView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels).toFloat()
+        val viewHeight = (geckoView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels).toFloat()
+        val centerX = payload.optDouble("centerX", -1.0).toFloat()
+        val centerY = payload.optDouble("centerY", -1.0).toFloat()
+        val targetCenterX = payload.optDouble("targetCenterX", -1.0).toFloat()
+        val targetCenterY = payload.optDouble("targetCenterY", -1.0).toFloat()
+        val tapX = targetCenterX.takeIf { it > 0f } ?: centerX.takeIf { it > 0f } ?: (viewWidth * 0.5f)
+        val tapY = targetCenterY.takeIf { it > 0f } ?: centerY.takeIf { it > 0f } ?: (viewHeight * 0.5f)
+        val clampedX = tapX.coerceIn(1f, viewWidth - 1f)
+        val clampedY = tapY.coerceIn(1f, viewHeight - 1f)
+        dbsTvPlayTapSentBySession.add(session)
+        GvLogger.i("GvMedia", "dbstv play tap scheduled reason=source-found tabId=$tabId pageUrl=$pageUrl x=${clampedX.toInt()} y=${clampedY.toInt()}")
+        pointerHandler.post {
+            if (isFinishing || isDestroyed) {
+                return@post
+            }
+            val currentPageUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            if (!isDbsTvLivePageUrl(currentPageUrl) && !isDbsTvLivePageUrl(pageUrl)) {
+                GvLogger.i("GvMedia", "dbstv play tap skipped reason=page-changed tabId=$tabId pageUrl=$pageUrl activeUrl=$currentPageUrl")
+                return@post
+            }
+            val handled = dispatchNativeMouseTapAt(clampedX, clampedY, "dbstv-play-control")
+            GvLogger.i("GvMedia", "dbstv play tap dispatched handled=$handled reason=source-found tabId=$tabId x=${clampedX.toInt()} y=${clampedY.toInt()}")
         }
         return true
     }
@@ -13187,6 +13266,17 @@ return changed>0;
             }
             return
         }
+        if (type == "dbstv-live-state") {
+            GvLogger.i(
+                "GvMedia",
+                "dbstv live state phase=$phase pageUrl=$pageUrl candidateCount=${payload.optInt("candidateCount")} scriptVersion=${payload.optString("scriptVersion")}"
+            )
+            when (phase) {
+                "content-dbstv-player-first-applied" -> enterBrowserFullscreenPointerSleep(reason = "dbstv-player-first")
+                "content-dbstv-source-found" -> dispatchDbsTvPlayTap(session, payload)
+            }
+            return
+        }
         if (type == "ttt-consent-autoclick") {
             GvLogger.i(
                 "GvLayout",
@@ -15011,6 +15101,7 @@ return changed>0;
         private const val ENABLE_CVM_VIMEO_DIAGNOSTIC = false
         private const val ENABLE_CVM_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ISLANDTV_VIMEO_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_DBSTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
@@ -15031,6 +15122,8 @@ return changed>0;
         private const val CARIBVISION_OFFICIAL_HLS_PATH = "/CaribVision/livestream/playlist.m3u8"
         private const val CBC_OFFICIAL_HLS_HOST = "1740288887.rsc.cdn77.org"
         private const val CBC_OFFICIAL_HLS_PATH = "/1740288887/index.m3u8"
+        private const val DBSTV_OFFICIAL_HLS_HOST = "stream.dbstvstlucia.com"
+        private const val DBSTV_OFFICIAL_HLS_PATH = "/hls/dbstv_main.m3u8"
 
         private const val PROMPT_PREFIX = "__GV_MEDIA__"
         private const val STATE_URL = "state_url"
@@ -16880,6 +16973,25 @@ return changed>0;
         return path == "/live" || path == "/live/"
     }
 
+    private fun isDbsTvLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty()
+        if (host != "dbstvstlucia.com") return false
+        return path == "/live-stream" || path == "/live-stream/"
+    }
+
+    private fun isDbsTvOfficialStreamUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        val uri = runCatching { android.net.Uri.parse(url.trim()) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host != DBSTV_OFFICIAL_HLS_HOST) return false
+        return path.contains(DBSTV_OFFICIAL_HLS_PATH)
+    }
+
     private fun isExactCaribVisionLiveHlsUrl(url: String): Boolean {
         if (url.isBlank()) return false
         val uri = runCatching { android.net.Uri.parse(url.trim()) }.getOrNull() ?: return false
@@ -16921,6 +17033,7 @@ return changed>0;
         val path = uri.encodedPath.orEmpty().lowercase()
         return when {
             host == "cbc.bb" && path.startsWith("/live") -> true
+            isDbsTvLivePageUrl(url) -> true
             host == "kulchaflo.com" && path.startsWith("/channels/") -> true
             host == "caribvision.tv" || host.endsWith(".caribvision.tv") -> true
             host == "caribbeanhottv.com" || host.endsWith(".caribbeanhottv.com") -> true

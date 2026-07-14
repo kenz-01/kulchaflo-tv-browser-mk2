@@ -14,6 +14,8 @@
   const CARIBVISION_FULLSCREEN_ASSIST_DELAYS_MS = [2200, 4200, 7000];
   const CARIBVISION_OFFICIAL_HLS_HOST = "5dcabf026b188.streamlock.net";
   const CARIBVISION_OFFICIAL_HLS_PATH = "/CaribVision/livestream/playlist.m3u8";
+  const DBSTV_OFFICIAL_HLS_HOST = "stream.dbstvstlucia.com";
+  const DBSTV_OFFICIAL_HLS_PATH = "/hls/dbstv_main.m3u8";
   const CGTV_TOP_OFFSET_PX = 0;
   const NOVUS_AUTOPLAY_MAX_ATTEMPTS = 6;
   const ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE = true;
@@ -96,6 +98,12 @@
   let islandTvPlayerFirstAppliedLogged = false;
   let islandTvSelectedFrameFoundLogged = false;
   let islandTvShellGuardAttached = false;
+  let dbsTvPlayerFirstApplied = false;
+  let dbsTvPlayerFirstObserverAttached = false;
+  let dbsTvPlayerFirstAppliedLogged = false;
+  let dbsTvSourceFoundLogged = false;
+  let dbsTvShellGuardAttached = false;
+  let dbsTvBrowserPlayAttempted = false;
   let cbnVirginIslandsLayoutApplied = false;
   let cbnVirginIslandsAutoplayAttempted = false;
   let cbnVirginIslandsMutedFallbackAttempted = false;
@@ -129,6 +137,8 @@
   const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
   const ISLANDTV_VIMEO_SCRIPT_VERSION = "islandtv-vimeo-v1";
   const ISLANDTV_PLAYER_SHELL_ID = "kf-islandtv-player-shell";
+  const DBSTV_SCRIPT_VERSION = "dbstv-videojs-v1";
+  const DBSTV_PLAYER_SHELL_ID = "kf-dbstv-player-shell";
 
   function isVisible(element) {
     if (!element) return false;
@@ -1778,6 +1788,268 @@
       const observer = new MutationObserver(() => {
         apply("mutation");
         if (islandTvPlayerFirstApplied) {
+          try { observer.disconnect(); } catch (_) {}
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (_) {}
+      }, 12000);
+    } catch (_) {}
+    return true;
+  }
+
+  function isDbsTvLivePage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "dbstvstlucia.com" && host !== "www.dbstvstlucia.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live-stream" || path === "/live-stream/";
+  }
+
+  function isExactDbsTvOfficialHlsUrl(rawUrl) {
+    try {
+      const url = new URL(String(rawUrl || "").trim(), window.location.href);
+      const host = (url.hostname || "").toLowerCase();
+      const path = (url.pathname || "").toLowerCase();
+      return host === DBSTV_OFFICIAL_HLS_HOST && path.indexOf(DBSTV_OFFICIAL_HLS_PATH) >= 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dbsTvLog(phase, source, candidateCount, details) {
+    promptPayload(Object.assign({
+      type: "dbstv-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown"),
+      scriptVersion: DBSTV_SCRIPT_VERSION
+    }, details && typeof details === "object" ? details : {}));
+  }
+
+  function findDbsTvOfficialSource(scope) {
+    const root = scope || document;
+    let nodes = [];
+    try {
+      nodes = Array.from(root.querySelectorAll('source[src*="stream.dbstvstlucia.com/hls/dbstv_main.m3u8" i],source[type="application/x-mpegURL" i]'));
+    } catch (_) {
+      nodes = [];
+    }
+    return nodes.find((node) => {
+      try {
+        const sourceUrl = String(node.getAttribute("src") || node.src || "").trim();
+        return isExactDbsTvOfficialHlsUrl(sourceUrl);
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function findDbsTvPlayerRoot() {
+    if (!isDbsTvLivePage()) return null;
+    const exactSource = findDbsTvOfficialSource(document);
+    if (exactSource) {
+      return exactSource.closest("video-js,.video-js,[data-vjs-player]") || exactSource.parentElement || null;
+    }
+    const candidates = Array.from(document.querySelectorAll("video-js,.video-js,[data-vjs-player]"));
+    return candidates.find((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        return !!findDbsTvOfficialSource(node);
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function isDbsTvAdNodeText(value) {
+    const text = String(value || "").toLowerCase();
+    return text.indexOf("googleads") >= 0 ||
+      text.indexOf("doubleclick") >= 0 ||
+      text.indexOf("googletagmanager") >= 0 ||
+      text.indexOf("googlesyndication") >= 0 ||
+      text.indexOf("google-analytics") >= 0 ||
+      text.indexOf("analytics.google") >= 0 ||
+      text.indexOf("pagead") >= 0 ||
+      text.indexOf("onesignal") >= 0 ||
+      text.indexOf("boxzilla") >= 0 ||
+      text.indexOf("codesigner-modal") >= 0;
+  }
+
+  function suppressDbsTvOutsideShell(shell) {
+    if (!shell || !document.body) return;
+    Array.from(document.body.children).forEach((child) => {
+      if (!(child instanceof Element) || child === shell) return;
+      const tagName = String(child.tagName || "").toLowerCase();
+      if (tagName === "script") {
+        if (isDbsTvAdNodeText(child.getAttribute("src") || "")) {
+          try { child.remove(); } catch (_) {}
+        }
+        return;
+      }
+      const src = child.getAttribute && (child.getAttribute("src") || child.getAttribute("data-src") || "");
+      const shouldRemove =
+        tagName === "iframe" ||
+        isDbsTvAdNodeText(src) ||
+        isDbsTvAdNodeText(child.className) ||
+        isDbsTvAdNodeText(child.id);
+      if (shouldRemove) {
+        try { child.remove(); } catch (_) {}
+        return;
+      }
+      try {
+        child.style.setProperty("display", "none", "important");
+        child.style.setProperty("visibility", "hidden", "important");
+        child.style.setProperty("pointer-events", "none", "important");
+      } catch (_) {}
+    });
+  }
+
+  function guardDbsTvPlayerShell() {
+    if (dbsTvShellGuardAttached || !isDbsTvLivePage()) return;
+    const shell = document.getElementById(DBSTV_PLAYER_SHELL_ID);
+    if (!shell || !document.body) return;
+    dbsTvShellGuardAttached = true;
+    suppressDbsTvOutsideShell(shell);
+    try {
+      const observer = new MutationObserver(() => {
+        suppressDbsTvOutsideShell(shell);
+      });
+      observer.observe(document.body, { childList: true, subtree: false });
+    } catch (_) {}
+  }
+
+  function ensureDbsTvPlayerShell(player) {
+    if (!player || !document.body) return null;
+    const sourceNode = findDbsTvOfficialSource(player) || findDbsTvOfficialSource(document);
+    const sourceUrl = String(sourceNode && (sourceNode.getAttribute("src") || sourceNode.src) || "").trim();
+    if (!sourceUrl || !isExactDbsTvOfficialHlsUrl(sourceUrl)) return null;
+    const shell = document.getElementById(DBSTV_PLAYER_SHELL_ID) || document.createElement("div");
+    shell.id = DBSTV_PLAYER_SHELL_ID;
+    shell.style.setProperty("position", "fixed", "important");
+    shell.style.setProperty("inset", "0", "important");
+    shell.style.setProperty("left", "0", "important");
+    shell.style.setProperty("top", "0", "important");
+    shell.style.setProperty("right", "0", "important");
+    shell.style.setProperty("bottom", "0", "important");
+    shell.style.setProperty("width", "100vw", "important");
+    shell.style.setProperty("height", "100vh", "important");
+    shell.style.setProperty("background", "#000", "important");
+    shell.style.setProperty("z-index", "2147483647", "important");
+    shell.style.setProperty("overflow", "hidden", "important");
+    shell.style.setProperty("margin", "0", "important");
+    shell.style.setProperty("padding", "0", "important");
+    shell.style.setProperty("border", "0", "important");
+    shell.style.setProperty("border-radius", "0", "important");
+    shell.style.setProperty("box-shadow", "none", "important");
+    if (!shell.parentElement) {
+      document.body.appendChild(shell);
+    }
+    if (player.parentElement !== shell) {
+      shell.appendChild(player);
+    }
+    [player].concat(Array.from(player.querySelectorAll("video-js,.video-js,video"))).forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("max-width", "none", "important");
+      node.style.setProperty("max-height", "none", "important");
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("border", "0", "important");
+      node.style.setProperty("border-radius", "0", "important");
+      node.style.setProperty("box-shadow", "none", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    suppressDbsTvOutsideShell(shell);
+    guardDbsTvPlayerShell();
+    return { shell, player, sourceUrl };
+  }
+
+  function maybePlayDbsTvVideo(player) {
+    if (dbsTvBrowserPlayAttempted || !player) return;
+    const video = player.querySelector("video");
+    if (!video) return;
+    dbsTvBrowserPlayAttempted = true;
+    try {
+      const result = video.play();
+      if (result && typeof result.catch === "function") {
+        result.catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  function applyDbsTvPlayerFirstLayout(source) {
+    if (dbsTvPlayerFirstApplied || !isDbsTvLivePage()) return false;
+    const player = findDbsTvPlayerRoot();
+    if (!player) return false;
+    const shellState = ensureDbsTvPlayerShell(player);
+    if (!shellState || !shellState.shell || !shellState.player) return false;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    maybePlayDbsTvVideo(shellState.player);
+    const shellRect = shellState.shell.getBoundingClientRect();
+    const video = shellState.player.querySelector("video");
+    const videoRect = video && video.getBoundingClientRect ? video.getBoundingClientRect() : shellRect;
+    if (!dbsTvSourceFoundLogged) {
+      dbsTvSourceFoundLogged = true;
+      dbsTvLog("content-dbstv-source-found", source, 1, {
+        sourceUrl: shellState.sourceUrl,
+        targetKind: "shell",
+        x: Math.round(videoRect.left),
+        y: Math.round(videoRect.top),
+        width: Math.round(videoRect.width),
+        height: Math.round(videoRect.height),
+        centerX: Math.round(videoRect.left + videoRect.width / 2),
+        centerY: Math.round(videoRect.top + videoRect.height / 2),
+        targetCenterX: Math.round(shellRect.left + shellRect.width / 2),
+        targetCenterY: Math.round(shellRect.top + shellRect.height / 2),
+        hasVideo: !!video,
+        paused: !!(video && video.paused),
+        readyState: video ? Number(video.readyState || 0) : 0
+      });
+    }
+    dbsTvPlayerFirstApplied = true;
+    if (!dbsTvPlayerFirstAppliedLogged) {
+      dbsTvPlayerFirstAppliedLogged = true;
+      dbsTvLog("content-dbstv-player-first-applied", source, 1, {
+        sourceUrl: shellState.sourceUrl,
+        targetKind: "shell",
+        shellApplied: true
+      });
+    }
+    return true;
+  }
+
+  function scheduleDbsTvMinimalHelper() {
+    if (!isDbsTvLivePage()) return false;
+    const apply = (source) => {
+      applyDbsTvPlayerFirstLayout(source);
+    };
+    apply("initial");
+    [250, 750, 1500, 3000, 5000, 8000].forEach((delayMs) => {
+      setTimeout(() => apply(`retry-${delayMs}`), delayMs);
+    });
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => apply("dom-content-loaded"), { once: true });
+    } else {
+      apply("dom-content-loaded");
+    }
+    window.addEventListener("load", () => apply("load"), { once: true });
+    if (dbsTvPlayerFirstObserverAttached) return true;
+    dbsTvPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        apply("mutation");
+        if (dbsTvPlayerFirstApplied) {
           try { observer.disconnect(); } catch (_) {}
         }
       });
@@ -7225,6 +7497,7 @@
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
     applyIslandTvPlayerFirstLayout("publish");
+    applyDbsTvPlayerFirstLayout("publish");
     applyCbnVirginIslandsPlayerFirstLayout();
     maybeKickCbnVirginIslandsPlayer();
     applyCnc3PlayerFirstLayout();
@@ -7256,6 +7529,7 @@
   }
   scheduleCompassMinimalHelper();
   scheduleIslandTvMinimalHelper();
+  scheduleDbsTvMinimalHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();

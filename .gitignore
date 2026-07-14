@@ -31,3 +31,6 @@ Screenshot *.png
 *.trace
 captures/
 screenshots/
+
+# Local diagnostic captures
+tmp/
