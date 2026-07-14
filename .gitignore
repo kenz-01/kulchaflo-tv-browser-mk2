@@ -34,3 +34,13 @@ screenshots/
 
 # Local diagnostic captures
 tmp/
+
+# Kulcha Flo Player Lab local output
+tools/player-lab/node_modules/
+tools/player-lab/reports/*
+!tools/player-lab/reports/.gitkeep
+tools/player-lab/.playwright/
+tools/player-lab/playwright-report/
+tools/player-lab/test-results/
+tools/player-lab/screenshots/
+tools/player-lab/fixtures/output/
