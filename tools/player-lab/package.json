@@ -1,6 +1,6 @@
 {
   "name": "kulchaflo-player-lab",
-  "version": "0.1.0-checkpoint3a",
+  "version": "0.1.0-checkpoint3b",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,7 +10,7 @@
     "test": "node --test",
     "check": "node --check src/*.mjs && node --check fixtures/*.mjs && node --check test/*.mjs && npm test",
     "browser:check": "node src/browser-runtime.mjs --check",
-    "profile": "node -e \"throw new Error('profile is not implemented in Checkpoint 3A')\"",
+    "profile": "node src/cli.mjs",
     "fixture": "node fixtures/server.mjs",
     "profile:fixture": "node src/profile-fixture.mjs"
   },

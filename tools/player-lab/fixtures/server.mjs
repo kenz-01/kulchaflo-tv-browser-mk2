@@ -36,6 +36,14 @@ export async function startFixtureServer({ port = 0 } = {}) {
 
 function serveFixtureRequest(request, response) {
   const requestUrl = new URL(request.url, 'http://127.0.0.1');
+  if (requestUrl.pathname === '/redirect-loopback') {
+    response.writeHead(302, {
+      location: '/index.html?token=loopback-redirect-secret#loopback-redirect-fragment',
+      'cache-control': 'no-store',
+    });
+    response.end();
+    return;
+  }
   if (requestUrl.pathname === '/delayed-jwplayer.js') {
     setTimeout(() => {
       send(response, 200, 'text/javascript; charset=utf-8', 'window.KulchaFloDelayedPlayer = true;\n');

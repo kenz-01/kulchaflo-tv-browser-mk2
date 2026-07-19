@@ -14,6 +14,7 @@ export async function observePagePassively({
   observationMs = DEFAULT_OBSERVATION_MS,
   navigationTimeoutMs = DEFAULT_NAVIGATION_TIMEOUT_MS,
   now = () => utcTimestamp(),
+  abortSignal,
 } = {}) {
   const collector = createEvidenceCollector({ now });
   const frames = new Map();
@@ -121,16 +122,21 @@ export async function observePagePassively({
 
   recordFrame(page.mainFrame(), 'frameattached');
   try {
+    throwIfAborted(abortSignal);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs });
+    throwIfAborted(abortSignal);
     navigationResult = 'domcontentloaded';
   } catch (error) {
+    throwIfAborted(abortSignal);
     navigationResult = 'navigation-error';
     warnings.push(`Navigation did not reach domcontentloaded before timeout: ${safeDiagnostic(error.message, 180)}`);
   }
 
+  throwIfAborted(abortSignal);
   await installProbes(page, frames, collector);
   await snapshotFrames(page, frames, collector, mediaFirst, mediaFinal, { scripts, iframes, controls });
-  await wait(Math.max(0, observationMs));
+  await wait(Math.max(0, observationMs), abortSignal);
+  throwIfAborted(abortSignal);
   await installProbes(page, frames, collector);
   await snapshotFrames(page, frames, collector, mediaFirst, mediaFinal, { scripts, iframes, controls });
   acceptingResponses = false;
@@ -303,8 +309,21 @@ function collectInteractionCounters(frames) {
   return total;
 }
 
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function wait(ms, abortSignal) {
+  if (abortSignal?.aborted) {
+    return Promise.reject(new Error('Profiling interrupted.'));
+  }
+  let abort;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(resolve, ms);
+    abort = () => {
+      clearTimeout(timeout);
+      reject(new Error('Profiling interrupted.'));
+    };
+    abortSignal?.addEventListener?.('abort', abort, { once: true });
+  }).finally(() => {
+    abortSignal?.removeEventListener?.('abort', abort);
+  });
 }
 
 function appendUnique(map, key, value, collector, category) {
@@ -342,4 +361,10 @@ function documentKindForRequest(request, page) {
     return 'document';
   }
   return frame && frame !== page.mainFrame() ? 'iframe-document' : 'document';
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw new Error('Profiling interrupted.');
+  }
 }

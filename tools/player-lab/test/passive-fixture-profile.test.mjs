@@ -14,7 +14,8 @@ test('passive fixture profile observes frames, media, mutations and reports with
   const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-test-'));
   try {
     const result = await profileFixture({ outputRoot, observationMs: 3200 });
-    assert.equal(result.browserRuntime.executablePath, runtime.executablePath);
+    assert.deepEqual(result.browserRuntime, { type: runtime.type });
+    assert.equal(Object.hasOwn(result.browserRuntime, 'executablePath'), false);
 
     const jsonText = readFileSync(result.jsonPath, 'utf8');
     const markdown = readFileSync(result.markdownPath, 'utf8');
