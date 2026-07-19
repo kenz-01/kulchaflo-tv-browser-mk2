@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Player Lab Fixture</title>
+    <script src="/mock-player.js?token=top-secret#signature"></script>
+  </head>
+  <body>
+    <main class="fixture-page mock-player-shell video-js">
+      <h1>Player Lab Fixture</h1>
+      <p>This deterministic fixture is local-only and does not require playback success.</p>
+      <video
+        id="top-video"
+        class="html5-video fixture-video"
+        controls
+        playsinline
+        poster="/poster.jpg?token=poster-secret#poster-fragment"
+        src="/sample-media.mp4?token=media-secret#media-fragment"
+        aria-label="Fixture top video"
+      ></video>
+      <button id="mock-play" class="fixture-control play-button" aria-label="Play fixture video">Play</button>
+      <button id="mock-fullscreen" class="fixture-control fullscreen-button" aria-label="Fullscreen fixture video">Fullscreen</button>
+      <button id="newsletter" class="newsletter-button" aria-label="Subscribe to newsletter">Subscribe to our newsletter</button>
+      <iframe
+        id="nested-frame"
+        name="fixture-nested-frame"
+        title="Nested fixture player"
+        allow="autoplay; fullscreen"
+        src="/nested-frame.html?token=frame-secret#frame-fragment"
+      ></iframe>
+    </main>
+  </body>
+</html>

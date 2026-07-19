@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Nested Fixture Player</title>
+    <script src="/mock-player.js?token=nested-secret#nested-fragment"></script>
+  </head>
+  <body>
+    <section
+      id="nested-player"
+      class="mock-player-wrapper jw-player-container"
+      data-source-change-delay-ms="750"
+      data-replacement-delay-ms="1500"
+    >
+      <video
+        id="nested-video"
+        class="html5-video nested-video"
+        controls
+        playsinline
+        src="/sample-media.mp4?token=nested-media-secret#nested-media-fragment"
+        aria-label="Nested fixture video"
+      ></video>
+      <button class="fixture-control play-button" aria-label="Nested play">Play</button>
+    </section>
+    <script>
+      window.fixtureTiming = {
+        sourceChangeDelayMs: 750,
+        replacementDelayMs: 1500
+      };
+      window.fixtureLifecycle = [{ event: 'fixture-loaded', target: 'nested-video' }];
+      setTimeout(() => {
+        const video = document.getElementById('nested-video');
+        if (video) {
+          video.setAttribute('src', '/sample-media.mp4?token=changed-secret#changed-fragment');
+          window.fixtureLifecycle.push({ event: 'source-changed', target: 'nested-video' });
+        }
+      }, window.fixtureTiming.sourceChangeDelayMs);
+      setTimeout(() => {
+        const oldVideo = document.getElementById('nested-video');
+        if (oldVideo) {
+          const replacement = oldVideo.cloneNode(true);
+          replacement.id = 'nested-video-replacement';
+          oldVideo.replaceWith(replacement);
+          window.fixtureLifecycle.push({ event: 'media-replaced', target: 'nested-video-replacement' });
+        }
+      }, window.fixtureTiming.replacementDelayMs);
+    </script>
+  </body>
+</html>

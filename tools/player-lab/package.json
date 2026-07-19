@@ -1,6 +1,6 @@
 {
   "name": "kulchaflo-player-lab",
-  "version": "0.1.0-checkpoint1",
+  "version": "0.1.0-checkpoint2",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,9 +8,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/*.mjs && node --check test/*.mjs && npm test",
+    "check": "node --check src/*.mjs && node --check fixtures/*.mjs && node --check test/*.mjs && npm test",
     "profile": "node -e \"throw new Error('profile is not implemented in Checkpoint 1')\"",
-    "fixture": "node -e \"throw new Error('fixture is not implemented in Checkpoint 1')\"",
+    "fixture": "node fixtures/server.mjs",
     "profile:fixture": "node -e \"throw new Error('profile:fixture is not implemented in Checkpoint 1')\""
   }
 }
