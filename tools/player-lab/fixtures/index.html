@@ -3,6 +3,43 @@
   <head>
     <meta charset="utf-8">
     <title>Player Lab Fixture</title>
+    <script>
+      window.__KFLAB_INTERACTION_COUNTERS__ = {
+        click: 0,
+        pointer: 0,
+        keyboard: 0,
+        play: 0,
+        pause: 0,
+        requestFullscreen: 0
+      };
+      document.addEventListener('click', () => { window.__KFLAB_INTERACTION_COUNTERS__.click += 1; }, true);
+      document.addEventListener('pointerdown', () => { window.__KFLAB_INTERACTION_COUNTERS__.pointer += 1; }, true);
+      document.addEventListener('pointerup', () => { window.__KFLAB_INTERACTION_COUNTERS__.pointer += 1; }, true);
+      document.addEventListener('keydown', () => { window.__KFLAB_INTERACTION_COUNTERS__.keyboard += 1; }, true);
+      document.addEventListener('keyup', () => { window.__KFLAB_INTERACTION_COUNTERS__.keyboard += 1; }, true);
+      const originalPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (...args) {
+        window.__KFLAB_INTERACTION_COUNTERS__.play += 1;
+        return originalPlay.apply(this, args);
+      };
+      const originalPause = HTMLMediaElement.prototype.pause;
+      HTMLMediaElement.prototype.pause = function (...args) {
+        window.__KFLAB_INTERACTION_COUNTERS__.pause += 1;
+        return originalPause.apply(this, args);
+      };
+      const originalRequestFullscreen = Element.prototype.requestFullscreen;
+      Element.prototype.requestFullscreen = function (...args) {
+        window.__KFLAB_INTERACTION_COUNTERS__.requestFullscreen += 1;
+        return originalRequestFullscreen.apply(this, args);
+      };
+      console.error('fixture console signal https://fixture.local/console?token=console-secret#console-fragment');
+      setTimeout(() => {
+        throw new Error('fixture page error https://fixture.local/page-error?token=page-secret#page-fragment');
+      }, 100);
+      const delayedScript = document.createElement('script');
+      delayedScript.src = '/delayed-jwplayer.js?token=delayed-secret#delayed-fragment';
+      document.head.appendChild(delayedScript);
+    </script>
     <script src="/mock-player.js?token=top-secret#signature"></script>
   </head>
   <body>

@@ -5,11 +5,27 @@ import { DEFAULT_LIMITS, applyLimit } from '../src/limits.mjs';
 
 test('classifies embedded-player browser-first route', () => {
   const result = classifyRoute({
-    iframeUrls: ['https://player.vimeo.com/video/123'],
+    embeddedPlayerEvidence: true,
     playerHosts: ['player.vimeo.com'],
   });
   assert.equal(result.route, 'embedded-player browser-first');
   assert.equal(result.confidence, 'medium');
+});
+
+test('arbitrary iframe plus official media stays official-page browser-first', () => {
+  const result = classifyRoute({
+    iframeUrls: ['https://widgets.example.test/weather'],
+    officialPageEvidence: true,
+    mediaElementCount: 1,
+  });
+  assert.equal(result.route, 'official-page browser-first');
+});
+
+test('arbitrary iframe without player or media evidence stays unknown', () => {
+  const result = classifyRoute({
+    iframeUrls: ['https://widgets.example.test/weather'],
+  });
+  assert.equal(result.route, 'unknown / further investigation');
 });
 
 test('classifies official-page browser-first route', () => {

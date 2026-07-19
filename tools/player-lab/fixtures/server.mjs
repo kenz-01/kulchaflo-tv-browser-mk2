@@ -36,6 +36,12 @@ export async function startFixtureServer({ port = 0 } = {}) {
 
 function serveFixtureRequest(request, response) {
   const requestUrl = new URL(request.url, 'http://127.0.0.1');
+  if (requestUrl.pathname === '/delayed-jwplayer.js') {
+    setTimeout(() => {
+      send(response, 200, 'text/javascript; charset=utf-8', 'window.KulchaFloDelayedPlayer = true;\n');
+    }, 250);
+    return;
+  }
   const pathname = requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname;
   let decodedPath;
   try {

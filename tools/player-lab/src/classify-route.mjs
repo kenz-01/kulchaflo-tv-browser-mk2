@@ -73,7 +73,7 @@ function hasAuthenticatedEvidence(evidence) {
 function hasEmbeddedEvidence(evidence) {
   return Boolean(
     evidence.embeddedPlayerEvidence === true ||
-      (Array.isArray(evidence.iframeUrls) && evidence.iframeUrls.length > 0) ||
+      evidence.hostedPlayerEvidence === true ||
       (Array.isArray(evidence.playerHosts) && evidence.playerHosts.length > 0),
   );
 }
