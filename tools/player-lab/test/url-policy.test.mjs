@@ -13,7 +13,7 @@ test('URL policy accepts localhost, IPv4 loopback, IPv6 loopback and HTTPS loopb
 test('URL policy rejects public hosts with checkpoint message and redaction', () => {
   assert.throws(
     () => validateCheckpoint3bUrl('https://198.51.100.10/watch?token=secret#frag'),
-    /Public-site profiling is not enabled in Checkpoint 3B\. URL: https:\/\/198\.51\.100\.10\/watch/,
+    /Arbitrary public URLs are not permitted; use a registered --target\. URL: https:\/\/198\.51\.100\.10\/watch/,
   );
 });
 
@@ -40,6 +40,6 @@ test('URL policy rejection occurs before browser launch', async () => {
       launchCount += 1;
       throw new Error('should not launch');
     },
-  }), /Public-site profiling is not enabled in Checkpoint 3B/);
+  }), /Arbitrary public URLs are not permitted; use a registered --target/);
   assert.equal(launchCount, 0);
 });

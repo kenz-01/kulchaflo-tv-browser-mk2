@@ -26,7 +26,8 @@ export async function runCli(argv = process.argv.slice(2), {
     const result = await profile({
       url: args.url,
       providerId: args.providerId,
-      profileId: args.profileId,
+      targetId: args.targetId,
+      profileId: args.targetId && !args.profileExplicit ? undefined : args.profileId,
       observationMs: args.observationMs,
       navigationTimeoutMs: args.navigationTimeoutMs,
       outputRoot: args.outputRoot,

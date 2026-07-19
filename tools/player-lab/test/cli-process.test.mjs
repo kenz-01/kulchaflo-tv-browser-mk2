@@ -17,7 +17,8 @@ const browserSkip = runtime ? false : `No usable Chromium executable. Run: ${MIS
 
 test('CLI --help exits 0', async () => {
   const result = await execFileAsync('node', ['src/cli.mjs', '--help'], { cwd });
-  assert.match(result.stdout, /Usage: npm run profile/);
+  assert.match(result.stdout, /npm run profile -- --url/);
+  assert.match(result.stdout, /npm run profile -- --target/);
   assert.equal(result.stderr, '');
 });
 
@@ -36,13 +37,74 @@ test('runCli invalid profile error is redacted through dependency injection', as
     stdout: output.stdout,
     stderr: output.stderr,
     profile: async () => {
-      throw new Error('Public-site profiling is not enabled in Checkpoint 3B. URL: https://198.51.100.10/watch');
+      throw new Error('Arbitrary public URLs are not permitted; use a registered --target. URL: https://198.51.100.10/watch');
     },
   });
   assert.equal(code, 1);
   assert.equal(output.stdoutText(), '');
-  assert.match(output.stderrText(), /Public-site profiling is not enabled in Checkpoint 3B/);
+  assert.match(output.stderrText(), /Arbitrary public URLs are not permitted; use a registered --target/);
   assert.doesNotMatch(`${output.stdoutText()}\n${output.stderrText()}`, /cli-redaction-secret|cli-redaction-fragment|token=|\?token=|#/);
+});
+
+test('runCli target handoff contains targetId and no public policy fields', async () => {
+  const output = captureOutput();
+  let received;
+  const code = await runCli(['--target', 'cvm-tv'], {
+    stdout: output.stdout,
+    stderr: output.stderr,
+    profile: async (options) => {
+      received = options;
+      return { outputDir: '/tmp/reports/cvm-tv/2026-07-19T12-00-00-000Z' };
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(output.stdoutText(), '/tmp/reports/cvm-tv/2026-07-19T12-00-00-000Z\n');
+  assert.equal(output.stderrText(), '');
+  assert.equal(received.url, undefined);
+  assert.equal(received.providerId, undefined);
+  assert.equal(received.targetId, 'cvm-tv');
+  assert.equal(received.profileId, undefined);
+  assert.equal(Object.hasOwn(received, 'targetPolicy'), false);
+  assert.equal(Object.hasOwn(received, 'allowedMainFrameHosts'), false);
+  assert.equal(Object.hasOwn(received, 'initialUrl'), false);
+});
+
+test('runCli target supports explicit profile override', async () => {
+  let received;
+  const code = await runCli(['--target', 'cvm-tv', '--profile', 'desktop-firefox'], {
+    stdout: captureOutput().stdout,
+    stderr: captureOutput().stderr,
+    profile: async (options) => {
+      received = options;
+      return { outputDir: '/tmp/reports/cvm-tv/2026-07-19T12-00-00-000Z' };
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(received.profileId, 'desktop-firefox');
+});
+
+test('runCli unknown target fails before profiling', async () => {
+  const output = captureOutput();
+  const code = await runCli(['--target', 'missing-target'], {
+    stdout: output.stdout,
+    stderr: output.stderr,
+  });
+  assert.equal(code, 1);
+  assert.match(output.stderrText(), /Unknown public target/);
+});
+
+test('runCli public target errors are redacted through dependency injection', async () => {
+  const output = captureOutput();
+  const code = await runCli(['--target', 'cvm-tv'], {
+    stdout: output.stdout,
+    stderr: output.stderr,
+    profile: async () => {
+      throw new Error('Navigation is outside the registered public target policy. URL: https://www.cvmtv.com/live?token=target-secret#target-fragment');
+    },
+  });
+  assert.equal(code, 1);
+  assert.match(output.stderrText(), /Navigation is outside the registered public target policy/);
+  assert.doesNotMatch(`${output.stdoutText()}\n${output.stderrText()}`, /target-secret|target-fragment|token=|\?token=|#/);
 });
 
 test('CLI successful local fixture invocation exits 0 and prints report directory only', { skip: browserSkip }, async () => {
@@ -117,7 +179,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
         '--provider-id', 'local-fixture',
         '--observe-ms', '3200',
         '--output-root', outputRoot,
-      ], { cwd, timeout: 30000 });
+      ], { cwd, timeout: 45000 });
       const outputDir = normal.stdout.trim();
       assert.equal(existsSync(join(outputDir, 'report.json')), true);
       assert.doesNotMatch(`${normal.stdout}\n${normal.stderr}`, /after-signal-secret|after-signal-fragment|token=|\?token=|#/);
@@ -155,6 +217,7 @@ function captureOutput() {
     stderrText: () => stderr,
   };
 }
+
 
 async function waitForIncomplete(root) {
   const deadline = Date.now() + 10000;

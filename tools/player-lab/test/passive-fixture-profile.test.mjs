@@ -98,6 +98,7 @@ test('passive fixture profile observes frames, media, mutations and reports with
       pause: 0,
       requestFullscreen: 0,
     });
+    assert.deepEqual(result.report.lifecycleEvidence.interactionCounters, result.interactionCounters);
   } finally {
     rmSync(outputRoot, { recursive: true, force: true });
   }

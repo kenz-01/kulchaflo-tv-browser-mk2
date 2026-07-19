@@ -4,11 +4,14 @@ import { assertProviderId } from './redact-url.mjs';
 export const DEFAULT_OBSERVATION_MS = 3000;
 export const DEFAULT_NAVIGATION_TIMEOUT_MS = 10000;
 
-export const USAGE_TEXT = `Usage: npm run profile -- --url <URL> --provider-id <safe-id> [options]
+export const USAGE_TEXT = `Usage:
+  npm run profile -- --url <loopback-url> --provider-id <safe-id> [options]
+  npm run profile -- --target <target-id> [options]
 
 Options:
   --url <URL>                         Loopback URL to profile.
-  --provider-id <safe-id>             Required lowercase directory-safe provider id.
+  --target <target-id>                Registered public target to profile.
+  --provider-id <safe-id>             Required with --url; forbidden with --target.
   --profile <desktop-firefox|sony-bravia>
   --observe-ms <milliseconds>         Default: 3000.
   --navigation-timeout-ms <milliseconds>
@@ -19,6 +22,7 @@ Options:
 
 const VALUE_OPTIONS = new Set([
   '--url',
+  '--target',
   '--provider-id',
   '--profile',
   '--observe-ms',
@@ -30,6 +34,7 @@ export function parseCliArguments(argv = []) {
   const parsed = {
     help: false,
     profileId: DEFAULT_BROWSER_PROFILE_ID,
+    profileExplicit: false,
     observationMs: DEFAULT_OBSERVATION_MS,
     navigationTimeoutMs: DEFAULT_NAVIGATION_TIMEOUT_MS,
     outputRoot: undefined,
@@ -60,12 +65,16 @@ export function parseCliArguments(argv = []) {
     index += 1;
     if (arg === '--url') {
       parsed.url = value;
+    } else if (arg === '--target') {
+      assertProviderId(value);
+      parsed.targetId = value;
     } else if (arg === '--provider-id') {
       assertProviderId(value);
       parsed.providerId = value;
     } else if (arg === '--profile') {
       getBrowserProfile(value);
       parsed.profileId = value;
+      parsed.profileExplicit = true;
     } else if (arg === '--observe-ms') {
       parsed.observationMs = parseBoundedInteger(value, arg, { min: 100, max: 60000 });
     } else if (arg === '--navigation-timeout-ms') {
@@ -78,10 +87,16 @@ export function parseCliArguments(argv = []) {
   if (parsed.help) {
     return parsed;
   }
-  if (!parsed.url) {
-    throw new Error('Missing required argument: --url');
+  if (parsed.url && parsed.targetId) {
+    throw new Error('--url and --target are mutually exclusive.');
   }
-  if (!parsed.providerId) {
+  if (!parsed.url && !parsed.targetId) {
+    throw new Error('Missing required argument: --url or --target');
+  }
+  if (parsed.targetId && parsed.providerId) {
+    throw new Error('--provider-id is not allowed with --target.');
+  }
+  if (parsed.url && !parsed.providerId) {
     throw new Error('Missing required argument: --provider-id');
   }
   return parsed;

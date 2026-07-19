@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "targets": {
+    "cvm-tv": {
+      "providerId": "cvm-tv",
+      "initialUrl": "https://www.cvmtv.com/live",
+      "allowedMainFrameHosts": [
+        "www.cvmtv.com",
+        "cvmtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    }
+  }
+}

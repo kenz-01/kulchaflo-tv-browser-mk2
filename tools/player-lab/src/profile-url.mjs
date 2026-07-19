@@ -9,26 +9,56 @@ import { writeReportJson } from './report-json.mjs';
 import { writeReportMarkdown } from './report-markdown.mjs';
 import { utcTimestamp } from './timestamps.mjs';
 import { safeUrlForError, validateCheckpoint3bUrl } from './url-policy.mjs';
+import { getPublicTargetPolicy } from './public-targets.mjs';
 
-export const PROFILER_VERSION = '0.1.0-checkpoint3b';
+export const PROFILER_VERSION = '0.1.0-checkpoint3c';
 
-export async function profileUrl({
-  url,
-  providerId,
-  profileId = 'desktop-firefox',
-  observationMs = 3000,
-  navigationTimeoutMs = 10000,
-  outputRoot = DEFAULT_OUTPUT_ROOT,
-  launchBrowserContext = launchFreshBrowserContext,
-  createOutputDirectory = createStagedProfileOutputDirectory,
-  writeJson = writeReportJson,
-  writeMarkdown = writeReportMarkdown,
-  observePage = observePagePassively,
+export async function profileUrl(options = {}) {
+  rejectForgeablePublicOptions(options);
+  const {
+    url,
+    providerId,
+    targetId,
+    profileId,
+    observationMs = 3000,
+    navigationTimeoutMs = 10000,
+    outputRoot = DEFAULT_OUTPUT_ROOT,
+    launchBrowserContext = launchFreshBrowserContext,
+    createOutputDirectory = createStagedProfileOutputDirectory,
+    writeJson = writeReportJson,
+    writeMarkdown = writeReportMarkdown,
+    observePage = observePagePassively,
+    abortSignal,
+  } = options;
+  const request = resolveProfileRequest({ url, providerId, targetId, profileId });
+  return profileResolvedRequest({
+    request,
+    observationMs,
+    navigationTimeoutMs,
+    outputRoot,
+    launchBrowserContext,
+    createOutputDirectory,
+    writeJson,
+    writeMarkdown,
+    observePage,
+    abortSignal,
+  });
+}
+
+async function profileResolvedRequest({
+  request,
+  observationMs,
+  navigationTimeoutMs,
+  outputRoot,
+  launchBrowserContext,
+  createOutputDirectory,
+  writeJson,
+  writeMarkdown,
+  observePage,
   abortSignal,
-} = {}) {
-  const parsedUrl = validateCheckpoint3bUrl(url);
-  assertProviderId(providerId);
-  const output = createOutputDirectory({ providerId, outputRoot });
+}) {
+  const parsedUrl = new URL(request.initialUrl);
+  const output = createOutputDirectory({ providerId: request.providerId, outputRoot });
   const startedAt = utcTimestamp();
   let launched;
   let page;
@@ -50,7 +80,7 @@ export async function profileUrl({
 
   try {
     throwIfAborted(combinedSignal);
-    launched = await launchBrowserContext({ profileId });
+    launched = await launchBrowserContext({ profileId: request.profileId });
     abortHandler = () => {
       cleanup().catch(() => {});
     };
@@ -63,7 +93,7 @@ export async function profileUrl({
         return;
       }
       const frameUrl = frame.url();
-      const result = validateMainFrameNavigationCandidate(frameUrl);
+      const result = validateMainFrameNavigationCandidate(frameUrl, request.policy);
       if (!result.valid) {
         redirectError = result.error;
         internalAbort.abort();
@@ -92,7 +122,10 @@ export async function profileUrl({
     }
     throwIfAborted(combinedSignal);
     const finalUrl = page.url();
-    validateCheckpoint3bUrl(finalUrl);
+    const finalUrlPolicy = validateMainFrameNavigationCandidate(finalUrl, request.policy);
+    if (!finalUrlPolicy.valid) {
+      throw finalUrlPolicy.error;
+    }
     const finishedAt = utcTimestamp();
     const classifierEvidence = evidenceForClassifiers(observation);
     const playerClassification = classifyPlayer(classifierEvidence);
@@ -102,13 +135,20 @@ export async function profileUrl({
     });
     const report = createReportModel(stripUndefined({
       metadata: {
-        providerId,
+        providerId: request.providerId,
         profilerVersion: PROFILER_VERSION,
-        requestedProfile: profileId,
+        policyMode: request.mode,
+        targetId: request.targetId,
+        requestedProfile: request.profileId,
         browserRuntimeType: launched.runtime.type,
         observationMs,
         navigationTimeoutMs,
-        loopbackOnlyPolicyAllowed: true,
+        loopbackOnlyPolicyAllowed: request.mode === 'loopback',
+        allowedByLoopbackOnlyPolicy: request.mode === 'loopback',
+        allowedMainFrameHosts: request.mode === 'registered-public-target' ? request.policy.allowedMainFrameHosts : undefined,
+        requiredProtocol: request.mode === 'registered-public-target' ? request.policy.requiredProtocol : undefined,
+        initialUrlSource: request.mode === 'registered-public-target' ? 'registry' : 'cli',
+        passiveObservationOnly: true,
       },
       requestedUrl: parsedUrl.toString(),
       finalUrl,
@@ -131,7 +171,10 @@ export async function profileUrl({
       iframes: observation.iframes,
       mediaObservations: observation.mediaObservations,
       networkEvidence: observation.networkEvidence,
-      lifecycleEvidence: observation.lifecycleEvidence,
+      lifecycleEvidence: {
+        ...observation.lifecycleEvidence,
+        interactionCounters: observation.interactionCounters,
+      },
       candidateControls: observation.candidateControls,
       playerClassification,
       routeClassification,
@@ -141,8 +184,8 @@ export async function profileUrl({
         'Cookies, Authorization headers, request bodies, response bodies, localStorage and sessionStorage are not captured.',
       ],
     }));
-    const jsonResult = writeJson(report, { outputDir: output.incompleteDir, providerId });
-    const markdownResult = writeMarkdown(report, { outputDir: output.incompleteDir, providerId });
+    const jsonResult = writeJson(report, { outputDir: output.incompleteDir, providerId: request.providerId });
+    const markdownResult = writeMarkdown(report, { outputDir: output.incompleteDir, providerId: request.providerId });
     const screenshotPath = `${output.incompleteDir}/page.png`;
     await page.screenshot({ path: screenshotPath, fullPage: false });
     const outputDir = output.promote();
@@ -169,9 +212,12 @@ export async function profileUrl({
   }
 }
 
-export function validateMainFrameNavigationCandidate(url) {
+export function validateMainFrameNavigationCandidate(url, policy = createLoopbackPolicy()) {
   if (url === 'about:blank') {
     return { valid: true, ignored: true };
+  }
+  if (policy.mode === 'registered-public-target') {
+    return validateRegisteredPublicNavigation(url, policy);
   }
   try {
     validateCheckpoint3bUrl(url);
@@ -180,9 +226,123 @@ export function validateMainFrameNavigationCandidate(url) {
     return {
       valid: false,
       ignored: false,
-      error: new Error(`Public-site profiling is not enabled in Checkpoint 3B. URL: ${safeUrlForError(url)}`),
+      error: new Error(`Arbitrary public URLs are not permitted; use a registered --target. URL: ${safeUrlForError(url)}`),
     };
   }
+}
+
+export function resolveProfileRequest({ url, providerId, targetId, profileId } = {}) {
+  if (targetId) {
+    if (url) {
+      throw new Error('--url and --target are mutually exclusive.');
+    }
+    if (providerId) {
+      throw new Error('--provider-id is not allowed with --target.');
+    }
+    const policy = validateTargetPolicy(getPublicTargetPolicy(targetId));
+    validateRegisteredInitialUrl(policy.initialUrl, policy);
+    return Object.freeze({
+      mode: 'registered-public-target',
+      targetId: policy.targetId,
+      providerId: policy.providerId,
+      initialUrl: policy.initialUrl,
+      profileId: profileId ?? policy.defaultProfileId,
+      policy,
+    });
+  }
+  const parsedUrl = validateCheckpoint3bUrl(url);
+  assertProviderId(providerId);
+  return Object.freeze({
+    mode: 'loopback',
+    providerId,
+    initialUrl: parsedUrl.toString(),
+    profileId: profileId ?? 'desktop-firefox',
+    policy: createLoopbackPolicy(),
+  });
+}
+
+function rejectForgeablePublicOptions(options) {
+  for (const key of ['targetPolicy', 'initialUrl', 'allowedMainFrameHosts', 'requiredProtocol']) {
+    if (Object.hasOwn(options, key)) {
+      throw new Error(`Unsupported profileUrl option: ${key}. Public targets must be resolved by targetId from the fixed registry.`);
+    }
+  }
+}
+
+function validateRegisteredPublicNavigation(value, policy) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return invalidPublicNavigation(value);
+  }
+  if (parsed.username || parsed.password) {
+    return invalidPublicNavigation(value);
+  }
+  if (parsed.protocol !== policy.requiredProtocol) {
+    return invalidPublicNavigation(value);
+  }
+  if (parsed.port) {
+    return invalidPublicNavigation(value);
+  }
+  if (!policy.allowedMainFrameHosts.includes(parsed.hostname)) {
+    return invalidPublicNavigation(value);
+  }
+  return { valid: true, ignored: false };
+}
+
+function validateRegisteredInitialUrl(value, policy) {
+  const result = validateRegisteredPublicNavigation(value, policy);
+  if (!result.valid) {
+    throw result.error;
+  }
+  const normalized = new URL(value);
+  normalized.search = '';
+  normalized.hash = '';
+  if (normalized.toString() !== policy.initialUrl) {
+    throw new Error(`Registered target initial URL mismatch. URL: ${safeUrlForError(value)}`);
+  }
+}
+
+function validateTargetPolicy(policy) {
+  if (!policy || policy.mode !== 'registered-public-target') {
+    throw new Error('Invalid registered public target policy.');
+  }
+  assertProviderId(policy.targetId);
+  assertProviderId(policy.providerId);
+  if (policy.requiredProtocol !== 'https:') {
+    throw new Error('Invalid registered public target policy: HTTPS is required.');
+  }
+  if (!Array.isArray(policy.allowedMainFrameHosts) || policy.allowedMainFrameHosts.length === 0) {
+    throw new Error('Invalid registered public target policy: allowed hosts are required.');
+  }
+  const allowedMainFrameHosts = policy.allowedMainFrameHosts.map((host) => {
+    if (typeof host !== 'string' || host !== host.toLowerCase() || host.includes('*') || host.includes(':')) {
+      throw new Error('Invalid registered public target policy: malformed allowed host.');
+    }
+    return host;
+  });
+  return Object.freeze({
+    mode: 'registered-public-target',
+    targetId: policy.targetId,
+    providerId: policy.providerId,
+    initialUrl: new URL(policy.initialUrl).toString(),
+    allowedMainFrameHosts,
+    requiredProtocol: policy.requiredProtocol,
+    defaultProfileId: policy.defaultProfileId,
+  });
+}
+
+function createLoopbackPolicy() {
+  return Object.freeze({ mode: 'loopback' });
+}
+
+function invalidPublicNavigation(value) {
+  return {
+    valid: false,
+    ignored: false,
+    error: new Error(`Navigation is outside the registered public target policy. URL: ${safeUrlForError(value)}`),
+  };
 }
 
 export function evidenceForClassifiers(observation) {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { MISSING_CHROMIUM_COMMAND, resolveChromiumRuntime } from '../src/browser-runtime.mjs';
 import { profileUrl, validateMainFrameNavigationCandidate } from '../src/profile-url.mjs';
+import { getPublicTargetPolicy, validatePublicTargetsRegistry } from '../src/public-targets.mjs';
 import { startFixtureServer } from '../fixtures/server.mjs';
 
 const runtime = resolveChromiumRuntime();
@@ -34,6 +35,7 @@ test('generic profileUrl profiles local fixture and returns canonical report', {
     assert.equal(result.report.mediaObservations.length, 3);
     assert.equal(result.report.candidateControls.length, 3);
     assert.deepEqual(result.interactionCounters, zeroCounters());
+    assert.deepEqual(result.report.lifecycleEvidence.interactionCounters, zeroCounters());
     assert.deepEqual(result.browserRuntime, { type: result.browserRuntime.type });
     assert.equal(Object.hasOwn(result.browserRuntime, 'executablePath'), false);
     for (const text of [JSON.stringify(result.report), jsonText, markdown]) {
@@ -313,7 +315,7 @@ test('profileUrl simulated main-frame public navigation is rejected and cleans o
         throw new Error('Profiling interrupted.');
       },
     }), (error) => {
-      assert.match(error.message, /Public-site profiling is not enabled in Checkpoint 3B/);
+      assert.match(error.message, /Arbitrary public URLs are not permitted; use a registered --target/);
       assert.doesNotMatch(error.message, /simulated-public-secret|simulated-public-fragment|token=|\?token=|#/);
       return true;
     });
@@ -324,6 +326,224 @@ test('profileUrl simulated main-frame public navigation is rejected and cleans o
   } finally {
     rmSync(outputRoot, { recursive: true, force: true });
   }
+});
+
+test('profileUrl simulated registered-target disallowed main-frame navigation aborts and cleans output', async () => {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
+  const closed = { page: 0, context: 0, browser: 0 };
+  let capturedHandler;
+  const mainFrame = {
+    url: () => 'https://cvmtv.com.attacker.invalid/live?token=simulated-target-secret#simulated-target-fragment',
+  };
+  try {
+    await assert.rejects(() => profileUrl({
+      targetId: 'cvm-tv',
+      outputRoot,
+      launchBrowserContext: async () => fakeLaunch(closed, {
+        url: () => 'https://www.cvmtv.com/live',
+        mainFrame: () => mainFrame,
+        on: (event, handler) => {
+          if (event === 'framenavigated') {
+            capturedHandler = handler;
+          }
+        },
+      }),
+      observePage: async ({ abortSignal }) => {
+        capturedHandler(mainFrame);
+        assert.equal(abortSignal.aborted, true);
+        throw new Error('Profiling interrupted.');
+      },
+    }), (error) => {
+      assert.match(error.message, /Navigation is outside the registered public target policy/);
+      assert.doesNotMatch(error.message, /simulated-target-secret|simulated-target-fragment|token=|\?token=|#/);
+      return true;
+    });
+    assert.equal(closed.page, 1);
+    assert.equal(closed.context, 1);
+    assert.equal(closed.browser, 1);
+    assert.deepEqual(findRelativeFiles(outputRoot), []);
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test('profileUrl registered target ignores iframe navigation for main-frame policy', async () => {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
+  const closed = { page: 0, context: 0, browser: 0 };
+  let capturedHandler;
+  const mainFrame = { url: () => 'https://www.cvmtv.com/live' };
+  const iframeFrame = { url: () => 'https://cvmtv.com.attacker.invalid/embed?token=iframe-secret#iframe-fragment' };
+  try {
+    const result = await profileUrl({
+      targetId: 'cvm-tv',
+      outputRoot,
+      launchBrowserContext: async () => fakeLaunch(closed, {
+        url: () => 'https://www.cvmtv.com/live',
+        mainFrame: () => mainFrame,
+        on: (event, handler) => {
+          if (event === 'framenavigated') {
+            capturedHandler = handler;
+          }
+        },
+        screenshot: async ({ path }) => writeFileSync(path, 'png'),
+      }),
+      observePage: async ({ abortSignal }) => {
+        capturedHandler(iframeFrame);
+        assert.equal(abortSignal.aborted, false);
+        return sampleObservation();
+      },
+    });
+    assert.equal(existsSync(result.jsonPath), true);
+    assert.equal(closed.page, 1);
+    assert.equal(closed.context, 1);
+    assert.equal(closed.browser, 1);
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test('profileUrl registered target metadata reaches canonical report and runtime summary is path-free', async () => {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
+  const closed = { page: 0, context: 0, browser: 0 };
+  try {
+    const result = await profileUrl({
+      targetId: 'cvm-tv',
+      outputRoot,
+      launchBrowserContext: async () => fakeLaunch(closed, {
+        url: () => 'https://cvmtv.com/live?session=metadata-secret#metadata-fragment',
+        screenshot: async ({ path }) => writeFileSync(path, 'png'),
+      }),
+      observePage: async () => sampleObservation(),
+    });
+    const parsed = JSON.parse(readFileSync(result.jsonPath, 'utf8'));
+    assert.deepEqual(result.report, parsed);
+    assert.equal(result.report.metadata.policyMode, 'registered-public-target');
+    assert.equal(result.report.metadata.targetId, 'cvm-tv');
+    assert.equal(result.report.metadata.providerId, 'cvm-tv');
+    assert.equal(result.report.metadata.requestedProfile, 'sony-bravia');
+    assert.deepEqual(result.report.metadata.allowedMainFrameHosts, ['www.cvmtv.com', 'cvmtv.com']);
+    assert.equal(result.report.metadata.requiredProtocol, 'https:');
+    assert.equal(result.report.metadata.initialUrlSource, 'registry');
+    assert.equal(result.report.metadata.passiveObservationOnly, true);
+    assert.equal(result.report.requestedUrl, 'https://www.cvmtv.com/live');
+    assert.equal(result.report.finalUrl, 'https://cvmtv.com/live');
+    assert.deepEqual(result.browserRuntime, { type: 'test' });
+    assert.equal(Object.hasOwn(result.browserRuntime, 'executablePath'), false);
+    assert.deepEqual(result.interactionCounters, zeroCounters());
+    assert.deepEqual(result.report.lifecycleEvidence.interactionCounters, zeroCounters());
+    assert.doesNotMatch(JSON.stringify(result.report), /metadata-secret|metadata-fragment|session=|\?session=|#/);
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test('profileUrl registered target resolves fixed registry before fake browser launch', async () => {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
+  const closed = { page: 0, context: 0, browser: 0 };
+  const observed = {};
+  try {
+    const result = await profileUrl({
+      targetId: 'cvm-tv',
+      outputRoot,
+      launchBrowserContext: async ({ profileId }) => {
+        observed.profileId = profileId;
+        return fakeLaunch(closed, {
+          url: () => 'https://www.cvmtv.com/live',
+          screenshot: async ({ path }) => writeFileSync(path, 'png'),
+        });
+      },
+      observePage: async ({ url }) => {
+        observed.url = url;
+        return sampleObservation();
+      },
+    });
+    assert.equal(observed.url, 'https://www.cvmtv.com/live');
+    assert.equal(observed.profileId, 'sony-bravia');
+    assert.match(result.outputDir, /\/cvm-tv\//);
+    assert.equal(result.report.metadata.providerId, 'cvm-tv');
+    assert.equal(result.report.metadata.targetId, 'cvm-tv');
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test('profileUrl registered target respects explicit desktop-firefox override', async () => {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
+  const closed = { page: 0, context: 0, browser: 0 };
+  let launchedProfile;
+  try {
+    const result = await profileUrl({
+      targetId: 'cvm-tv',
+      profileId: 'desktop-firefox',
+      outputRoot,
+      launchBrowserContext: async ({ profileId }) => {
+        launchedProfile = profileId;
+        return fakeLaunch(closed, {
+          url: () => 'https://www.cvmtv.com/live',
+          screenshot: async ({ path }) => writeFileSync(path, 'png'),
+        });
+      },
+      observePage: async () => sampleObservation(),
+    });
+    assert.equal(launchedProfile, 'desktop-firefox');
+    assert.equal(result.report.metadata.requestedProfile, 'desktop-firefox');
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test('profileUrl unknown target fails before browser launch', async () => {
+  let launches = 0;
+  await assert.rejects(() => profileUrl({
+    targetId: 'missing-target',
+    launchBrowserContext: async () => {
+      launches += 1;
+    },
+  }), /Unknown public target/);
+  assert.equal(launches, 0);
+});
+
+test('profileUrl rejects forged targetPolicy before browser launch', async () => {
+  let launches = 0;
+  await assert.rejects(() => profileUrl({
+    targetPolicy: {
+      mode: 'registered-public-target',
+      targetId: 'forged',
+      providerId: 'forged',
+      initialUrl: 'https://forged.example.invalid/live',
+      allowedMainFrameHosts: ['forged.example.invalid'],
+      requiredProtocol: 'https:',
+      defaultProfileId: 'desktop-firefox',
+    },
+    launchBrowserContext: async () => {
+      launches += 1;
+    },
+  }), /Unsupported profileUrl option: targetPolicy/);
+  assert.equal(launches, 0);
+});
+
+test('registry validation helpers do not authorize profileUrl public mode', async () => {
+  const registry = validatePublicTargetsRegistry({
+    version: 1,
+    targets: {
+      forged: {
+        providerId: 'forged',
+        initialUrl: 'https://forged.example.invalid/live',
+        allowedMainFrameHosts: ['forged.example.invalid'],
+        requiredProtocol: 'https:',
+        defaultProfileId: 'desktop-firefox',
+      },
+    },
+  });
+  assert.equal(registry.targets.forged.providerId, 'forged');
+  let launches = 0;
+  await assert.rejects(() => profileUrl({
+    targetId: 'forged',
+    launchBrowserContext: async () => {
+      launches += 1;
+    },
+  }), /Unknown public target/);
+  assert.equal(launches, 0);
 });
 
 test('profileUrl loopback-to-loopback redirect remains allowed', { skip: skipReason }, async () => {
@@ -361,9 +581,32 @@ test('main-frame navigation guard ignores about:blank, accepts loopback, and red
   assert.deepEqual(validateMainFrameNavigationCandidate('https://localhost/watch?token=ok#frag'), { valid: true, ignored: false });
   const result = validateMainFrameNavigationCandidate('https://198.51.100.10/watch?token=guard-secret#guard-frag');
   assert.equal(result.valid, false);
-  assert.match(result.error.message, /Public-site profiling is not enabled in Checkpoint 3B/);
+  assert.match(result.error.message, /Arbitrary public URLs are not permitted; use a registered --target/);
   assert.match(result.error.message, /https:\/\/198\.51\.100\.10\/watch/);
   assert.doesNotMatch(result.error.message, /guard-secret|guard-frag|token=|\?token=|#/);
+});
+
+test('registered public main-frame policy validates exact hosts and HTTPS only', () => {
+  const policy = cvmPolicy();
+  assert.deepEqual(validateMainFrameNavigationCandidate('about:blank', policy), { valid: true, ignored: true });
+  assert.deepEqual(validateMainFrameNavigationCandidate('https://www.cvmtv.com/live', policy), { valid: true, ignored: false });
+  assert.deepEqual(validateMainFrameNavigationCandidate('https://www.cvmtv.com/live?token=ok#frag', policy), { valid: true, ignored: false });
+  assert.deepEqual(validateMainFrameNavigationCandidate('https://cvmtv.com/live', policy), { valid: true, ignored: false });
+
+  for (const value of [
+    'http://www.cvmtv.com/live?token=http-secret#frag',
+    'https://www.cvmtv.com:444/live?token=port-secret#frag',
+    'https://user:pass@www.cvmtv.com/live?token=credential-secret#frag',
+    'https://cvmtv.com.example.invalid/live?token=suffix-secret#frag',
+    'https://cvmtv.com.attacker.invalid/live?token=prefix-secret#frag',
+    'https://live.cvmtv.com/live?token=subdomain-secret#frag',
+    'https://198.51.100.10/live?token=unrelated-secret#frag',
+  ]) {
+    const result = validateMainFrameNavigationCandidate(value, policy);
+    assert.equal(result.valid, false);
+    assert.match(result.error.message, /Navigation is outside the registered public target policy/);
+    assert.doesNotMatch(result.error.message, /secret|token=|\?token=|#/);
+  }
 });
 
 function sampleObservation() {
@@ -423,6 +666,10 @@ function writeSmallMarkdown(_report, { outputDir }) {
 
 function zeroCounters() {
   return { click: 0, pointer: 0, keyboard: 0, play: 0, pause: 0, requestFullscreen: 0 };
+}
+
+function cvmPolicy() {
+  return getPublicTargetPolicy('cvm-tv');
 }
 
 function findRelativeFiles(root) {
