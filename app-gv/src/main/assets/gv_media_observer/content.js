@@ -93,6 +93,9 @@
   let caribvisionFullscreenDomClickDone = false;
   let cvmVimeoPlayerFirstApplied = false;
   let cvmVimeoQualityPreferenceResolved = false;
+  let cvmVimeoTransportAutohideAttached = false;
+  let cvmVimeoTransportAutohideTimer = null;
+  let cvmVimeoTransportAutohideState = "visible";
   let islandTvPlayerFirstApplied = false;
   let islandTvPlayerFirstObserverAttached = false;
   let islandTvPlayerFirstAppliedLogged = false;
@@ -1423,6 +1426,88 @@
     } catch (_) {
       return false;
     }
+  }
+
+  function installCvmVimeoTransportAutohide() {
+    if (cvmVimeoTransportAutohideAttached || !isCvmVimeoEmbedFrame()) return false;
+    cvmVimeoTransportAutohideAttached = true;
+    const root = document.documentElement;
+    if (!root) return false;
+    const styleId = "kf-cvm-vimeo-transport-autohide-style";
+    try {
+      if (!document.getElementById(styleId)) {
+        const style = document.createElement("style");
+        style.id = styleId;
+        style.textContent = [
+          "html.kf-cvm-vimeo-transport-idle .vp-controls",
+          "html.kf-cvm-vimeo-transport-idle .vp-sidedock",
+          "html.kf-cvm-vimeo-transport-idle .vp-title"
+        ].join(",") + "{opacity:0!important;visibility:hidden!important;pointer-events:none!important;transition:opacity 160ms ease!important;}";
+        (document.head || document.documentElement).appendChild(style);
+      }
+    } catch (_) {}
+
+    const setIdle = (reason) => {
+      cvmVimeoTransportAutohideTimer = null;
+      if (!isCvmVimeoEmbedFrame()) return;
+      if (root.classList) root.classList.add("kf-cvm-vimeo-transport-idle");
+      if (cvmVimeoTransportAutohideState !== "hidden") {
+        cvmVimeoTransportAutohideState = "hidden";
+        promptPayload({
+          type: "cvm-vimeo-transport-autohide",
+          phase: "hidden",
+          reason: String(reason || "idle")
+        });
+      }
+    };
+
+    const scheduleHide = (reason, logSchedule) => {
+      if (cvmVimeoTransportAutohideTimer) {
+        clearTimeout(cvmVimeoTransportAutohideTimer);
+        cvmVimeoTransportAutohideTimer = null;
+      }
+      cvmVimeoTransportAutohideTimer = setTimeout(() => setIdle(reason), 3200);
+      if (logSchedule) {
+        promptPayload({
+          type: "cvm-vimeo-transport-autohide",
+          phase: "scheduled",
+          reason: String(reason || "interaction"),
+          delayMs: 3200
+        });
+      }
+    };
+
+    const wake = (event) => {
+      if (!isCvmVimeoEmbedFrame()) return;
+      const wasHidden = cvmVimeoTransportAutohideState === "hidden";
+      if (root.classList) root.classList.remove("kf-cvm-vimeo-transport-idle");
+      cvmVimeoTransportAutohideState = "visible";
+      if (wasHidden) {
+        promptPayload({
+          type: "cvm-vimeo-transport-autohide",
+          phase: "wake",
+          reason: event && event.type ? String(event.type) : "interaction"
+        });
+      }
+      scheduleHide(wasHidden ? "wake-idle" : "interaction-idle", false);
+    };
+
+    ["mousemove", "pointermove", "mousedown", "pointerdown", "keydown", "touchstart"].forEach((eventName) => {
+      try {
+        window.addEventListener(eventName, wake, true);
+      } catch (_) {}
+    });
+    try {
+      window.addEventListener("pagehide", () => {
+        if (cvmVimeoTransportAutohideTimer) {
+          clearTimeout(cvmVimeoTransportAutohideTimer);
+          cvmVimeoTransportAutohideTimer = null;
+        }
+      }, { once: true });
+    } catch (_) {}
+
+    scheduleHide("install", true);
+    return true;
   }
 
   function islandTvLog(phase, source, candidateCount, details) {
@@ -7496,6 +7581,7 @@
     applyCvc9DailymotionPlayerFirstLayout("publish");
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
+    installCvmVimeoTransportAutohide();
     applyIslandTvPlayerFirstLayout("publish");
     applyDbsTvPlayerFirstLayout("publish");
     applyCbnVirginIslandsPlayerFirstLayout();

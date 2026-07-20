@@ -13196,6 +13196,13 @@ return changed>0;
             )
             return
         }
+        if (type == "cvm-vimeo-transport-autohide") {
+            GvLogger.i(
+                "GvMedia",
+                "cvm vimeo transport autohide phase=${payload.optString("phase")} reason=${payload.optString("reason")} delayMs=${payload.optInt("delayMs")}"
+            )
+            return
+        }
         if (type == "cbn-virgin-islands-state") {
             val layoutApplied = payload.optBoolean("layoutApplied")
             val playbackActive = payload.optBoolean("playbackActive")
