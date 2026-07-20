@@ -13196,10 +13196,11 @@ return changed>0;
             )
             return
         }
-        if (type == "cvm-vimeo-transport-autohide") {
+        if (type == "player-helper-capability") {
             GvLogger.i(
                 "GvMedia",
-                "cvm vimeo transport autohide phase=${payload.optString("phase")} reason=${payload.optString("reason")} delayMs=${payload.optInt("delayMs")}"
+                "player helper policy=${payload.optString("policyId")} capability=${payload.optString("capability")} " +
+                    "phase=${payload.optString("phase")} reason=${payload.optString("reason")} delayMs=${payload.optInt("delayMs")}"
             )
             return
         }

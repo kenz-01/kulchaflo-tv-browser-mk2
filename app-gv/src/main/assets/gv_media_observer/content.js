@@ -24,6 +24,32 @@
   const ENABLE_TTT_TEGO_AUTOSTART_HACKS = false;
   const ENABLE_TTT_TEGO_READINESS_ASSIST = true;
   const TTT_TEGO_READINESS_ASSIST_DELAY_MS = 18000;
+  const PLAYER_HELPER_REGISTRY = Object.freeze([
+    Object.freeze({
+      id: "cvm-tv-embedded-vimeo",
+      providerId: "cvm-tv",
+      playerFamily: "embedded-vimeo",
+      match: Object.freeze({
+        frameHost: "vimeo.com",
+        allowFrameSubdomains: true,
+        pathPrefix: "/event/",
+        pathSuffix: "/embed",
+        referrerHosts: Object.freeze(["cvmtv.com", "www.cvmtv.com"])
+      }),
+      capabilities: Object.freeze({
+        transportAutohide: Object.freeze({
+          enabled: true,
+          idleMs: 3200,
+          idleClass: "kf-cvm-vimeo-transport-idle",
+          styleId: "kf-cvm-vimeo-transport-autohide-style",
+          selectors: Object.freeze([".vp-controls", ".vp-sidedock", ".vp-title"])
+        })
+      })
+    })
+  ]);
+  const TRANSPORT_AUTOHIDE_INTERACTION_EVENTS = Object.freeze([
+    "mousemove", "pointermove", "mousedown", "pointerdown", "keydown", "touchstart"
+  ]);
   let lastSignature = "";
   let lastTegoSignature = "";
   let absTegoStartupReprobeStarted = false;
@@ -93,9 +119,7 @@
   let caribvisionFullscreenDomClickDone = false;
   let cvmVimeoPlayerFirstApplied = false;
   let cvmVimeoQualityPreferenceResolved = false;
-  let cvmVimeoTransportAutohideAttached = false;
-  let cvmVimeoTransportAutohideTimer = null;
-  let cvmVimeoTransportAutohideState = "visible";
+  let transportAutohideEngine = null;
   let islandTvPlayerFirstApplied = false;
   let islandTvPlayerFirstObserverAttached = false;
   let islandTvPlayerFirstAppliedLogged = false;
@@ -1428,86 +1452,111 @@
     }
   }
 
-  function installCvmVimeoTransportAutohide() {
-    if (cvmVimeoTransportAutohideAttached || !isCvmVimeoEmbedFrame()) return false;
-    cvmVimeoTransportAutohideAttached = true;
+  function matchesExactOrSubdomain(host, expectedHost, allowSubdomains) {
+    return host === expectedHost || (allowSubdomains && host.endsWith("." + expectedHost));
+  }
+
+  function hostnameFromUrl(value) {
+    try {
+      return new URL(String(value || "")).hostname.toLowerCase();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function matchesPlayerHelperPolicy(policy) {
+    if (!policy || !policy.match) return false;
+    const match = policy.match;
+    const frameHost = String(window.location.hostname || "").toLowerCase();
+    const framePath = String(window.location.pathname || "").toLowerCase();
+    const referrerHost = hostnameFromUrl(document.referrer);
+    if (!matchesExactOrSubdomain(frameHost, match.frameHost, match.allowFrameSubdomains)) return false;
+    if (!framePath.startsWith(match.pathPrefix) || !framePath.endsWith(match.pathSuffix)) return false;
+    return Array.isArray(match.referrerHosts) && match.referrerHosts.indexOf(referrerHost) >= 0;
+  }
+
+  function matchedPlayerHelperPolicy() {
+    return PLAYER_HELPER_REGISTRY.find((policy) => matchesPlayerHelperPolicy(policy)) || null;
+  }
+
+  function installTransportAutohideCapability(policy) {
+    const capability = policy && policy.capabilities && policy.capabilities.transportAutohide;
+    if (!capability || !capability.enabled || transportAutohideEngine) return false;
     const root = document.documentElement;
     if (!root) return false;
-    const styleId = "kf-cvm-vimeo-transport-autohide-style";
     try {
-      if (!document.getElementById(styleId)) {
+      if (!document.getElementById(capability.styleId)) {
         const style = document.createElement("style");
-        style.id = styleId;
-        style.textContent = [
-          "html.kf-cvm-vimeo-transport-idle .vp-controls",
-          "html.kf-cvm-vimeo-transport-idle .vp-sidedock",
-          "html.kf-cvm-vimeo-transport-idle .vp-title"
-        ].join(",") + "{opacity:0!important;visibility:hidden!important;pointer-events:none!important;transition:opacity 160ms ease!important;}";
+        style.id = capability.styleId;
+        style.textContent = capability.selectors
+          .map((selector) => "html." + capability.idleClass + " " + selector)
+          .join(",") + "{opacity:0!important;visibility:hidden!important;pointer-events:none!important;transition:opacity 160ms ease!important;}";
         (document.head || document.documentElement).appendChild(style);
       }
     } catch (_) {}
 
+    const engine = {
+      timer: null,
+      visibility: "visible"
+    };
+    transportAutohideEngine = engine;
+    const emit = (phase, reason, delayMs) => {
+      const payload = {
+        type: "player-helper-capability",
+        policyId: policy.id,
+        capability: "transport-autohide",
+        phase,
+        reason: String(reason || "idle")
+      };
+      if (typeof delayMs === "number") payload.delayMs = delayMs;
+      promptPayload(payload);
+    };
     const setIdle = (reason) => {
-      cvmVimeoTransportAutohideTimer = null;
-      if (!isCvmVimeoEmbedFrame()) return;
-      if (root.classList) root.classList.add("kf-cvm-vimeo-transport-idle");
-      if (cvmVimeoTransportAutohideState !== "hidden") {
-        cvmVimeoTransportAutohideState = "hidden";
-        promptPayload({
-          type: "cvm-vimeo-transport-autohide",
-          phase: "hidden",
-          reason: String(reason || "idle")
-        });
+      engine.timer = null;
+      if (!matchesPlayerHelperPolicy(policy)) return;
+      if (root.classList) root.classList.add(capability.idleClass);
+      if (engine.visibility !== "hidden") {
+        engine.visibility = "hidden";
+        emit("hidden", reason);
       }
     };
-
     const scheduleHide = (reason, logSchedule) => {
-      if (cvmVimeoTransportAutohideTimer) {
-        clearTimeout(cvmVimeoTransportAutohideTimer);
-        cvmVimeoTransportAutohideTimer = null;
+      if (engine.timer) {
+        clearTimeout(engine.timer);
+        engine.timer = null;
       }
-      cvmVimeoTransportAutohideTimer = setTimeout(() => setIdle(reason), 3200);
-      if (logSchedule) {
-        promptPayload({
-          type: "cvm-vimeo-transport-autohide",
-          phase: "scheduled",
-          reason: String(reason || "interaction"),
-          delayMs: 3200
-        });
-      }
+      engine.timer = setTimeout(() => setIdle(reason), capability.idleMs);
+      if (logSchedule) emit("scheduled", reason, capability.idleMs);
     };
-
     const wake = (event) => {
-      if (!isCvmVimeoEmbedFrame()) return;
-      const wasHidden = cvmVimeoTransportAutohideState === "hidden";
-      if (root.classList) root.classList.remove("kf-cvm-vimeo-transport-idle");
-      cvmVimeoTransportAutohideState = "visible";
-      if (wasHidden) {
-        promptPayload({
-          type: "cvm-vimeo-transport-autohide",
-          phase: "wake",
-          reason: event && event.type ? String(event.type) : "interaction"
-        });
-      }
+      if (!matchesPlayerHelperPolicy(policy)) return;
+      const wasHidden = engine.visibility === "hidden";
+      if (root.classList) root.classList.remove(capability.idleClass);
+      engine.visibility = "visible";
+      if (wasHidden) emit("wake", event && event.type ? String(event.type) : "interaction");
       scheduleHide(wasHidden ? "wake-idle" : "interaction-idle", false);
     };
-
-    ["mousemove", "pointermove", "mousedown", "pointerdown", "keydown", "touchstart"].forEach((eventName) => {
+    TRANSPORT_AUTOHIDE_INTERACTION_EVENTS.forEach((eventName) => {
       try {
         window.addEventListener(eventName, wake, true);
       } catch (_) {}
     });
     try {
       window.addEventListener("pagehide", () => {
-        if (cvmVimeoTransportAutohideTimer) {
-          clearTimeout(cvmVimeoTransportAutohideTimer);
-          cvmVimeoTransportAutohideTimer = null;
+        if (engine.timer) {
+          clearTimeout(engine.timer);
+          engine.timer = null;
         }
       }, { once: true });
     } catch (_) {}
-
     scheduleHide("install", true);
     return true;
+  }
+
+  function installMatchedPlayerHelperCapabilities() {
+    const policy = matchedPlayerHelperPolicy();
+    if (!policy) return false;
+    return installTransportAutohideCapability(policy);
   }
 
   function islandTvLog(phase, source, candidateCount, details) {
@@ -7581,7 +7630,7 @@
     applyCvc9DailymotionPlayerFirstLayout("publish");
     applyCvmVimeoPlayerFirstLayout();
     maybePreferCvmVimeo1080p();
-    installCvmVimeoTransportAutohide();
+    installMatchedPlayerHelperCapabilities();
     applyIslandTvPlayerFirstLayout("publish");
     applyDbsTvPlayerFirstLayout("publish");
     applyCbnVirginIslandsPlayerFirstLayout();
