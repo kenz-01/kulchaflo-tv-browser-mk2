@@ -171,7 +171,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
         assert.match(stderr, /Profiling interrupted/);
       }
       assert.doesNotMatch(`${stdout}\n${stderr}`, new RegExp(`${signal.toLowerCase()}-secret|${signal.toLowerCase()}-fragment|token=|\\?token=|#`));
-      assert.equal(findEntries(outputRoot).some((entry) => entry.includes('.incomplete-')), false);
+      await waitForNoIncomplete(outputRoot);
 
       const normal = await execFileAsync('node', [
         'src/cli.mjs',
@@ -228,6 +228,17 @@ async function waitForIncomplete(root) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error('Timed out waiting for incomplete output directory.');
+}
+
+async function waitForNoIncomplete(root) {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (!findEntries(root).some((entry) => entry.includes('.incomplete-'))) {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  assert.equal(findEntries(root).some((entry) => entry.includes('.incomplete-')), false);
 }
 
 function findEntries(root) {
