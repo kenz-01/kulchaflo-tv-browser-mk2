@@ -76,3 +76,23 @@ structured capability observation automatically. Producing and binding those
 observations from collection evidence is a future pipeline step. This bridge
 creates review artifacts only: neither helper evidence nor an unapproved policy
 is applied to Android runtime source.
+
+## Engine Certification And Assembly
+
+Provider observations and engine guarantees are separate artifacts. A target
+observation records only provider-scoped matching, enabled transport behavior,
+idle delay, selectors, advanced requirements, and provider-specific behavior.
+It cannot claim timer ownership, interaction reveal, pagehide cleanup, or
+diagnostic safety.
+
+`npm run certify-helper-engine` statically certifies the current transport
+engine once. The certificate is bound to the SHA-256 of the repository-relative
+`content.js` artifact. `npm run assemble-helper-observations -- --analysis
+<directory> --target-observations <file> --engine-certification <file>` merges
+only compatible target evidence with that certification. A source change makes
+the certification stale and blocks assembly.
+
+`recommend-helper` also accepts the target-observation and certification pair
+to assemble evidence in memory before producing its existing unapproved review.
+Future profiling may produce target observations automatically, but neither
+certification nor assembly has an automatic Android policy-apply operation.

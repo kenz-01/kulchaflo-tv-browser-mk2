@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLAYER_FAMILIES } from './player-families.mjs';
@@ -55,6 +55,7 @@ const PLAYER_LAB_REPORTS_ROOT = resolve(PLAYER_LAB_ROOT, 'reports');
 export function proposeHelper({
   reportPath,
   outputRoot,
+  additionalArtifacts = {},
   now = () => new Date(),
   createOutputDirectory = createStagedHelperProposalOutputDirectory,
   writeJson = writeHelperProposalJson,
@@ -62,6 +63,7 @@ export function proposeHelper({
 } = {}) {
   const evidence = loadHelperEvidence(reportPath);
   const root = resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_HELPER_PROPOSAL_OUTPUT_ROOT);
+  validateAdditionalArtifacts(additionalArtifacts);
   const output = createOutputDirectory({ outputRoot: root, now });
   let completed = false;
   try {
@@ -69,6 +71,12 @@ export function proposeHelper({
     assertSafeHelperProposal(proposal);
     writeJson(proposal, { outputDir: output.incompleteDir });
     writeMarkdown(proposal, { outputDir: output.incompleteDir });
+    for (const [name, value] of Object.entries(additionalArtifacts)) {
+      const path = resolve(output.incompleteDir, name);
+      writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+      const stat = lstatSync(path);
+      if (dirname(path) !== output.incompleteDir || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Additional helper proposal artifact is invalid.');
+    }
     const outputDir = output.promote();
     completed = true;
     return Object.freeze({
@@ -343,6 +351,24 @@ export function assertSafeHelperProposal(value) {
   }
   return true;
 }
+
+function validateAdditionalArtifacts(artifacts) {
+  if (!plainJsonObject(artifacts)) throw new Error('Additional helper proposal artifacts must be an object.');
+  for (const [name, value] of Object.entries(artifacts)) {
+    if (!/^[a-z0-9][a-z0-9-]{0,119}\.json$/.test(name)) throw new Error('Additional helper proposal artifact name is invalid.');
+    if (!plainJsonObject(value) || !jsonCompatible(value)) throw new Error('Additional helper proposal artifact must be a plain JSON-compatible object.');
+    assertSafeHelperProposal(value);
+  }
+}
+
+function jsonCompatible(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(jsonCompatible);
+  return plainJsonObject(value) && Object.values(value).every(jsonCompatible);
+}
+
+function plainJsonObject(value) { return Boolean(value && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)); }
 
 function isInside(child, parent) {
   return child === parent || child.startsWith(`${parent}/`);

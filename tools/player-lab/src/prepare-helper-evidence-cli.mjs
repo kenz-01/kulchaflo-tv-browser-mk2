@@ -8,6 +8,7 @@ export async function runPrepareHelperEvidenceCli(argv = process.argv.slice(2), 
   try {
     const args = parseHelperEvidenceArguments(argv);
     if (args.help) { stdout.write(HELPER_EVIDENCE_USAGE_TEXT); return 0; }
+    if (args.targetObservationsPath) throw new Error('Use recommend-helper to assemble target observations with an engine certification.');
     const result = prepare({ analysisPath: args.analysisPath, outputRoot: args.outputDir });
     stdout.write(`${result.outputDir}\n`);
     return 0;

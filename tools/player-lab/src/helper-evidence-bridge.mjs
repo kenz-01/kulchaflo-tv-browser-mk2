@@ -16,8 +16,8 @@ const ADVANCED_REQUIREMENTS = new Set([
 ]);
 const DIRECT_CAPABILITIES = Object.freeze(['enabled', 'idleMs', 'selectors', 'oneOwnedTimer', 'interactionReveal', 'pagehideCleanup', 'urlFreeDiagnostics']);
 
-export function prepareHelperEvidence({ analysisPath, outputRoot, now = () => new Date(), createOutputDirectory = createStagedHelperEvidenceOutputDirectory } = {}) {
-  const source = loadBridgeSource(analysisPath);
+export function prepareHelperEvidence({ analysisPath, observations, outputRoot, now = () => new Date(), createOutputDirectory = createStagedHelperEvidenceOutputDirectory } = {}) {
+  const source = loadBridgeSource(analysisPath, observations);
   const root = resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_HELPER_EVIDENCE_OUTPUT_ROOT);
   const output = createOutputDirectory({ outputRoot: root, now });
   let completed = false;
@@ -32,7 +32,7 @@ export function prepareHelperEvidence({ analysisPath, outputRoot, now = () => ne
   }
 }
 
-export function loadBridgeSource(analysisPath) {
+export function loadBridgeSource(analysisPath, suppliedObservations = undefined) {
   if (typeof analysisPath !== 'string' || !analysisPath.trim()) throw new Error('Analysis directory is required.');
   const directory = resolve(analysisPath);
   const stat = safeLstat(directory, 'Analysis directory does not exist.');
@@ -40,13 +40,12 @@ export function loadBridgeSource(analysisPath) {
   const analysisArtifact = readStructuredFile(directory, 'analysis.json');
   const analysis = analysisArtifact.value;
   validateAnalysisArtifact(analysis);
-  let observations = null;
-  try {
+  let observations = suppliedObservations ?? null;
+  if (observations) validateCapabilityObservations(observations, analysis, analysisArtifact.sha256);
+  else try {
     observations = readStructuredFile(directory, 'helper-capability-observations.json').value;
     validateCapabilityObservations(observations, analysis, analysisArtifact.sha256);
-  } catch (error) {
-    if (!String(error.message).includes('does not exist')) throw error;
-  }
+  } catch (error) { if (!String(error.message).includes('does not exist')) throw error; }
   return deepFreeze({ directory, analysis: structuredClone(analysis), analysisSha256: analysisArtifact.sha256, observations: observations ? structuredClone(observations) : null });
 }
 
@@ -123,7 +122,7 @@ function validateAnalysisArtifact(analysis) {
   }
 }
 
-function validateCapabilityObservations(value, analysis, analysisSha256) {
+export function validateCapabilityObservations(value, analysis, analysisSha256) {
   if (!plain(value) || value.schemaVersion !== 1 || value.authority !== DIRECT_AUTHORITY) throw new Error('Capability observations must be direct structured evidence.');
   assertProviderId(value.providerId);
   if (!PLAYER_FAMILIES.includes(value.playerFamily)) throw new Error('Capability observation playerFamily is invalid.');
@@ -132,8 +131,8 @@ function validateCapabilityObservations(value, analysis, analysisSha256) {
   const observationTarget = value.targetId ?? null;
   if (analysisTarget !== observationTarget) throw new Error('Capability observations do not match analysis target identity.');
   if (typeof value.analysisSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.analysisSha256) || value.analysisSha256 !== analysisSha256) throw new Error('Capability observations do not match analysis SHA-256.');
-  if (value.trustedMatchingEvidence !== undefined && !plain(value.trustedMatchingEvidence)) throw new Error('Capability trusted matching must be structured.');
-  if (value.supportedCapabilities !== undefined && (!Array.isArray(value.supportedCapabilities) || !value.supportedCapabilities.every((item) => SUPPORTED_CAPABILITIES.includes(item)))) throw new Error('Capability supportedCapabilities must use known values.');
+  if (value.trustedMatchingEvidence !== undefined) validateTrustedMatchingEvidence(value.trustedMatchingEvidence);
+  if (value.supportedCapabilities !== undefined && (!Array.isArray(value.supportedCapabilities) || new Set(value.supportedCapabilities).size !== value.supportedCapabilities.length || !value.supportedCapabilities.every((item) => SUPPORTED_CAPABILITIES.includes(item)))) throw new Error('Capability supportedCapabilities must use known values.');
   if (value.unsupportedRequirements !== undefined && (!Array.isArray(value.unsupportedRequirements) || !value.unsupportedRequirements.every((item) => ADVANCED_REQUIREMENTS.has(item)))) throw new Error('Capability unsupportedRequirements are invalid.');
   if (value.sourceEvidenceReferences !== undefined && (!Array.isArray(value.sourceEvidenceReferences) || !value.sourceEvidenceReferences.every(safeReference))) throw new Error('Capability source references are invalid.');
   if (value.providerSpecificBehavior !== undefined && typeof value.providerSpecificBehavior !== 'boolean') throw new Error('Capability providerSpecificBehavior must be boolean.');
@@ -189,6 +188,20 @@ function validatePartialTransport(value) {
   if (value.idleMs !== undefined && (!Number.isInteger(value.idleMs) || value.idleMs < 500 || value.idleMs > 10000)) throw new Error('Capability transport idleMs is invalid.');
   if (value.selectors !== undefined && (!Array.isArray(value.selectors) || value.selectors.length === 0 || !value.selectors.every((item) => typeof item === 'string' && item.length <= 160 && !/[\u0000-\u001f\u007f]|:\/\/|<|>|\{|\}|;|@import|javascript:/i.test(item)))) throw new Error('Capability transport selectors are invalid.');
 }
+
+function validateTrustedMatchingEvidence(value) {
+  if (!plain(value)) throw new Error('Capability trusted matching must be structured.');
+  const allowed = new Set(['frameHost', 'pathPrefix', 'pathSuffix', 'allowFrameSubdomains', 'referrerHosts']);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error('Capability trusted matching contains an unknown field.');
+  if (value.frameHost !== undefined && !safeHostname(value.frameHost)) throw new Error('Capability trusted frameHost is invalid.');
+  for (const key of ['pathPrefix', 'pathSuffix']) {
+    if (value[key] !== undefined && (typeof value[key] !== 'string' || !value[key].startsWith('/') || value[key].length > 160 || /[\u0000-\u001f\u007f]|:\/\/|[?#<>]|\\/.test(value[key]))) throw new Error(`Capability trusted ${key} is invalid.`);
+  }
+  if (value.allowFrameSubdomains !== undefined && typeof value.allowFrameSubdomains !== 'boolean') throw new Error('Capability trusted allowFrameSubdomains is invalid.');
+  if (value.referrerHosts !== undefined && (!Array.isArray(value.referrerHosts) || value.referrerHosts.length === 0 || !value.referrerHosts.every(safeHostname))) throw new Error('Capability trusted referrerHosts are invalid.');
+}
+
+function safeHostname(value) { return typeof value === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/.test(value); }
 
 function readStructuredFile(directory, name) {
   const path = resolve(directory, name);
