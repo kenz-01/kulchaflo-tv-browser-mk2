@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "providerId": "sample-cvm",
+  "targetId": "sample-cvm",
+  "playerFamily": "vimeo",
+  "trustedMatchingEvidence": {
+    "frameHost": "vimeo.com",
+    "pathPrefix": "/event/",
+    "pathSuffix": "/embed",
+    "allowFrameSubdomains": false,
+    "referrerHosts": ["sample-cvm.test"]
+  },
+  "supportedCapabilities": ["enabled", "idleMs", "selectors", "oneOwnedTimer", "interactionReveal", "pagehideCleanup", "urlFreeDiagnostics"],
+  "unsupportedRequirements": [],
+  "transportAutohide": {
+    "enabled": true,
+    "idleMs": 3200,
+    "selectors": [".vp-controls", ".vp-sidedock", ".vp-title"],
+    "oneOwnedTimer": true,
+    "interactionReveal": true,
+    "pagehideCleanup": true,
+    "urlFreeDiagnostics": true
+  },
+  "sourceEvidenceReferences": ["fixture-cvm-equivalent"]
+}

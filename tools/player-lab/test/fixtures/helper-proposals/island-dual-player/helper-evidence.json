@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "providerId": "island-tv",
+  "playerFamily": "vimeo",
+  "trustedMatchingEvidence": {
+    "frameHost": "vimeo.com",
+    "pathPrefix": "/event/",
+    "pathSuffix": "/embed",
+    "allowFrameSubdomains": false,
+    "referrerHosts": ["island.example.test"]
+  },
+  "supportedCapabilities": [],
+  "unsupportedRequirements": [],
+  "providerSpecificBehavior": true,
+  "sourceEvidenceReferences": ["dual-player-selection"]
+}

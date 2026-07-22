@@ -1,6 +1,6 @@
 {
   "name": "kulchaflo-player-lab",
-  "version": "0.1.0-checkpoint3d",
+  "version": "0.1.0-checkpoint4d",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,7 +13,8 @@
     "profile": "node src/cli.mjs",
     "fixture": "node fixtures/server.mjs",
     "profile:fixture": "node src/profile-fixture.mjs",
-    "analyze": "node src/analyze-cli.mjs"
+    "analyze": "node src/analyze-cli.mjs",
+    "propose-helper": "node src/helper-proposal-cli.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1"
