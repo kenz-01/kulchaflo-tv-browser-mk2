@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "contradictory-timer",
+  "playerFamily": "vimeo",
+  "analysisSha256": "98a987faa1b065a56f838d2352e109151dc86ff40e2a4f3e9ab58883d8ddf9e4",
+  "trustedMatchingEvidence": {
+    "frameHost": "vimeo.com",
+    "pathPrefix": "/event/",
+    "pathSuffix": "/embed",
+    "referrerHosts": ["contradictory.example.test"]
+  },
+  "supportedCapabilities": ["enabled", "idleMs", "selectors", "oneOwnedTimer", "interactionReveal", "pagehideCleanup", "urlFreeDiagnostics"],
+  "unsupportedRequirements": [],
+  "transportAutohide": {
+    "enabled": true,
+    "idleMs": 3200,
+    "selectors": [".vp-controls", ".vp-sidedock", ".vp-title"],
+    "oneOwnedTimer": false,
+    "interactionReveal": true,
+    "pagehideCleanup": true,
+    "urlFreeDiagnostics": true
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "providerId": "conflicting-player",
+  "evidenceSummary": { "primaryPlayerFamily": "vimeo" },
+  "conflictingEvidence": true
+}

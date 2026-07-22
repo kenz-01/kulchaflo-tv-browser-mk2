@@ -40,3 +40,39 @@ readiness, initial settling, bounded retries, throttled interaction, inline
 visibility styles, and shared TTT reveal behavior. Island TV dual-player
 selection remains provider-specific because its selected-player behavior is not
 an existing generic capability.
+
+## Analysis Bridge
+
+`npm run prepare-helper-evidence -- --analysis <analysis-directory>` creates
+`helper-evidence.json` and `helper-evidence-provenance.json` from local
+structured artifacts. `npm run recommend-helper -- --analysis <analysis-directory>`
+runs that bridge and then the existing unapproved proposal generator.
+
+| Bridge evidence field | Source authority |
+| --- | --- |
+| provider ID, target ID, canonical player family | validated analyzer derivation from `analysis.json` |
+| trusted frame/referrer matching | directly observed structured capability observation only |
+| selectors, idle delay, timer/cleanup/interaction facts | directly observed structured capability observation only |
+| advanced requirements and provider-specific behavior | directly observed structured capability observation only |
+| missing or conflicting fields | bridge provenance and a safe downgrade to insufficient evidence |
+
+The bridge never derives matching or capability facts from a player family,
+filename, Markdown prose, diagnostic text, or helper function name. Missing
+trusted matching necessarily produces insufficient evidence. Provenance records
+which fields were observed, analyzer-derived, unavailable, or conflicting and
+must be reviewed with the unapproved proposal. There is intentionally no apply
+command.
+
+`analysis.json` supplies validated provider, optional target, and canonical
+player-family derivations. A direct policy additionally requires capability
+observations bound to the exact `analysis.json` SHA-256 and directly observed
+structured matching, selectors, delay, timer ownership, interaction, cleanup,
+and diagnostic-safety facts. The bridge preserves incomplete observations in
+provenance but downgrades them to insufficient evidence; it never fills missing
+facts from the player family.
+
+Current profiling and offline analysis do not necessarily collect every
+structured capability observation automatically. Producing and binding those
+observations from collection evidence is a future pipeline step. This bridge
+creates review artifacts only: neither helper evidence nor an unapproved policy
+is applied to Android runtime source.

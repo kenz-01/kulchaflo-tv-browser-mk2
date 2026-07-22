@@ -61,7 +61,7 @@ export function proposeHelper({
   writeMarkdown = writeHelperProposalMarkdown,
 } = {}) {
   const evidence = loadHelperEvidence(reportPath);
-  const root = resolveHelperProposalOutputRoot(outputRoot);
+  const root = resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_HELPER_PROPOSAL_OUTPUT_ROOT);
   const output = createOutputDirectory({ outputRoot: root, now });
   let completed = false;
   try {
@@ -83,8 +83,12 @@ export function proposeHelper({
 }
 
 export function resolveHelperProposalOutputRoot(outputRoot) {
+  return resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_HELPER_PROPOSAL_OUTPUT_ROOT);
+}
+
+export function resolveSafePlayerLabReportsOutputRoot(outputRoot, defaultRoot) {
   const root = outputRoot === undefined || outputRoot === null
-    ? DEFAULT_HELPER_PROPOSAL_OUTPUT_ROOT
+    ? resolve(defaultRoot)
     : resolve(outputRoot);
   if (isInside(root, REPOSITORY_ROOT) && !isInside(root, PLAYER_LAB_REPORTS_ROOT)) {
     throw new Error('Repository proposal output must be beneath tools/player-lab/reports.');
@@ -189,14 +193,19 @@ export function createHelperRecommendation(evidence, { generatedAt = new Date().
     recommendationReason = 'Required behavior exceeds the current registry capability contract.';
     confidence = 'high';
     warnings.push('No policy is generated while unsupported behavior is required.');
+  } else if (evidence.conflictingEvidence === true) {
+    recommendationCategory = 'insufficient-evidence';
+    recommendationReason = 'Structured evidence contains a conflict and cannot authorize a helper classification.';
+    confidence = 'low';
+    warnings.push('A contradictory structured capability claim blocks every policy recommendation.');
   } else if (evidence.providerSpecificBehavior === true) {
     recommendationCategory = 'provider-specific-helper';
     recommendationReason = 'Observed behavior includes provider-specific selection or orchestration semantics.';
     confidence = 'high';
     warnings.push('Do not generalize provider-specific player selection from this evidence.');
-  } else if (evidence.conflictingEvidence === true || !hasCompleteMatching(evidence.trustedMatchingEvidence)) {
+  } else if (!hasCompleteMatching(evidence.trustedMatchingEvidence)) {
     recommendationCategory = 'insufficient-evidence';
-    recommendationReason = 'Trusted provider/frame matching evidence is incomplete or conflicting.';
+    recommendationReason = 'Trusted provider/frame matching evidence is incomplete.';
     confidence = 'low';
     warnings.push('Player family detection alone never authorizes a registry policy.');
   } else if (isDirectTransportContract(evidence, supported)) {

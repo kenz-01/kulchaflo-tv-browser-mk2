@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "abs-channel-10",
+  "playerFamily": "tego",
+  "analysisSha256": "0c4b2bbc79df0065f1d74f96112360a49982c693918b304ceaabd06747c80d5f",
+  "trustedMatchingEvidence": {
+    "frameHost": "player.tegotv.com",
+    "pathPrefix": "/player.php",
+    "pathSuffix": "/player.php",
+    "allowFrameSubdomains": false,
+    "referrerHosts": ["abs.example.test"]
+  },
+  "supportedCapabilities": ["enabled", "idleMs", "selectors", "oneOwnedTimer", "interactionReveal"],
+  "unsupportedRequirements": ["readiness-predicate", "initial-settle-delay", "retry-delay-and-limit", "interaction-throttle", "inline-style-visibility", "external-reveal-bridge", "shared-provider-state"],
+  "transportAutohide": {
+    "enabled": true,
+    "idleMs": 1800,
+    "selectors": [".rmp-control-bar", ".rmp-controls", ".rmp-module"],
+    "oneOwnedTimer": true,
+    "interactionReveal": true,
+    "pagehideCleanup": false,
+    "urlFreeDiagnostics": false
+  },
+  "sourceEvidenceReferences": ["checkpoint-4c-structured"]
+}

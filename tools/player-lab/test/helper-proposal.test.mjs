@@ -75,6 +75,14 @@ test('Island-style dual player behavior stays provider-specific', () => {
   assert.equal(result.policyProposal, null);
 });
 
+test('a structured conflict takes precedence over provider-specific behavior', () => {
+  const evidence = structuredClone(loadHelperEvidence(fixturePath('island-dual-player')));
+  evidence.conflictingEvidence = true;
+  const result = createHelperRecommendation(evidence);
+  assert.equal(result.recommendationCategory, 'insufficient-evidence');
+  assert.equal(result.policyProposal, null);
+});
+
 test('weak or conflicting evidence remains insufficient', () => {
   const result = createHelperRecommendation(loadHelperEvidence(fixturePath('insufficient')));
   assert.equal(result.recommendationCategory, 'insufficient-evidence');
