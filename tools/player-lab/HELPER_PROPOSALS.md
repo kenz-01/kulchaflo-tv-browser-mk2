@@ -96,3 +96,58 @@ the certification stale and blocks assembly.
 to assemble evidence in memory before producing its existing unapproved review.
 Future profiling may produce target observations automatically, but neither
 certification nor assembly has an automatic Android policy-apply operation.
+
+## Target Observation Candidates
+
+`npm run derive-target-observations -- --analysis <analysis-directory>` creates
+an offline `target-observation-candidate.json` and field-level provenance. It
+can additionally consume a canonical Player Lab report, registered target
+metadata, the exact-byte-bound approved runtime policy, structured
+characterization, and a bounded reviewer input for an idle delay. Those sources
+are loaded independently and reconciled field by field; one authority never
+hides a disagreement from another. Analysis supplies identity and player
+family. Trusted matching, stable selectors, enabled state, and idle policy come
+only from registered metadata or the existing approved policy, except that the
+bounded reviewer artifact may supply idle policy. Raw URLs are never matching
+evidence.
+
+Canonical reports are validated with the existing Player Lab report model.
+Their arbitrary candidate controls do not establish transport-autohide
+applicability or stable selectors. The legacy
+`structured-profile-target-evidence` shape is an explicit test-support adapter,
+not a production report schema. If the canonical report cannot prove its
+analysis/run relationship through fields actually present in its schema, the
+candidate records that binding as unavailable and cannot be promoted.
+
+Idle delay is a policy choice, not a measured playback fact: it is accepted
+only from the approved policy, registered metadata, or a bound reviewer input,
+and reviewer input is labelled as such. Engine guarantees remain exclusive to
+4F certification.
+Candidates with missing, conflicting, provider-specific, or advanced behavior
+are review artifacts only and are not promoted. A complete candidate may also
+write `target-capability-observations.json`, still unapproved and never applied
+to Android.
+
+The approved CVM target is a special authoritative source: 4G extracts its
+complete isolated policy from the exact current `content.js` bytes, validates
+the matching and transport values, and reconciles them with any supplied
+registered metadata or reviewer input. Consequently, “CVM missing idle” is not
+a truthful fixture while that approved policy supplies `idleMs`. Missing idle
+is modelled with a non-approved Vimeo-like target; its otherwise complete
+evidence remains insufficient until a bound reviewer selects the idle policy.
+
+Characterization inputs are not a second production registry. The bounded
+ABS/Tego adapter is a sanitized representation of the existing structured 4E
+characterization and preserves its seven advanced requirements, so its result
+remains `engine-extension-study`. The bounded Island adapter preserves the
+existing dual-player selection evidence and remains `provider-specific`, with
+a downstream `provider-specific-helper` recommendation. Both adapters retain
+exact-byte bindings and field provenance, reject unknown or unsafe content, and
+cannot manufacture matching or transport facts absent from their basis.
+
+Target candidates and promoted target observations never carry certified
+engine guarantees or source-only policy implementation fields. Compatible 4F
+assembly is the only layer that may add one-owned-timer, interaction-reveal,
+pagehide-cleanup, and URL-free-diagnostic guarantees. Generation, promotion,
+assembly, and recommendation remain offline review operations; none applies a
+policy to Android automatically.

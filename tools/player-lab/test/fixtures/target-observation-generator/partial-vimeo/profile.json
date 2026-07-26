@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "authority": "structured-profile-target-evidence",
+  "providerId": "partial-vimeo",
+  "targetId": "partial-vimeo",
+  "playerFamily": "vimeo",
+  "analysisSha256": "40e40578eaa6affb73e498ed90a6fa7f962e67120ae3247e3cbb2c9ce6b443ba",
+  "transportAutohide": { "enabled": true }
+}

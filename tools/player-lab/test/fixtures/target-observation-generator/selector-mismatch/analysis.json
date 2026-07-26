@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "providerId": "selector-vimeo",
+  "targetId": "selector-vimeo",
+  "evidenceSummary": { "primaryPlayerFamily": "vimeo" }
+}

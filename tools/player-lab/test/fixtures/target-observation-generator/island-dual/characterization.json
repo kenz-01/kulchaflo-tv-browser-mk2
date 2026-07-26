@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "adapterVersion": "0.1.0-checkpoint4g",
+  "authority": "bounded-existing-characterization-adapter",
+  "characterizationKind": "island-dual-player",
+  "basisArtifact": "tools/player-lab/test/fixtures/helper-evidence-bridge/island-dual/helper-capability-observations.json",
+  "basisSha256": "3e7dcb8e5c1aae97ee176b63798dee8e67a02aa5e581d9e06949bdebb52ba1ed",
+  "providerId": "island-tv",
+  "playerFamily": "vimeo",
+  "analysisSha256": "c2c7813361fbea0d009e0813a6b58aebcca114ede33f22f05bded6f39f05c441",
+  "trustedMatchingEvidence": {
+    "frameHost": "vimeo.com",
+    "allowFrameSubdomains": false,
+    "pathPrefix": "/event/",
+    "pathSuffix": "/embed",
+    "referrerHosts": ["island.example.test"]
+  },
+  "unsupportedRequirements": [],
+  "providerSpecificBehavior": true,
+  "conflictingEvidence": false,
+  "behaviorEvidence": ["dual-player-selection"]
+}

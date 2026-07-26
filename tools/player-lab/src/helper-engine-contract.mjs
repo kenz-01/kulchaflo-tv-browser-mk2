@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { lstatSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertProviderId } from './redact-url.mjs';
 import { PLAYER_FAMILIES } from './player-families.mjs';
 import { APPROVED_VIMEO_SELECTORS, SUPPORTED_CAPABILITIES, assertSafeHelperProposal, resolveSafePlayerLabReportsOutputRoot } from './helper-proposal.mjs';
-import { filesystemSafeTimestamp } from './output-directory.mjs';
+import { writeStagedJsonOutput } from './staged-json-output.mjs';
 import { validateCapabilityObservations } from './helper-evidence-bridge.mjs';
 
 export const ENGINE_ID = 'transport-autohide-v1';
@@ -133,17 +133,17 @@ export function assembleCapabilityObservations({ analysisPath, targetObservation
 export function certifyHelperEngine({ outputRoot, now = () => new Date(), ...options } = {}) {
   const certification = certifyTransportAutohideEngine({ ...options, generatedAt: now().toISOString() });
   if (certification.certificationStatus !== 'certified') throw new Error('Engine certification failed.');
-  return writeStaged({ outputRoot: resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_ENGINE_CERTIFICATION_OUTPUT_ROOT), now, artifacts: { 'engine-certification.json': certification } });
+  return writeStagedJsonOutput({ outputRoot: resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_ENGINE_CERTIFICATION_OUTPUT_ROOT), now, artifacts: { 'engine-certification.json': certification }, result: { certification } });
 }
 
 export function assembleHelperObservations({ outputRoot, now = () => new Date(), ...options } = {}) {
   const result = assembleCapabilityObservations(options);
-  return writeStaged({ outputRoot: resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_OBSERVATION_ASSEMBLY_OUTPUT_ROOT), now, artifacts: { 'helper-capability-observations.json': result.observations, 'helper-observation-assembly-provenance.json': result.provenance }, result });
+  return writeStagedJsonOutput({ outputRoot: resolveSafePlayerLabReportsOutputRoot(outputRoot, DEFAULT_OBSERVATION_ASSEMBLY_OUTPUT_ROOT), now, artifacts: { 'helper-capability-observations.json': result.observations, 'helper-observation-assembly-provenance.json': result.provenance }, result });
 }
 
 function guaranteesFrom(certification) { return Object.fromEntries(certification.supportedGuarantees.map((key) => [key, true])); }
 function validateAnalysis(analysis) { if (!plain(analysis) || analysis.schemaVersion !== 1) throw new Error('Analysis artifact schemaVersion must be 1.'); assertProviderId(analysis.providerId); if (analysis.targetId != null) assertProviderId(analysis.targetId); if (!plain(analysis.evidenceSummary) || !PLAYER_FAMILIES.includes(analysis.evidenceSummary.primaryPlayerFamily)) throw new Error('Analysis artifact must contain a canonical primary player family.'); }
-function validateTargetObservation(target, analysis, analysisSha256) {
+export function validateTargetObservation(target, analysis, analysisSha256) {
   if (!plain(target) || target.schemaVersion !== 1 || target.authority !== 'directly-observed-structured-evidence') throw new Error('Target observations must be direct structured evidence.');
   const allowed = new Set(['schemaVersion', 'authority', 'providerId', 'targetId', 'playerFamily', 'analysisSha256', 'trustedMatchingEvidence', 'transportAutohide', 'unsupportedRequirements', 'providerSpecificBehavior', 'conflictingEvidence', 'sourceEvidenceReferences']);
   if (Object.keys(target).some((key) => !allowed.has(key))) throw new Error('Target observations contain an unknown capability or field.');
@@ -206,37 +206,6 @@ function sha256(value) { return createHash('sha256').update(value).digest('hex')
 function readRegularBytes(path, message) { const stat = safeLstat(path, message); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(message); return readFileSync(path); }
 function readRegularText(path, message) { return readRegularBytes(path, message).toString('utf8'); }
 function readJsonArtifact(path, label) { const bytes = readRegularBytes(path, `${label} must be a regular file.`); try { return { value: JSON.parse(bytes.toString('utf8')), sha256: sha256(bytes) }; } catch (error) { throw new Error(`Malformed ${label}: ${error.message}`); } }
-function writeStaged({ outputRoot, now, artifacts, result = null }) {
-  const root = resolve(outputRoot);
-  mkdirSync(root, { recursive: true });
-  const rootStat = lstatSync(root);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Staged output root must be a regular directory.');
-  const timestamp = filesystemSafeTimestamp(now());
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const suffix = attempt ? `-${attempt + 1}` : '';
-    const incomplete = resolve(root, `.incomplete-${timestamp}${suffix}`);
-    const finalDir = resolve(root, `${timestamp}${suffix}`);
-    if (dirname(incomplete) !== root || dirname(finalDir) !== root || existsSync(incomplete) || existsSync(finalDir)) continue;
-    try { mkdirSync(incomplete); } catch (error) { if (error.code === 'EEXIST') continue; throw error; }
-    let complete = false;
-    try {
-      const stagingStat = lstatSync(incomplete);
-      if (!stagingStat.isDirectory() || stagingStat.isSymbolicLink()) throw new Error('Staged output directory is invalid.');
-      for (const [name, value] of Object.entries(artifacts)) writeFileSync(resolve(incomplete, name), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-      for (const name of Object.keys(artifacts)) {
-        const file = resolve(incomplete, name); const stat = lstatSync(file);
-        if (dirname(file) !== incomplete || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid assembled artifact.');
-      }
-      if (existsSync(finalDir)) throw new Error('Completed staged output directory already exists.');
-      renameSync(incomplete, finalDir);
-      complete = true;
-      return deepFreeze({ outputDir: finalDir, ...(result ?? { certification: artifacts['engine-certification.json'] }) });
-    } finally {
-      if (!complete && dirname(incomplete) === root && basename(incomplete).startsWith('.incomplete-')) rmSync(incomplete, { recursive: true, force: true });
-    }
-  }
-  throw new Error('Unable to allocate unique staged output directory.');
-}
 function safeSelector(value) { return typeof value === 'string' && value.length > 0 && value.length <= 160 && !/[\u0000-\u001f\u007f]|:\/\/|<|>|\{|\}|;|@import|javascript:/i.test(value); }
 function safeLstat(path, message) { try { return lstatSync(resolve(path)); } catch { throw new Error(message); } }
 function plain(value) { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
