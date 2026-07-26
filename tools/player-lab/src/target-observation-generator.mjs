@@ -252,7 +252,159 @@ function sameKeys(value, expected) { return Object.keys(value).sort().join('|') 
 function validIdle(value) { return Number.isInteger(value) && value >= 500 && value <= 10000; }
 function sameSet(left, right) { return Array.isArray(left) && left.length === right.length && [...left].sort().join('|') === [...right].sort().join('|'); }
 export function createApprovedCvmPolicySource(bytes) { if (!Buffer.isBuffer(bytes)) throw new Error('Approved policy source must be exact bytes.'); const extracted = extractApprovedCvmPolicy(bytes.toString('utf8')); const normalized = { ...extracted, targetId: 'cvm-tv', playerFamily: extracted.normalizedPlayerFamily }; const source = { artifactId: 'app-gv/src/main/assets/gv_media_observer/content.js', sha256: sha256(bytes) }; return deepFreeze({ normalized, source, binding: binding('existing-approved-policy', 'existing-approved-policy', source, normalized) }); }
-export function isolateCvmPolicyBlock(text) { const registryStart = text.indexOf('const PLAYER_HELPER_REGISTRY = Object.freeze(['); if (registryStart < 0) throw new Error('Approved policy registry is missing.'); const arrayOpen = text.indexOf('[', registryStart); const arrayClose = balancedDelimited(text, arrayOpen, '[', ']'); if (arrayClose < 0) throw new Error('Approved policy registry is malformed.'); const blocks = []; let index = arrayOpen + 1; while (index < arrayClose) { index = skipSpaceComma(text, index); if (index >= arrayClose) break; if (!text.startsWith('Object.freeze(', index)) throw new Error('Approved policy registry entry is malformed.'); const objectOpen = text.indexOf('{', index); const objectClose = balancedClose(text, objectOpen); if (objectOpen < 0 || objectClose < 0 || objectClose > arrayClose) throw new Error('Approved policy block is malformed.'); const closeParen = skipSpace(text, objectClose + 1); if (text[closeParen] !== ')') throw new Error('Approved policy wrapper is malformed.'); const block = text.slice(objectOpen, objectClose + 1); const idMatches = [...block.matchAll(/^\s*id\s*:\s*"cvm-tv-embedded-vimeo"/gm)]; if (idMatches.length) blocks.push(block); index = closeParen + 1; } if (blocks.length !== 1) throw new Error('Expected exactly one CVM approved policy.'); return blocks[0]; }
+export function parsePlayerHelperRegistry(text) {
+  if (typeof text !== 'string') throw new Error('Player helper registry source must be text.');
+  const policies = registryPolicyBlocks(text).map(parseRuntimePolicyBlock);
+  if (!policies.length) throw new Error('Player helper registry must contain at least one policy.');
+  if (new Set(policies.map((policy) => policy.id)).size !== policies.length) throw new Error('Player helper registry contains duplicate policy IDs.');
+  if (new Set(policies.map((policy) => policy.providerId)).size !== policies.length) throw new Error('Player helper registry contains ambiguous provider policies.');
+  return deepFreeze(policies);
+}
+function registryPolicyBlocks(text) {
+  const arrayOpen = registryDeclarationArrayOpen(text);
+  const arrayClose = balancedDelimited(text, arrayOpen, '[', ']');
+  if (arrayClose < 0) throw new Error('Player helper registry is malformed.');
+  const closeParen = skipSpace(text, arrayClose + 1);
+  if (text[closeParen] !== ')') throw new Error('Player helper registry wrapper is malformed.');
+  const statementEnd = skipSpace(text, closeParen + 1);
+  if (text[statementEnd] !== ';') throw new Error('Player helper registry statement is malformed.');
+  const blocks = []; let index = skipSpace(text, arrayOpen + 1);
+  while (index < arrayClose) {
+    if (!text.startsWith('Object.freeze(', index)) throw new Error('Player helper registry entry is malformed.');
+    const wrapperValueStart = skipSpace(text, index + 'Object.freeze('.length);
+    const objectOpen = text.indexOf('{', index);
+    if (wrapperValueStart !== objectOpen) throw new Error('Player helper policy wrapper contains an unexpected expression.');
+    const objectClose = balancedClose(text, objectOpen);
+    if (objectOpen < 0 || objectClose < 0 || objectClose > arrayClose) throw new Error('Player helper policy block is malformed.');
+    const policyCloseParen = skipSpace(text, objectClose + 1);
+    if (text[policyCloseParen] !== ')') throw new Error('Player helper policy wrapper is malformed.');
+    blocks.push(text.slice(objectOpen, objectClose + 1));
+    index = skipSpace(text, policyCloseParen + 1);
+    if (index < arrayClose) {
+      if (text[index] !== ',') throw new Error('Player helper registry policy separator is malformed.');
+      index = skipSpace(text, index + 1);
+    }
+  }
+  return blocks;
+}
+function registryDeclarationArrayOpen(text) {
+  const tokens = lexicalTokens(text);
+  const declarations = [];
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    if (tokens[index].value === 'const' && tokens[index + 1].value === 'PLAYER_HELPER_REGISTRY') declarations.push(index);
+  }
+  if (declarations.length === 0) throw new Error('Player helper registry is missing.');
+  if (declarations.length !== 1) throw new Error('Player helper registry has multiple declarations.');
+  const index = declarations[0];
+  const expected = ['const', 'PLAYER_HELPER_REGISTRY', '=', 'Object', '.', 'freeze', '(', '['];
+  if (!expected.every((value, offset) => tokens[index + offset]?.value === value)) throw new Error('Player helper registry declaration is malformed.');
+  return tokens[index + expected.length - 1].start;
+}
+function lexicalTokens(text) {
+  const tokens = [];
+  for (let index = 0; index < text.length;) {
+    const ch = text[index];
+    if (/\s/.test(ch)) { index += 1; continue; }
+    if (ch === '/' && text[index + 1] === '/') {
+      index += 2;
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
+    if (ch === '/' && text[index + 1] === '*') {
+      const close = text.indexOf('*/', index + 2);
+      if (close < 0) throw new Error('Player helper registry source has an unterminated block comment.');
+      index = close + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { index = skipLexicalString(text, index, ch); continue; }
+    if (ch === '`') { index = skipLexicalTemplate(text, index); continue; }
+    const identifier = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(text.slice(index));
+    if (identifier) {
+      tokens.push({ value: identifier[0], start: index });
+      index += identifier[0].length;
+      continue;
+    }
+    tokens.push({ value: ch, start: index });
+    index += 1;
+  }
+  return tokens;
+}
+function skipLexicalString(text, start, quote) {
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (text[index] === '\\') { index += 1; continue; }
+    if (text[index] === quote) return index + 1;
+  }
+  throw new Error('Player helper registry source has an unterminated string.');
+}
+function skipLexicalTemplate(text, start) {
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (text[index] === '\\') { index += 1; continue; }
+    if (text[index] === '`') return index + 1;
+    if (text[index] === '$' && text[index + 1] === '{') {
+      const close = skipTemplateExpression(text, index + 2);
+      if (text.slice(index + 2, close).includes('PLAYER_HELPER_REGISTRY')) throw new Error('Player helper registry declaration inside a template expression is ambiguous.');
+      index = close;
+    }
+  }
+  throw new Error('Player helper registry source has an unterminated template string.');
+}
+function skipTemplateExpression(text, start) {
+  let depth = 1;
+  for (let index = start; index < text.length; index += 1) {
+    const ch = text[index];
+    if (ch === '"' || ch === "'") { index = skipLexicalString(text, index, ch) - 1; continue; }
+    if (ch === '`') { index = skipLexicalTemplate(text, index) - 1; continue; }
+    if (ch === '/' && text[index + 1] === '/') {
+      index += 2;
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
+    if (ch === '/' && text[index + 1] === '*') {
+      const close = text.indexOf('*/', index + 2);
+      if (close < 0) throw new Error('Player helper registry source has an unterminated template comment.');
+      index = close + 1;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    else if (ch === '}' && --depth === 0) return index;
+  }
+  throw new Error('Player helper registry source has an unterminated template expression.');
+}
+function parseRuntimePolicyBlock(block) {
+  const policy = parseObjectProperties(block, ['id', 'providerId', 'playerFamily', 'match', 'capabilities']);
+  const matchFields = parseFrozenObject(property(policy, 'match'), ['frameHost', 'allowFrameSubdomains', 'pathPrefix', 'pathSuffix', 'referrerHosts']);
+  const capabilityFields = parseFrozenObject(property(policy, 'capabilities'), ['transportAutohide']);
+  const transportFields = parseFrozenObject(property(capabilityFields, 'transportAutohide'), ['enabled', 'idleMs', 'idleClass', 'styleId', 'selectors']);
+  const runtimePolicy = {
+    id: stringValue(property(policy, 'id')),
+    providerId: stringValue(property(policy, 'providerId')),
+    playerFamily: stringValue(property(policy, 'playerFamily')),
+    match: {
+      frameHost: stringValue(property(matchFields, 'frameHost')),
+      allowFrameSubdomains: booleanValue(property(matchFields, 'allowFrameSubdomains')),
+      pathPrefix: stringValue(property(matchFields, 'pathPrefix')),
+      pathSuffix: stringValue(property(matchFields, 'pathSuffix')),
+      referrerHosts: frozenStringArray(property(matchFields, 'referrerHosts')),
+    },
+    capabilities: {
+      transportAutohide: {
+        enabled: booleanValue(property(transportFields, 'enabled')),
+        idleMs: integerValue(property(transportFields, 'idleMs')),
+        idleClass: stringValue(property(transportFields, 'idleClass')),
+        styleId: stringValue(property(transportFields, 'styleId')),
+        selectors: frozenStringArray(property(transportFields, 'selectors')),
+      },
+    },
+  };
+  assertProviderId(runtimePolicy.providerId);
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/.test(runtimePolicy.id)) throw new Error('Player helper policy ID is invalid.');
+  if (runtimePolicy.playerFamily !== 'embedded-vimeo') throw new Error('Player helper runtime family is unsupported.');
+  validateMatching(runtimePolicy.match);
+  const transport = runtimePolicy.capabilities.transportAutohide;
+  if (transport.enabled !== true || !validIdle(transport.idleMs) || !/^[a-z][a-z0-9-]{0,119}$/.test(transport.idleClass) || !/^[a-z][a-z0-9-]{0,119}$/.test(transport.styleId) || !transport.selectors.every(SAFE_SELECTOR)) throw new Error('Player helper transport policy is invalid.');
+  return runtimePolicy;
+}
+export function isolateCvmPolicyBlock(text) { const blocks = registryPolicyBlocks(text).filter((block) => [...block.matchAll(/^\s*id\s*:\s*"cvm-tv-embedded-vimeo"/gm)].length > 0); if (blocks.length !== 1) throw new Error('Expected exactly one CVM approved policy.'); return blocks[0]; }
 export function extractApprovedCvmPolicy(text) {
   const policy = parseObjectProperties(isolateCvmPolicyBlock(text), ['id', 'providerId', 'playerFamily', 'match', 'capabilities']);
   const match = parseFrozenObject(property(policy, 'match'), ['frameHost', 'allowFrameSubdomains', 'pathPrefix', 'pathSuffix', 'referrerHosts']);

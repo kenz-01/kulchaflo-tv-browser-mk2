@@ -1,6 +1,6 @@
 {
   "name": "kulchaflo-player-lab",
-  "version": "0.1.0-checkpoint4g",
+  "version": "0.1.0-checkpoint4h",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,7 +19,9 @@
     "recommend-helper": "node src/recommend-helper-cli.mjs",
     "certify-helper-engine": "node src/helper-engine-cli.mjs",
     "assemble-helper-observations": "node src/assemble-helper-observations-cli.mjs",
-    "derive-target-observations": "node src/derive-target-observations-cli.mjs"
+    "derive-target-observations": "node src/derive-target-observations-cli.mjs",
+    "prepare-policy-review": "node src/prepare-policy-review-cli.mjs",
+    "generate-policy-diff": "node src/generate-policy-diff-cli.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1"
