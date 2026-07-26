@@ -254,13 +254,23 @@ function sameSet(left, right) { return Array.isArray(left) && left.length === ri
 export function createApprovedCvmPolicySource(bytes) { if (!Buffer.isBuffer(bytes)) throw new Error('Approved policy source must be exact bytes.'); const extracted = extractApprovedCvmPolicy(bytes.toString('utf8')); const normalized = { ...extracted, targetId: 'cvm-tv', playerFamily: extracted.normalizedPlayerFamily }; const source = { artifactId: 'app-gv/src/main/assets/gv_media_observer/content.js', sha256: sha256(bytes) }; return deepFreeze({ normalized, source, binding: binding('existing-approved-policy', 'existing-approved-policy', source, normalized) }); }
 export function parsePlayerHelperRegistry(text) {
   if (typeof text !== 'string') throw new Error('Player helper registry source must be text.');
-  const policies = registryPolicyBlocks(text).map(parseRuntimePolicyBlock);
+  const policies = registryPolicyLayout(text).entries.map((entry) => parseRuntimePolicyBlock(entry.block));
   if (!policies.length) throw new Error('Player helper registry must contain at least one policy.');
   if (new Set(policies.map((policy) => policy.id)).size !== policies.length) throw new Error('Player helper registry contains duplicate policy IDs.');
   if (new Set(policies.map((policy) => policy.providerId)).size !== policies.length) throw new Error('Player helper registry contains ambiguous provider policies.');
   return deepFreeze(policies);
 }
-function registryPolicyBlocks(text) {
+export function inspectPlayerHelperRegistry(text) {
+  if (typeof text !== 'string') throw new Error('Player helper registry source must be text.');
+  const layout = registryPolicyLayout(text);
+  const policies = parsePlayerHelperRegistry(text);
+  return deepFreeze({
+    arrayOpen: layout.arrayOpen,
+    arrayClose: layout.arrayClose,
+    entries: layout.entries.map((entry, index) => ({ ...entry, policy: policies[index] })),
+  });
+}
+function registryPolicyLayout(text) {
   const arrayOpen = registryDeclarationArrayOpen(text);
   const arrayClose = balancedDelimited(text, arrayOpen, '[', ']');
   if (arrayClose < 0) throw new Error('Player helper registry is malformed.');
@@ -268,8 +278,9 @@ function registryPolicyBlocks(text) {
   if (text[closeParen] !== ')') throw new Error('Player helper registry wrapper is malformed.');
   const statementEnd = skipSpace(text, closeParen + 1);
   if (text[statementEnd] !== ';') throw new Error('Player helper registry statement is malformed.');
-  const blocks = []; let index = skipSpace(text, arrayOpen + 1);
+  const entries = []; let index = skipSpace(text, arrayOpen + 1);
   while (index < arrayClose) {
+    const wrapperStart = index;
     if (!text.startsWith('Object.freeze(', index)) throw new Error('Player helper registry entry is malformed.');
     const wrapperValueStart = skipSpace(text, index + 'Object.freeze('.length);
     const objectOpen = text.indexOf('{', index);
@@ -278,14 +289,21 @@ function registryPolicyBlocks(text) {
     if (objectOpen < 0 || objectClose < 0 || objectClose > arrayClose) throw new Error('Player helper policy block is malformed.');
     const policyCloseParen = skipSpace(text, objectClose + 1);
     if (text[policyCloseParen] !== ')') throw new Error('Player helper policy wrapper is malformed.');
-    blocks.push(text.slice(objectOpen, objectClose + 1));
+    entries.push({
+      wrapperStart,
+      wrapperEnd: policyCloseParen + 1,
+      objectStart: objectOpen,
+      objectEnd: objectClose + 1,
+      block: text.slice(objectOpen, objectClose + 1),
+      wrapper: text.slice(wrapperStart, policyCloseParen + 1),
+    });
     index = skipSpace(text, policyCloseParen + 1);
     if (index < arrayClose) {
       if (text[index] !== ',') throw new Error('Player helper registry policy separator is malformed.');
       index = skipSpace(text, index + 1);
     }
   }
-  return blocks;
+  return { arrayOpen, arrayClose, entries };
 }
 function registryDeclarationArrayOpen(text) {
   const tokens = lexicalTokens(text);
@@ -404,7 +422,7 @@ function parseRuntimePolicyBlock(block) {
   if (transport.enabled !== true || !validIdle(transport.idleMs) || !/^[a-z][a-z0-9-]{0,119}$/.test(transport.idleClass) || !/^[a-z][a-z0-9-]{0,119}$/.test(transport.styleId) || !transport.selectors.every(SAFE_SELECTOR)) throw new Error('Player helper transport policy is invalid.');
   return runtimePolicy;
 }
-export function isolateCvmPolicyBlock(text) { const blocks = registryPolicyBlocks(text).filter((block) => [...block.matchAll(/^\s*id\s*:\s*"cvm-tv-embedded-vimeo"/gm)].length > 0); if (blocks.length !== 1) throw new Error('Expected exactly one CVM approved policy.'); return blocks[0]; }
+export function isolateCvmPolicyBlock(text) { const blocks = registryPolicyLayout(text).entries.map((entry) => entry.block).filter((block) => [...block.matchAll(/^\s*id\s*:\s*"cvm-tv-embedded-vimeo"/gm)].length > 0); if (blocks.length !== 1) throw new Error('Expected exactly one CVM approved policy.'); return blocks[0]; }
 export function extractApprovedCvmPolicy(text) {
   const policy = parseObjectProperties(isolateCvmPolicyBlock(text), ['id', 'providerId', 'playerFamily', 'match', 'capabilities']);
   const match = parseFrozenObject(property(policy, 'match'), ['frameHost', 'allowFrameSubdomains', 'pathPrefix', 'pathSuffix', 'referrerHosts']);
