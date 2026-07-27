@@ -23,6 +23,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.kulchaflo.tv.mk2.gv.BuildConfig
 import com.kulchaflo.tv.mk2.gv.R
 import com.kulchaflo.tv.mk2.gv.media.GvBrowserMediaController
+import com.kulchaflo.tv.mk2.gv.media.GvMediaCandidateRanker
 import com.kulchaflo.tv.mk2.gv.media.GvMediaPathController
 import com.kulchaflo.tv.mk2.gv.media.GvPromotedMediaPlayer
 import com.kulchaflo.tv.mk2.gv.tabs.GvTab
@@ -235,7 +236,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private var canGoBack = false
     private var currentUrl: String = BuildConfig.DEFAULT_START_URL
     private var selectedOverlayIndex: Int = 0
-    private val lastProbeUrlBySession = LinkedHashMap<GeckoSession, String>()
     private val loadRetryAttemptsBySession = LinkedHashMap<GeckoSession, LinkedHashMap<String, Int>>()
     private val facebookCompatLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val facebookPlaybackDiagLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
@@ -1127,14 +1127,6 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     maybeDispatchYouTubeConsentCompat(session, pageUrl, reason = "page-stop")
                     armYouTubeAutoFullscreen(session, pageUrl)
                     maybeScheduleYouTubePremiumPopupChecks(session, pageUrl, reason = "page-stop")
-                    if (shouldPromoteDirectMedia(pageUrl)) {
-                        triggerDirectMediaProbe(session, pageUrl)
-                    } else {
-                        GvLogger.i(
-                            "GvExt",
-                            "direct media probe skipped tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$pageUrl reason=live-media-surface"
-                        )
-                    }
                     if (shouldApplyUnifiedCompat(pageUrl)) {
                         triggerUnifiedPageCompat(session, pageUrl)
                     } else {
@@ -1881,7 +1873,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                 }
                 GvLogger.i(
                     "GvMedia",
-                    "promote accepted sourceKind=EXTRACTED_STREAM pageKind=${observation.pageKind} url=${observation.url} reason=${observation.reason}"
+                    "promote accepted sourceKind=EXTRACTED_STREAM pageKind=${observation.pageKind} reason=${observation.reason}"
                 )
                 geckoView.visibility = View.GONE
                 promotedMediaPlayer.play(observation)
@@ -1922,57 +1914,77 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         }
     }
 
-    private fun triggerDirectMediaProbe(session: GeckoSession, pageUrl: String) {
-        val normalizedUrl = pageUrl.ifBlank { return }
-        if (normalizedUrl == "about:blank") {
-            return
+    private fun parseMediaCandidateDescriptors(candidates: JSONArray): List<GvMediaCandidateRanker.Candidate> {
+        val parsed = ArrayList<GvMediaCandidateRanker.Candidate>()
+        val seenCandidateIds = LinkedHashSet<String>()
+        val allowedSourceKinds = setOf(
+            "direct-hls",
+            "direct-mp4",
+            "direct-webm",
+            "direct-audio",
+            "managed-media-source",
+            "unsupported-source",
+            "unavailable",
+        )
+        val allowedMimeTypes = setOf(
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegurl",
+            "video/mp4",
+            "video/webm",
+        )
+        val allowedDurationCategories = setOf(
+            "finite-short",
+            "finite-long",
+            "infinite-live",
+            "unavailable",
+        )
+        for (index in 0 until minOf(candidates.length(), 64)) {
+            val candidate = candidates.optJSONObject(index) ?: continue
+            val candidateId = candidate.optString("candidateId").takeIf {
+                it.matches(Regex("^[a-z0-9][a-z0-9-]{0,95}$"))
+            } ?: continue
+            if (!seenCandidateIds.add(candidateId)) continue
+            val frameId = candidate.optString("frameId").takeIf {
+                it.matches(Regex("^[a-z0-9][a-z0-9-]{0,63}$"))
+            } ?: continue
+            val sourceKind = candidate.optString("sourceKind").takeIf { it in allowedSourceKinds } ?: continue
+            val sourceUrl = candidate.optString("src").takeIf { it.length <= 2_048 }.orEmpty()
+            val mimeType = candidate.optString("mimeType")
+                .trim()
+                .lowercase()
+                .takeIf { it in allowedMimeTypes }
+            val durationCategory = candidate.optString("durationCategory")
+                .takeIf { it in allowedDurationCategories }
+                ?: "unavailable"
+            parsed += GvMediaCandidateRanker.Candidate(
+                candidateId = candidateId,
+                frameId = frameId,
+                frameLocalOrder = candidate.optInt("frameLocalOrder").coerceIn(1, 64),
+                sourceKind = sourceKind,
+                sourceUrl = sourceUrl,
+                mimeType = mimeType,
+                tagName = candidate.optString("tagName").take(16),
+                visible = candidate.optBoolean("visible"),
+                renderedWidth = candidate.optInt("renderedWidth").coerceIn(0, 16_384),
+                renderedHeight = candidate.optInt("renderedHeight").coerceIn(0, 16_384),
+                visibleArea = candidate.optInt("visibleArea").coerceIn(0, 100_000_000),
+                viewportIntersection = candidate.optDouble("viewportIntersection").coerceIn(0.0, 1.0),
+                mediaError = candidate.optInt("mediaError").coerceIn(0, 16),
+                readyState = candidate.optInt("readyState").coerceIn(0, 4),
+                paused = candidate.optBoolean("paused"),
+                ended = candidate.optBoolean("ended"),
+                muted = candidate.optBoolean("muted"),
+                autoplay = candidate.optBoolean("autoplay"),
+                loop = candidate.optBoolean("loop"),
+                controls = candidate.optBoolean("controls"),
+                durationCategory = durationCategory,
+                backgroundAncestry = candidate.optBoolean("backgroundAncestry"),
+                playerManagedAncestry = candidate.optBoolean("playerManagedAncestry"),
+                hiddenSupportElement = candidate.optBoolean("hiddenSupportElement"),
+                managedMediaSource = candidate.optBoolean("managedMediaSource"),
+            )
         }
-        if (lastProbeUrlBySession[session] == normalizedUrl) {
-            return
-        }
-        lastProbeUrlBySession[session] = normalizedUrl
-        val script = buildString {
-            append("javascript:(function(){")
-            append("try{")
-            append("var media=Array.from(document.querySelectorAll('video,audio'));")
-            append("var directCandidates=[];")
-            append("var isVisible=function(el){")
-            append("if(!el)return false;")
-            append("var style=window.getComputedStyle(el);")
-            append("var rect=el.getBoundingClientRect();")
-            append("return style&&style.display!=='none'&&style.visibility!=='hidden'&&rect.width>2&&rect.height>2;")
-            append("};")
-            append("media.forEach(function(element){")
-            append("var currentSrc=element.currentSrc||element.src||'';")
-            append("var sourceChildren=Array.from(element.querySelectorAll('source[src]')).map(function(source){return source.src||'';});")
-            append("var allSources=[currentSrc].concat(sourceChildren).filter(Boolean);")
-            append("allSources.forEach(function(src){")
-            append("directCandidates.push({")
-            append("src:src,")
-            append("tagName:(element.tagName||'').toLowerCase(),")
-            append("visible:isVisible(element),")
-            append("isBlob:src.startsWith('blob:'),")
-            append("mimeType:element.getAttribute('type')||'',")
-            append("currentTime:(typeof element.currentTime==='number'?element.currentTime:0),")
-            append("duration:(typeof element.duration==='number'?element.duration:0)")
-            append("});")
-            append("});")
-            append("});")
-            append("window.prompt(")
-            append(JSONObject.quote(PROMPT_PREFIX))
-            append("+JSON.stringify({")
-            append("type:'media-evidence',")
-            append("phase:'activity-js-probe',")
-            append("pageUrl:window.location.href,")
-            append("title:document.title||'',")
-            append("candidateCount:directCandidates.length,")
-            append("directCandidates:directCandidates")
-            append("}), '');")
-            append("}catch(_){}")
-            append("})();")
-        }
-        GvLogger.i("GvExt", "direct media probe dispatched tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$normalizedUrl")
-        session.loadUri(script)
+        return parsed
     }
 
     private fun triggerUnifiedPageCompat(session: GeckoSession, pageUrl: String) {
@@ -15068,20 +15080,50 @@ return changed>0;
             restoreCgtvPointerIfHidden(reason = "wrong-layer")
             return
         }
-        for (index in 0 until candidates.length()) {
-            val candidate = candidates.optJSONObject(index) ?: continue
-            val sourceUrl = candidate.optString("src")
-            val mimeType = candidate.optString("mimeType").ifBlank { null }
-            val observation = mediaPathController.onExtensionMediaEvidence(
-                pageUrl = pageUrl,
-                sourceUrl = sourceUrl,
-                mimeType = mimeType,
-                title = title,
-            ) ?: continue
-            if (tabController.getActiveTab()?.session == session) {
+        if (tabController.getActiveTab()?.session != session) {
+            return
+        }
+        val descriptors = parseMediaCandidateDescriptors(candidates)
+        val stableObservationCount = payload.optInt("stableObservationCount").coerceIn(0, 10)
+        val requiredStableObservations = payload.optInt("settlementRequiredObservations", 3).coerceIn(2, 5)
+        val decision = GvMediaCandidateRanker.decide(
+            candidates = descriptors,
+            stableObservationCount = stableObservationCount,
+            requiredStableObservations = requiredStableObservations,
+        )
+        val reasonCodes = decision.reasonCodes.joinToString(",")
+        GvLogger.i(
+            "GvMedia",
+            "candidate decision=${decision.state.wireName} reasons=$reasonCodes " +
+                "candidateCount=${descriptors.size} selected=${decision.selectedCandidate?.candidateId ?: "none"}"
+        )
+        when (decision.state) {
+            GvMediaCandidateRanker.DecisionState.PROMOTE_DIRECT_CANDIDATE -> {
+                val selected = decision.selectedCandidate ?: return
+                val observation = mediaPathController.onExtensionMediaEvidence(
+                    pageUrl = pageUrl,
+                    sourceUrl = selected.sourceUrl,
+                    mimeType = selected.mimeType,
+                    title = null,
+                ) ?: return
                 handleMediaObservation(observation)
             }
-            break
+
+            GvMediaCandidateRanker.DecisionState.RETAIN_WEB_PLAYER,
+            GvMediaCandidateRanker.DecisionState.SUPPRESS_DECORATIVE_CANDIDATE -> {
+                val activeSource = promotedMediaPlayer.currentSourceUrl()
+                if (activeSource != null && descriptors.any { it.sourceUrl == activeSource }) {
+                    promotedMediaPlayer.stop(reason = "candidate-ranking-retain-web")
+                }
+                geckoView.visibility = View.VISIBLE
+            }
+
+            GvMediaCandidateRanker.DecisionState.WAIT_FOR_CANDIDATE_SETTLEMENT,
+            GvMediaCandidateRanker.DecisionState.NO_ELIGIBLE_DIRECT_CANDIDATE -> {
+                if (!promotedMediaPlayer.isPromoted()) {
+                    geckoView.visibility = View.VISIBLE
+                }
+            }
         }
     }
 

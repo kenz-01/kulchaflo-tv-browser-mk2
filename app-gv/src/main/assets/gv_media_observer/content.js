@@ -51,6 +51,9 @@
     "mousemove", "pointermove", "mousedown", "pointerdown", "keydown", "touchstart"
   ]);
   let lastSignature = "";
+  let mediaCandidateSettlement = { signature: "", stableObservationCount: 0 };
+  let mediaPublishTimer = null;
+  let mediaCollectionActive = true;
   let lastTegoSignature = "";
   let absTegoStartupReprobeStarted = false;
   let absTegoStartupReprobeStopped = false;
@@ -7591,40 +7594,61 @@
   }
 
   function collect() {
+    const descriptor = globalThis.KfMediaCandidateDescriptor;
     const mediaElements = Array.from(document.querySelectorAll("video, audio"));
     const directCandidates = [];
+    const frameRole = window.top === window ? "top-level" : "child-frame";
+    const frameId = frameRole === "top-level" ? "top-frame" : "child-frame";
 
-    mediaElements.forEach((element) => {
+    mediaElements.forEach((element, mediaIndex) => {
       const currentSrc = element.currentSrc || element.src || "";
-      const sourceChildren = Array.from(element.querySelectorAll("source[src]")).map((source) => source.src || "");
-      const allSources = [currentSrc, ...sourceChildren].filter(Boolean);
-      allSources.forEach((src) => {
-        directCandidates.push({
-          src,
-          tagName: element.tagName.toLowerCase(),
-          visible: isVisible(element),
-          mimeType: element.getAttribute("type") || "",
-          videoWidth: element.videoWidth || 0,
-          videoHeight: element.videoHeight || 0,
-          readyState: element.readyState || 0,
-          networkState: element.networkState || 0,
-          currentTime: typeof element.currentTime === "number" ? element.currentTime : 0,
-          duration: typeof element.duration === "number" ? element.duration : 0
-        });
+      const sourceChildren = Array.from(element.querySelectorAll("source[src]")).map((source) => ({
+        src: source.src || "",
+        mimeType: source.getAttribute("type") || ""
+      }));
+      const allSources = [{ src: currentSrc, mimeType: element.getAttribute("type") || "" }, ...sourceChildren];
+      if (!allSources.some((entry) => entry.src)) {
+        allSources.splice(0, allSources.length, { src: "", mimeType: element.getAttribute("type") || "" });
+      }
+      allSources.forEach((entry, sourceIndex) => {
+        if (!descriptor || typeof descriptor.describeCandidate !== "function") return;
+        directCandidates.push(descriptor.describeCandidate(element, entry.src, {
+          frameId,
+          frameRole,
+          mediaOrder: mediaIndex + 1,
+          sourceOrder: sourceIndex + 1,
+          mimeType: entry.mimeType
+        }));
       });
     });
+    const candidateSignature = JSON.stringify(directCandidates);
+    mediaCandidateSettlement = descriptor.nextSettlement(mediaCandidateSettlement, candidateSignature);
+    let safePageUrl = "";
+    try {
+      const parsedPageUrl = new URL(window.location.href);
+      parsedPageUrl.username = "";
+      parsedPageUrl.password = "";
+      parsedPageUrl.search = "";
+      parsedPageUrl.hash = "";
+      safePageUrl = parsedPageUrl.toString();
+    } catch (_) {}
 
     return {
       type: "media-evidence",
       phase: "content-collect",
-      pageUrl: window.location.href,
-      title: document.title || "",
+      pageUrl: safePageUrl,
+      title: "",
+      frameId,
+      frameRole,
+      stableObservationCount: mediaCandidateSettlement.stableObservationCount,
+      settlementRequiredObservations: descriptor.REQUIRED_STABLE_OBSERVATIONS,
       candidateCount: directCandidates.length,
       directCandidates
     };
   }
 
   function publish() {
+    if (!mediaCollectionActive) return;
     const payload = collect();
     applyGbnDailymotionEmbedPlayerFirstLayout("publish");
     applyCvc9DailymotionPlayerFirstLayout("publish");
@@ -7702,6 +7726,15 @@
   window.addEventListener("load", setupTttTegoTransportRevealBridge, { once: true });
   document.addEventListener("visibilitychange", publish);
   document.addEventListener("visibilitychange", applyTegoQualityPolicy);
-  setInterval(publish, 2000);
+  mediaPublishTimer = setInterval(publish, 2000);
   setInterval(applyTegoQualityPolicy, 1200);
+  window.addEventListener("pagehide", () => {
+    mediaCollectionActive = false;
+    mediaCandidateSettlement = { signature: "", stableObservationCount: 0 };
+    lastSignature = "";
+    if (mediaPublishTimer !== null) {
+      clearInterval(mediaPublishTimer);
+      mediaPublishTimer = null;
+    }
+  }, { once: true });
 })();
