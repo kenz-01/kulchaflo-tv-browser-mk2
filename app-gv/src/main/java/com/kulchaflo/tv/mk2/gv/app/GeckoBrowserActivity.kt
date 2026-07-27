@@ -23,6 +23,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.kulchaflo.tv.mk2.gv.BuildConfig
 import com.kulchaflo.tv.mk2.gv.R
 import com.kulchaflo.tv.mk2.gv.media.GvBrowserMediaController
+import com.kulchaflo.tv.mk2.gv.media.GvDirectMediaDismissalTracker
 import com.kulchaflo.tv.mk2.gv.media.GvMediaCandidateRanker
 import com.kulchaflo.tv.mk2.gv.media.GvMediaPathController
 import com.kulchaflo.tv.mk2.gv.media.GvPromotedMediaPlayer
@@ -302,7 +303,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     // play-assist state does not permanently suppress user interaction when page-side
     // playing=true does not arrive in time.
     private val cgtvPlayAssistFallbackReleaseRunnableBySession = LinkedHashMap<GeckoSession, Runnable>()
-    private val directMediaPromotionSuppressedUntilByUrl = LinkedHashMap<String, Long>()
+    private val directMediaDismissalTracker =
+        GvDirectMediaDismissalTracker<GeckoSession>()
     private val youtubeConsentNativeTapLastMsBySession = LinkedHashMap<GeckoSession, Long>()
     // Smart auto-fullscreen state (media-ready policy)
     private val youtubeAutoFsArmedUrlBySession = LinkedHashMap<GeckoSession, String>()
@@ -531,17 +533,28 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                         return
                     }
                     if (promotedMediaPlayer.isPromoted()) {
+                        val activeTab = tabController.getActiveTab()
+                        val activeSession = activeTab?.session
                         val promotedSourceUrl = promotedMediaPlayer.currentSourceUrl().orEmpty()
-                        promotedMediaPlayer.currentSourceUrl()?.let { sourceUrl ->
-                            suppressDirectMediaPromotion(sourceUrl, reason = "back-pressed")
+                        val dismissal = activeSession?.let {
+                            directMediaDismissalTracker.dismissActivePromotion(it)
                         }
+                        GvLogger.i(
+                            "GvMedia",
+                            "candidate decision=suppress-user-dismissed-document " +
+                                "reasons=retain-browser-after-user-back,ignore-stale-promotion-evidence " +
+                                "generation=${dismissal?.documentGeneration ?: "unknown"}"
+                        )
                         promotedMediaPlayer.stop(reason = "back-pressed")
                         geckoView.visibility = View.VISIBLE
                         if (isExactCbcLiveHlsUrl(promotedSourceUrl)) {
                             disablePromotedPointerMode(reason = "back", keepPointerVisible = true)
-                            GvLogger.i("GvInput", "cbc pointer assist restored mode=page reason=back sourceUrl=$promotedSourceUrl")
+                            GvLogger.i("GvInput", "cbc pointer assist restored mode=page reason=back")
                         }
                         restoreCgtvPointerIfHidden(reason = "back")
+                        if (activeTab != null) {
+                            navigateAfterPromotedMediaDismissal(activeTab)
+                        }
                         return
                     }
                     val activeTab = tabController.getActiveTab()
@@ -1155,6 +1168,16 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             val tab = tabController.findTabBySession(session)
             currentUrl = url ?: currentUrl
             tabController.updateLocation(session, url)
+            if (!url.isNullOrBlank()) {
+                val documentUpdate = directMediaDismissalTracker.onLocationChanged(session, url)
+                if (documentUpdate.documentChanged) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "direct media document generation=${documentUpdate.documentGeneration} " +
+                            "reason=location-change"
+                    )
+                }
+            }
             applyPageInputModePolicy(url.orEmpty(), reason = "location-change")
             handleLiveLoadTimingLocationChange(session, url.orEmpty())
             if (isWebHttpUrl(url.orEmpty())) {
@@ -1510,6 +1533,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun onTabActivated(tab: GvTab) {
         geckoView.setSession(tab.session)
+        if (tab.url.isNotBlank()) {
+            directMediaDismissalTracker.ensureDocument(tab.session, tab.url)
+        }
         applyMediaSessionDelegateForUrl(tab.session, tab.url, reason = "tab-activated")
         currentUrl = tab.url
         canGoBack = tab.canGoBack
@@ -1524,6 +1550,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     override fun onTabClosed(tab: GvTab) {
+        directMediaDismissalTracker.closeSession(tab.session)
         loadRetryAttemptsBySession.remove(tab.session)
         absTegoPlayerFirstReturnUrlBySession.remove(tab.session)
         tttTegoPlayerFirstReturnUrlBySession.remove(tab.session)
@@ -1775,6 +1802,69 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         GvLogger.i("GvNav", "launch url loaded tabId=${activeTab.id} reason=$reason url=$launchUrl")
     }
 
+    private fun navigateAfterPromotedMediaDismissal(activeTab: GvTab) {
+        when {
+            activeTab.canGoBack -> {
+                activeTab.session.goBack()
+                GvLogger.i(
+                    "GvNav",
+                    "promoted media Back navigation=history decision=retain-browser-after-user-back"
+                )
+            }
+
+            tabController.getTabs().size > 1 -> {
+                tabController.closeTab(activeTab.id)
+                GvLogger.i(
+                    "GvNav",
+                    "promoted media Back navigation=close-provider-tab " +
+                        "decision=retain-browser-after-user-back"
+                )
+            }
+
+            !isKulchaFloHomepage(activeTab.url) -> {
+                activeTab.session.loadUri(BuildConfig.DEFAULT_START_URL)
+                GvLogger.i(
+                    "GvNav",
+                    "promoted media Back navigation=default-start " +
+                        "decision=retain-browser-after-user-back"
+                )
+            }
+        }
+    }
+
+    private fun directMediaPromotionSuppressedForSession(session: GeckoSession): Boolean {
+        val tab = tabController.findTabBySession(session) ?: return false
+        if (tab.url.isNotBlank()) {
+            directMediaDismissalTracker.ensureDocument(session, tab.url)
+        }
+        val decision = directMediaDismissalTracker.promotionDecision(session)
+        if (
+            decision.state !=
+            GvDirectMediaDismissalTracker.DecisionState.SUPPRESS_USER_DISMISSED_DOCUMENT
+        ) {
+            return false
+        }
+        GvLogger.i(
+            "GvMedia",
+            "candidate decision=${decision.state.diagnosticName} " +
+                "reasons=${decision.reasonCodes.joinToString(",")} " +
+                "generation=${decision.documentGeneration ?: "unknown"}"
+        )
+        geckoView.visibility = View.VISIBLE
+        return true
+    }
+
+    private fun recordDirectMediaPromotion(
+        session: GeckoSession,
+        promotedSource: String,
+    ): Boolean {
+        val tab = tabController.findTabBySession(session) ?: return false
+        if (tab.url.isNotBlank()) {
+            directMediaDismissalTracker.ensureDocument(session, tab.url)
+        }
+        return directMediaDismissalTracker.recordPromotion(session, promotedSource)
+    }
+
     private fun handleMediaObservation(observation: GvMediaPathController.Observation?) {
         when {
             observation == null -> {
@@ -1836,11 +1926,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     geckoView.visibility = View.VISIBLE
                     return
                 }
-                if (isDirectMediaPromotionSuppressed(observation.url)) {
-                    GvLogger.i(
-                        "GvMedia",
-                        "promote deferred sourceKind=EXTRACTED_STREAM url=${observation.url} reason=suppressed-after-back"
-                    )
+                val activeSession = tabController.getActiveTab()?.session
+                if (
+                    activeSession != null &&
+                    directMediaPromotionSuppressedForSession(activeSession)
+                ) {
                     geckoView.visibility = View.VISIBLE
                     restoreCgtvPointerIfHidden(reason = "deferred")
                     try {
@@ -1875,6 +1965,18 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
                     "GvMedia",
                     "promote accepted sourceKind=EXTRACTED_STREAM pageKind=${observation.pageKind} reason=${observation.reason}"
                 )
+                if (
+                    activeSession == null ||
+                    !recordDirectMediaPromotion(activeSession, observation.url)
+                ) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "candidate decision=ignore-stale-promotion-evidence " +
+                            "reason=document-generation-unavailable"
+                    )
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 geckoView.visibility = View.GONE
                 promotedMediaPlayer.play(observation)
             }
@@ -13053,6 +13155,12 @@ return changed>0;
             "GvExt",
             "media observer message tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} type=$type phase=$phase pageUrl=$pageUrl candidateCount=${candidates.length()} source=$source"
         )
+        if (
+            (type == "media-evidence" || type == "cbc-live-hls-ready") &&
+            directMediaPromotionSuppressedForSession(session)
+        ) {
+            return
+        }
         if (type == "cvc9-live-state" && phase == "content-cvc9-consent-frame-detected") {
             scheduleCvc9ConsentFrameNativeTapBurst(session)
             return
@@ -14951,11 +15059,6 @@ return changed>0;
                 GvLogger.i("GvMedia", "cbc native promote skipped reason=non-exact-hls sourceUrl=$sourceUrl")
                 return
             }
-            if (isDirectMediaPromotionSuppressed(sourceUrl)) {
-                GvLogger.i("GvMedia", "cbc native promote deferred reason=suppressed-after-back sourceUrl=$sourceUrl")
-                geckoView.visibility = View.VISIBLE
-                return
-            }
             val observation = mediaPathController.onExtensionMediaEvidence(
                 pageUrl = pageUrl,
                 sourceUrl = sourceUrl,
@@ -14970,6 +15073,15 @@ return changed>0;
             if (tabController.getActiveTab()?.session == session) {
                 if (isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
                     GvLogger.i("GvMedia", "cbc native promote skipped reason=already-active sourceUrl=$sourceUrl")
+                    return
+                }
+                if (!recordDirectMediaPromotion(session, observation.url)) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "candidate decision=ignore-stale-promotion-evidence " +
+                            "reason=document-generation-unavailable"
+                    )
+                    geckoView.visibility = View.VISIBLE
                     return
                 }
                 geckoView.visibility = View.GONE
@@ -14999,11 +15111,6 @@ return changed>0;
                 val candidate = candidates.optJSONObject(index) ?: continue
                 val sourceUrl = candidate.optString("src").trim()
                 if (!isExactCbcLiveHlsUrl(sourceUrl)) continue
-                if (isDirectMediaPromotionSuppressed(sourceUrl)) {
-                    GvLogger.i("GvMedia", "cbc native promote deferred reason=suppressed-after-back sourceUrl=$sourceUrl")
-                    geckoView.visibility = View.VISIBLE
-                    return
-                }
                 val observation = mediaPathController.onExtensionMediaEvidence(
                     pageUrl = pageUrl,
                     sourceUrl = sourceUrl,
@@ -15018,6 +15125,15 @@ return changed>0;
                 if (tabController.getActiveTab()?.session == session) {
                     if (isExactCbcLiveHlsUrl(promotedMediaPlayer.currentSourceUrl().orEmpty())) {
                         GvLogger.i("GvMedia", "cbc native promote skipped reason=already-active sourceUrl=$sourceUrl")
+                        return
+                    }
+                    if (!recordDirectMediaPromotion(session, observation.url)) {
+                        GvLogger.i(
+                            "GvMedia",
+                            "candidate decision=ignore-stale-promotion-evidence " +
+                                "reason=document-generation-unavailable"
+                        )
+                        geckoView.visibility = View.VISIBLE
                         return
                     }
                     geckoView.visibility = View.GONE
@@ -15252,7 +15368,6 @@ return changed>0;
         private val YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_FALLBACK = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_CONTROLS_REVEAL_Y_FALLBACK
         private val YOUTUBE_FULLSCREEN_BUTTON_X_FALLBACK = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_BUTTON_X_FALLBACK
         private val YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK = YouTubePolicyConstants.YOUTUBE_FULLSCREEN_BUTTON_Y_FALLBACK
-        private const val DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS = 15_000L
         private const val CGTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
         private const val CGTV_PLAY_ASSIST_AUTO_TAP_LIMIT = 2
         private const val CHTV_PLAY_ASSIST_NATIVE_TAP_MIN_INTERVAL_MS = 1800L
@@ -17174,31 +17289,6 @@ return changed>0;
             host.endsWith(".youtube-nocookie.com") ||
             host == "googlevideo.com" ||
             host.endsWith(".googlevideo.com")
-    }
-
-    private fun suppressDirectMediaPromotion(
-        url: String,
-        reason: String,
-        durationMs: Long = DIRECT_MEDIA_PROMOTION_SUPPRESSION_MS,
-    ) {
-        val normalizedUrl = url.ifBlank { return }
-        val untilMs = SystemClock.uptimeMillis() + durationMs
-        directMediaPromotionSuppressedUntilByUrl[normalizedUrl] = untilMs
-        GvLogger.i(
-            "GvMedia",
-            "direct media promotion suppressed url=$normalizedUrl until=$untilMs reason=$reason"
-        )
-    }
-
-    private fun isDirectMediaPromotionSuppressed(url: String): Boolean {
-        val normalizedUrl = url.ifBlank { return false }
-        val now = SystemClock.uptimeMillis()
-        val untilMs = directMediaPromotionSuppressedUntilByUrl[normalizedUrl] ?: return false
-        if (untilMs <= now) {
-            directMediaPromotionSuppressedUntilByUrl.remove(normalizedUrl)
-            return false
-        }
-        return true
     }
 
     private fun extractFacebookDialogNextUrl(url: String): String? {
