@@ -20,13 +20,20 @@ export function redactUrl(value) {
   parsed.password = '';
   parsed.search = '';
   parsed.hash = '';
+  const path = parsed.pathname;
+  const mediaKind = mediaPathKind(path);
+  if (mediaKind) {
+    parsed.pathname = mediaKind === 'manifest'
+      ? '/.player-lab-redacted-manifest'
+      : '/.player-lab-redacted-media';
+  }
 
   return {
     url: parsed.toString(),
     omitted: false,
     reason: null,
     hostname: parsed.hostname,
-    path: parsed.pathname,
+    path,
   };
 }
 
@@ -65,4 +72,12 @@ export function assertProviderId(value) {
     throw new Error(`Unsafe provider id: ${result.reason}`);
   }
   return value;
+}
+
+function mediaPathKind(value) {
+  const normalized = String(value).toLowerCase();
+  if (normalized.endsWith('.m3u8') || normalized.endsWith('.mpd')) return 'manifest';
+  if (['.mp4', '.webm', '.m4v', '.mov', '.mp3', '.m4a', '.aac', '.wav', '.ogg', '.ogv', '.ts', '.m4s']
+    .some((suffix) => normalized.endsWith(suffix))) return 'media';
+  return null;
 }

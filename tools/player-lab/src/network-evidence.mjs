@@ -64,16 +64,28 @@ export function classifyNetworkRecord({ url, resourceType, method, status, conte
     return null;
   }
 
+  const safeUrl = kinds.includes('media-mime') && !kinds.some((kind) => kind.includes('manifest'))
+    ? mediaUrlWithoutPath(redacted.url)
+    : redacted.url;
+
   return {
     kind: kinds.join(','),
     resourceType,
     documentKind: documentKind === 'iframe-document' ? 'iframe-document' : resourceType === 'document' ? 'document' : undefined,
     method,
-    url: redacted.url,
+    url: safeUrl,
     contentType: safeContentType,
     status: Number.isInteger(status) ? status : undefined,
     failureText: safeFailureText(failureText),
   };
+}
+
+function mediaUrlWithoutPath(value) {
+  const parsed = new URL(value);
+  parsed.pathname = '/.player-lab-redacted-media';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
 }
 
 export function safeContentTypeValue(value) {

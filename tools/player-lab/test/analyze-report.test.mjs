@@ -66,6 +66,126 @@ test('report validation rejects malformed required shapes', () => {
   }
 });
 
+test('analysis confirms only a same-frame earlier-decorative versus later-live conflict', () => {
+  const report = fixture();
+  report.mediaObservations = [
+    {
+      discoveryOrder: 1,
+      frameLocalDiscoveryOrder: 1,
+      frameId: 'frame-1',
+      tag: 'video',
+      sourceKind: 'direct-mp4',
+      src: 'https://www.cvmtv.com/.player-lab-redacted-media',
+      muted: true,
+      autoplay: true,
+      loop: true,
+      controls: false,
+      computedVisibility: 'visible',
+      visibleArea: 500000,
+      viewportIntersectionRatio: 1,
+      boundingRect: { x: 0, y: 0, width: 1200, height: 300 },
+      durationCategory: 'finite-short',
+      decorativeIndicators: ['muted-autoplay', 'loop', 'finite-short'],
+      liveStreamIndicators: [],
+    },
+    {
+      discoveryOrder: 2,
+      frameLocalDiscoveryOrder: 2,
+      frameId: 'frame-1',
+      tag: 'video',
+      sourceKind: 'blob-media-source',
+      readyState: 4,
+      computedVisibility: 'visible',
+      visibleArea: 640000,
+      viewportIntersectionRatio: 1,
+      boundingRect: { x: 100, y: 350, width: 1000, height: 640 },
+      decorativeIndicators: [],
+      liveStreamIndicators: ['managed-media-source', 'player-ancestry'],
+    },
+  ];
+  const result = createRecommendation(report, { generatedAt: '2026-07-27T00:00:00.000Z' });
+  assert.equal(result.evidenceSummary.candidateArbitration.candidateSelectionConflict, true);
+  assert.equal(result.evidenceSummary.candidateArbitration.arbitrationScope, 'same-frame-confirmed');
+  assert.equal(result.evidenceSummary.candidateArbitration.inferenceConfidence, 'high');
+  assert.equal(result.evidenceSummary.candidateArbitration.likelyDecorativeCandidateFrameId, 'frame-1');
+  assert.equal(result.evidenceSummary.candidateArbitration.likelyLiveCandidateFrameId, 'frame-1');
+  assert.equal(result.evidenceSummary.candidateArbitration.likelyDecorativeCandidateOrder, 1);
+  assert.equal(result.evidenceSummary.candidateArbitration.likelyLiveCandidateOrder, 2);
+  assert.ok(result.recommendation.limitingReasonCodes.includes('MEDIA_CANDIDATE_ARBITRATION_CONFLICT'));
+  assert.equal(result.recommendation.category, 'generic-candidate-ranking-extension');
+});
+
+test('analysis records a cross-frame race without treating global report order as confirmed DOM order', () => {
+  const report = fixture();
+  report.mediaObservations = [
+    visibleDecorative({ discoveryOrder: 1, frameLocalDiscoveryOrder: 1, frameId: 'frame-1' }),
+    visibleLive({ discoveryOrder: 2, frameLocalDiscoveryOrder: 1, frameId: 'frame-2' }),
+  ];
+  const arbitration = createRecommendation(report).evidenceSummary.candidateArbitration;
+  assert.equal(arbitration.arbitrationScope, 'cross-frame-race-possible');
+  assert.equal(arbitration.candidateSelectionConflict, false);
+  assert.equal(arbitration.candidateRacePossible, true);
+  const recommendation = createRecommendation(report).recommendation;
+  assert.ok(recommendation.limitingReasonCodes.includes('MEDIA_CANDIDATE_CROSS_FRAME_RACE_POSSIBLE'));
+  assert.equal(recommendation.limitingReasonCodes.includes('MEDIA_CANDIDATE_ARBITRATION_CONFLICT'), false);
+  assert.notEqual(recommendation.category, 'generic-candidate-ranking-extension');
+});
+
+test('analysis rejects a hidden failed player support element in favour of the visible managed player', () => {
+  const report = fixture();
+  report.mediaObservations = [
+    visibleDecorative({ discoveryOrder: 1, frameLocalDiscoveryOrder: 1 }),
+    {
+      ...visibleLive({ discoveryOrder: 2, frameLocalDiscoveryOrder: 2 }),
+      sourceKind: 'unavailable',
+      computedVisibility: 'hidden',
+      visibleArea: 0,
+      viewportIntersectionRatio: 0,
+      boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+      mediaErrorCode: 4,
+      readyState: 0,
+      liveStreamIndicators: ['player-ancestry'],
+    },
+    visibleLive({ discoveryOrder: 3, frameLocalDiscoveryOrder: 3 }),
+  ];
+  const arbitration = createRecommendation(report).evidenceSummary.candidateArbitration;
+  assert.equal(arbitration.likelyLiveCandidateOrder, 3);
+  assert.equal(arbitration.candidates[1].visibleEligible, false);
+  assert.equal(arbitration.candidates[1].usableSource, false);
+  assert.equal(arbitration.candidates[1].errorFree, false);
+  assert.equal(arbitration.candidates[1].liveScore, 0);
+  assert.equal(arbitration.arbitrationScope, 'same-frame-confirmed');
+});
+
+test('hidden decorative media cannot establish a conflict', () => {
+  const report = fixture();
+  report.mediaObservations = [
+    {
+      ...visibleDecorative({ discoveryOrder: 1, frameLocalDiscoveryOrder: 1 }),
+      computedVisibility: 'hidden',
+      visibleArea: 0,
+      viewportIntersectionRatio: 0,
+    },
+    visibleLive({ discoveryOrder: 2, frameLocalDiscoveryOrder: 2 }),
+  ];
+  const arbitration = createRecommendation(report).evidenceSummary.candidateArbitration;
+  assert.equal(arbitration.likelyDecorativeCandidateOrder, null);
+  assert.equal(arbitration.arbitrationScope, 'no-conflict-established');
+  assert.equal(arbitration.candidateSelectionConflict, false);
+});
+
+test('legitimate visible direct short-form media without a competing live player has no conflict', () => {
+  const report = fixture();
+  report.mediaObservations = [
+    visibleDecorative({ discoveryOrder: 1, frameLocalDiscoveryOrder: 1 }),
+  ];
+  const arbitration = createRecommendation(report).evidenceSummary.candidateArbitration;
+  assert.equal(arbitration.likelyDecorativeCandidateOrder, 1);
+  assert.equal(arbitration.likelyLiveCandidateOrder, null);
+  assert.equal(arbitration.arbitrationScope, 'no-conflict-established');
+  assert.equal(arbitration.candidateSelectionConflict, false);
+});
+
 test('report validation rejects unsafe URL and diagnostic content', () => {
   for (const mutate of [
     (report) => { report.requestedUrl = 'https://www.cvmtv.com/live?token=secret'; },
@@ -356,6 +476,50 @@ test('analysis rejects directory and symlink inputs', (t) => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+function visibleDecorative(overrides = {}) {
+  return {
+    discoveryOrder: 1,
+    frameLocalDiscoveryOrder: 1,
+    frameId: 'frame-1',
+    tag: 'video',
+    sourceKind: 'direct-mp4',
+    src: 'https://www.cvmtv.com/.player-lab-redacted-media',
+    muted: true,
+    autoplay: true,
+    loop: false,
+    controls: false,
+    readyState: 4,
+    durationCategory: 'finite-short',
+    computedVisibility: 'visible',
+    visibleArea: 500000,
+    viewportIntersectionRatio: 1,
+    boundingRect: { x: 0, y: 0, width: 1200, height: 300 },
+    mediaErrorCode: null,
+    decorativeIndicators: ['muted-autoplay', 'no-native-controls', 'finite-short', 'wide-shallow-rendering'],
+    liveStreamIndicators: [],
+    ...overrides,
+  };
+}
+
+function visibleLive(overrides = {}) {
+  return {
+    discoveryOrder: 2,
+    frameLocalDiscoveryOrder: 2,
+    frameId: 'frame-1',
+    tag: 'video',
+    sourceKind: 'blob-media-source',
+    readyState: 4,
+    computedVisibility: 'visible',
+    visibleArea: 640000,
+    viewportIntersectionRatio: 1,
+    boundingRect: { x: 100, y: 350, width: 1000, height: 640 },
+    mediaErrorCode: null,
+    decorativeIndicators: ['no-native-controls'],
+    liveStreamIndicators: ['managed-media-source', 'player-ancestry'],
+    ...overrides,
+  };
+}
 
 function fixture() {
   return JSON.parse(readFileSync(fixturePath, 'utf8'));

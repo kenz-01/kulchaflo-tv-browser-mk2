@@ -13,6 +13,7 @@ const CATEGORIES = new Set([
   'generic-embedded-vimeo',
   'provider-specific-vimeo-wrapper',
   'native-media-promotion',
+  'generic-candidate-ranking-extension',
   'insufficient-evidence',
 ]);
 const HOST_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
@@ -149,6 +150,39 @@ export function normalizeEvidence(report) {
   const sourceChangeCount = report.mediaObservations.reduce((total, media) => total + Number(media.sourceChangeCount ?? 0), 0);
   const replacementCount = report.mediaObservations.filter((media) => media.replacementDetected === true || media.likelyReplacement === true).length;
   const providerWrapperEvidence = detectProviderWrapperEvidence(report);
+  const media = report.mediaObservations.map((item) => Object.freeze({
+    discoveryOrder: item.discoveryOrder ?? null,
+    frameLocalDiscoveryOrder: item.frameLocalDiscoveryOrder ?? null,
+    frameId: item.frameId ?? null,
+    tag: item.tag ?? item.tagType ?? null,
+    sourceKind: item.sourceKind ?? 'unavailable',
+    hasSource: Boolean(item.src || item.currentSrc),
+    readyState: item.readyState ?? null,
+    paused: item.paused ?? null,
+    ended: item.ended ?? null,
+    muted: item.muted ?? null,
+    volume: item.volume ?? null,
+    autoplay: item.autoplay ?? null,
+    loop: item.loop ?? null,
+    controls: item.controls ?? null,
+    playsInline: item.playsInline ?? null,
+    durationCategory: item.durationCategory ?? 'unavailable',
+    videoWidth: item.videoWidth ?? 0,
+    videoHeight: item.videoHeight ?? 0,
+    boundingRect: item.boundingRect ?? null,
+    viewportIntersectionRatio: item.viewportIntersectionRatio ?? null,
+    visibleArea: item.visibleArea ?? null,
+    computedVisibility: item.computedVisibility ?? null,
+    mediaErrorCode: item.mediaErrorCode ?? null,
+    timeAdvanced: item.timeAdvanced === true || item.currentTimeAdvanced === true,
+    currentTimeDelta: item.currentTimeDelta ?? null,
+    restartCount: Number(item.restartCount ?? 0),
+    decorativeIndicators: [...(item.decorativeIndicators ?? [])],
+    liveStreamIndicators: [...(item.liveStreamIndicators ?? [])],
+    sourceChangeCount: Number(item.sourceChangeCount ?? 0),
+    replacementDetected: item.replacementDetected === true || item.likelyReplacement === true,
+  }));
+  const candidateArbitration = analyzeCandidateArbitration(media);
   return deepFreeze({
     providerId: report.metadata.providerId,
     targetId: report.metadata.targetId ?? null,
@@ -169,19 +203,8 @@ export function normalizeEvidence(report) {
     networkHosts: sortedHosts(report.networkEvidence),
     networkEvidenceKinds: sortedKinds(report.networkEvidence),
     mediaElementCount: report.mediaObservations.length,
-    media: report.mediaObservations.map((media) => Object.freeze({
-      tag: media.tag ?? media.tagType ?? null,
-      hasSource: Boolean(media.src || media.currentSrc),
-      readyState: media.readyState ?? null,
-      paused: media.paused ?? null,
-      muted: media.muted ?? null,
-      volume: media.volume ?? null,
-      autoplay: media.autoplay ?? null,
-      controls: media.controls ?? null,
-      timeAdvanced: media.timeAdvanced === true || media.currentTimeAdvanced === true,
-      sourceChangeCount: Number(media.sourceChangeCount ?? 0),
-      replacementDetected: media.replacementDetected === true || media.likelyReplacement === true,
-    })),
+    media,
+    candidateArbitration,
     candidateControlCount: report.candidateControls.length,
     providerWrapperEvidence,
     sourceChangeCount,
@@ -241,6 +264,16 @@ export function createRecommendation(report, { generatedAt = new Date().toISOStr
     add(limiting, 'PASSIVE_OBSERVATION_ONLY', 'The evidence was collected passively with no player interaction.');
     limitations.push('Passive observation cannot prove autoplay, user-gesture behavior, or broken playback.');
   }
+  if (evidence.candidateArbitration.arbitrationScope === 'same-frame-confirmed') {
+    add(limiting, 'MEDIA_CANDIDATE_ARBITRATION_CONFLICT', 'An earlier direct media candidate has stronger decorative indicators than a later player-managed candidate.');
+    avoidLayers.push('first-direct-media native promotion');
+    requiredNextValidation.push('Validate generic media-candidate ranking before Android integration.');
+    limitations.push('Candidate-role classification is a bounded inference from passive media attributes and player structure.');
+  } else if (evidence.candidateArbitration.arbitrationScope === 'cross-frame-race-possible') {
+    add(limiting, 'MEDIA_CANDIDATE_CROSS_FRAME_RACE_POSSIBLE', 'Decorative and player-managed candidates occur in different frames whose discovery order is not a shared DOM order.');
+    requiredNextValidation.push('Validate cross-frame media-candidate timing before Android integration.');
+    limitations.push('Cross-frame report order cannot establish which unrelated frame produced a candidate first.');
+  }
   if (evidence.browserRuntimeType === 'system') {
     add(limiting, 'CHROMIUM_NOT_GECKOVIEW', 'The evidence came from Chromium and does not reproduce GeckoView or physical Sony Bravia behavior.');
     requiredNextValidation.push('Run a later controlled GeckoView validation before app integration.');
@@ -269,6 +302,10 @@ export function createRecommendation(report, { generatedAt = new Date().toISOStr
       ? 'browser-side embedded Vimeo handling scoped to observed provider wrapper evidence'
       : 'browser-side embedded Vimeo handling';
   }
+  if (evidence.candidateArbitration.arbitrationScope === 'same-frame-confirmed') {
+    category = 'generic-candidate-ranking-extension';
+    recommendedLayer = 'generic media-candidate ranking engine';
+  }
   if (!CATEGORIES.has(category)) throw new Error('Internal recommendation category error.');
 
   const score = scoreRecommendation({ category, supportingCount: supporting.length, limitingCount: limiting.length });
@@ -292,6 +329,7 @@ export function createRecommendation(report, { generatedAt = new Date().toISOStr
       networkEvidenceKinds: evidence.networkEvidenceKinds,
       mediaElementCount: evidence.mediaElementCount,
       mediaStates: evidence.media,
+      candidateArbitration: evidence.candidateArbitration,
       candidateControlCount: evidence.candidateControlCount,
       providerWrapperEvidence: evidence.providerWrapperEvidence,
       sourceChangeCount: evidence.sourceChangeCount,
@@ -316,6 +354,150 @@ export function createRecommendation(report, { generatedAt = new Date().toISOStr
   });
 }
 
+function analyzeCandidateArbitration(media) {
+  const candidates = media.map((item) => ({
+    discoveryOrder: item.discoveryOrder,
+    frameLocalDiscoveryOrder: item.frameLocalDiscoveryOrder,
+    frameId: item.frameId,
+    sourceKind: item.sourceKind,
+    visibleEligible: isVisiblyEligible(item),
+    usableSource: hasUsableSource(item),
+    errorFree: item.mediaErrorCode === null,
+    decorativeEvidence: decorativeEvidenceFor(item),
+    liveEvidence: liveEvidenceFor(item),
+  })).map((item) => ({
+    ...item,
+    decorativeScore: item.visibleEligible && item.errorFree ? item.decorativeEvidence.length : 0,
+    liveScore: item.visibleEligible && item.usableSource && item.errorFree ? liveEvidenceScore(item.liveEvidence) : 0,
+  }));
+  const decorative = [...candidates]
+    .filter((item) => item.decorativeScore >= 2)
+    .sort((a, b) => b.decorativeScore - a.decorativeScore || reportOrder(a) - reportOrder(b))[0] ?? null;
+  const live = [...candidates]
+    .filter((item) => item.liveScore >= 4 && hasCoreLiveEvidence(item.liveEvidence))
+    .sort((a, b) => b.liveScore - a.liveScore || reportOrder(a) - reportOrder(b))[0] ?? null;
+  const firstDirect = candidates.find((item) => String(item.sourceKind).startsWith('direct-')) ?? null;
+  const sameFrame = Boolean(decorative && live && decorative.frameId && decorative.frameId === live.frameId);
+  const decorativeFrameOrder = frameOrder(decorative);
+  const liveFrameOrder = frameOrder(live);
+  const decorativeIsFirstDirect = Boolean(
+    decorative && firstDirect &&
+    decorative.discoveryOrder === firstDirect.discoveryOrder &&
+    decorative.frameId === firstDirect.frameId,
+  );
+  const confirmed = Boolean(
+    sameFrame && decorativeIsFirstDirect &&
+    decorativeFrameOrder !== null && liveFrameOrder !== null &&
+    decorativeFrameOrder < liveFrameOrder,
+  );
+  const crossFrameRace = Boolean(
+    decorative && live && decorativeIsFirstDirect &&
+    decorative.frameId && live.frameId && decorative.frameId !== live.frameId,
+  );
+  const arbitrationScope = confirmed
+    ? 'same-frame-confirmed'
+    : crossFrameRace
+      ? 'cross-frame-race-possible'
+      : 'no-conflict-established';
+  return {
+    candidateCount: candidates.length,
+    firstDirectCandidateOrder: firstDirect?.discoveryOrder ?? null,
+    likelyDecorativeCandidateOrder: decorative?.discoveryOrder ?? null,
+    likelyDecorativeCandidateFrameLocalOrder: decorative?.frameLocalDiscoveryOrder ?? null,
+    likelyDecorativeCandidateFrameId: decorative?.frameId ?? null,
+    likelyLiveCandidateOrder: live?.discoveryOrder ?? null,
+    likelyLiveCandidateFrameLocalOrder: live?.frameLocalDiscoveryOrder ?? null,
+    likelyLiveCandidateFrameId: live?.frameId ?? null,
+    arbitrationScope,
+    candidateSelectionConflict: confirmed,
+    candidateRacePossible: crossFrameRace,
+    inferenceConfidence: confirmed ? 'high' : crossFrameRace ? 'medium' : 'insufficient',
+    inference: confirmed
+      ? 'same-frame-decorative-direct-media-precedes-player-managed-media'
+      : crossFrameRace
+        ? 'cross-frame-candidate-race-possible-order-unconfirmed'
+        : 'no-bounded-candidate-order-conflict-established',
+    candidates,
+  };
+}
+
+const DECORATIVE_EVIDENCE = new Set([
+  'muted-autoplay',
+  'loop',
+  'no-native-controls',
+  'finite-short',
+  'wide-shallow-rendering',
+  'decorative-ancestry',
+]);
+const LIVE_EVIDENCE_WEIGHTS = Object.freeze({
+  'managed-media-source': 4,
+  'manifest-source': 4,
+  'infinite-duration': 4,
+  'active-time-progression': 3,
+  'ready-state-playable': 2,
+  'visible-primary-geometry': 2,
+  'player-ancestry': 1,
+  'native-controls': 1,
+});
+
+function decorativeEvidenceFor(item) {
+  return [...new Set(item.decorativeIndicators.filter((value) => DECORATIVE_EVIDENCE.has(value)))].sort();
+}
+
+function liveEvidenceFor(item) {
+  const evidence = new Set(item.liveStreamIndicators.filter((value) => value in LIVE_EVIDENCE_WEIGHTS));
+  if (item.sourceKind === 'blob-media-source') evidence.add('managed-media-source');
+  if (item.sourceKind === 'hls-manifest' || item.sourceKind === 'dash-manifest') evidence.add('manifest-source');
+  if (item.timeAdvanced) evidence.add('active-time-progression');
+  if (Number(item.readyState) >= 3) evidence.add('ready-state-playable');
+  if (hasPositiveGeometry(item)) evidence.add('visible-primary-geometry');
+  return [...evidence].sort();
+}
+
+function liveEvidenceScore(evidence) {
+  return evidence.reduce((total, value) => total + (LIVE_EVIDENCE_WEIGHTS[value] ?? 0), 0);
+}
+
+function hasCoreLiveEvidence(evidence) {
+  return evidence.some((value) => [
+    'managed-media-source',
+    'manifest-source',
+    'infinite-duration',
+    'player-ancestry',
+    'native-controls',
+  ].includes(value));
+}
+
+function isVisiblyEligible(item) {
+  if (item.computedVisibility === false || item.computedVisibility === 'hidden') return false;
+  if (item.visibleArea === 0 || item.viewportIntersectionRatio === 0) return false;
+  return item.computedVisibility === true || item.computedVisibility === 'visible' ||
+    Number(item.visibleArea) > 0 || Number(item.viewportIntersectionRatio) > 0 ||
+    hasPositiveGeometry(item);
+}
+
+function hasPositiveGeometry(item) {
+  return Number(item.boundingRect?.width ?? 0) > 0 && Number(item.boundingRect?.height ?? 0) > 0;
+}
+
+function hasUsableSource(item) {
+  return item.hasSource || [
+    'blob-media-source',
+    'hls-manifest',
+    'dash-manifest',
+  ].includes(item.sourceKind) || String(item.sourceKind).startsWith('direct-');
+}
+
+function reportOrder(item) {
+  return Number.isInteger(item?.discoveryOrder) ? item.discoveryOrder : Number.MAX_SAFE_INTEGER;
+}
+
+function frameOrder(item) {
+  if (!item) return null;
+  if (Number.isInteger(item.frameLocalDiscoveryOrder)) return item.frameLocalDiscoveryOrder;
+  return Number.isInteger(item.discoveryOrder) ? item.discoveryOrder : null;
+}
+
 // Scoring is deterministic and intentionally simple: category evidence starts
 // from a bounded base, stable support adds confidence, and limitations subtract
 // enough to keep passive Chromium-only evidence below "high" when appropriate.
@@ -324,6 +506,7 @@ function scoreRecommendation({ category, supportingCount, limitingCount }) {
     'provider-specific-vimeo-wrapper': 72,
     'generic-embedded-vimeo': 66,
     'native-media-promotion': 62,
+    'generic-candidate-ranking-extension': 50,
     'no-helper-needed': 55,
     'insufficient-evidence': 25,
   }[category];

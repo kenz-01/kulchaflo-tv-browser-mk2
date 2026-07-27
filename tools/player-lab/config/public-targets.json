@@ -10,6 +10,16 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "mtm-tv": {
+      "providerId": "mtm-tv",
+      "initialUrl": "https://www.mercyandtruth.tv/watch/?utm_source=KulchaFlo",
+      "allowedMainFrameHosts": [
+        "mercyandtruth.tv",
+        "www.mercyandtruth.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }

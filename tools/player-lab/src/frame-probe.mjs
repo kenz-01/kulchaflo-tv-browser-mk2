@@ -12,6 +12,7 @@ export async function ensurePassiveFrameProbe(frame) {
       queue: [],
       limit: 100,
       knownSrc: new WeakMap(),
+      sampleStats: new WeakMap(),
       removedIds: [],
       addedIds: [],
     };
@@ -29,12 +30,25 @@ export async function ensurePassiveFrameProbe(frame) {
       return state.mediaIds.get(element);
     };
     const srcFor = (element) => `${element.getAttribute('src') || ''}|${element.getAttribute('poster') || ''}`;
+    const sampleMedia = (element) => {
+      const currentTime = Number(element.currentTime);
+      if (!Number.isFinite(currentTime)) return;
+      const previous = state.sampleStats.get(element) ?? { sampleCount: 0, restartCount: 0, lastCurrentTime: null };
+      if (previous.lastCurrentTime !== null && previous.lastCurrentTime > 1 && currentTime + 0.5 < previous.lastCurrentTime) {
+        previous.restartCount += 1;
+        cap({ type: 'media-time-reset', mediaId: idFor(element), tag: element.tagName.toLowerCase() });
+      }
+      previous.sampleCount = Math.min(120, previous.sampleCount + 1);
+      previous.lastCurrentTime = currentTime;
+      state.sampleStats.set(element, previous);
+    };
     const watchMedia = (element, { initial = false } = {}) => {
       const id = idFor(element);
       if (!state.knownSrc.has(element)) {
         state.knownSrc.set(element, srcFor(element));
         cap({ type: initial ? 'initial-media-observed' : 'media-added', mediaId: id, tag: element.tagName.toLowerCase() });
       }
+      sampleMedia(element);
       for (const type of ['loadedmetadata', 'canplay', 'playing', 'pause', 'waiting', 'stalled', 'ended', 'error', 'volumechange']) {
         element.addEventListener(type, () => {
           cap({ type: `media-event:${type}`, mediaId: id, tag: element.tagName.toLowerCase() });
@@ -52,6 +66,9 @@ export async function ensurePassiveFrameProbe(frame) {
       }
     };
     scan();
+    setInterval(() => {
+      for (const element of document.querySelectorAll('video,audio')) sampleMedia(element);
+    }, 1000);
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         const removedThisMutation = [];
@@ -115,6 +132,9 @@ export async function ensurePassiveFrameProbe(frame) {
       idOf(element) {
         return idFor(element);
       },
+      statsOf(element) {
+        return { ...(state.sampleStats.get(element) ?? { sampleCount: 0, restartCount: 0 }) };
+      },
       drain() {
         scan();
         const queue = state.queue.slice();
@@ -158,13 +178,53 @@ export async function readPassiveFrameState(frame, frameId) {
       }
       return 'visible';
     };
+    const sourceKindFor = (value) => {
+      const text = String(value || '').trim().toLowerCase();
+      if (!text) return 'unavailable';
+      if (text.startsWith('blob:')) return 'blob-media-source';
+      try {
+        const path = new URL(text, window.location.href).pathname.toLowerCase();
+        if (path.endsWith('.m3u8')) return 'hls-manifest';
+        if (path.endsWith('.mpd')) return 'dash-manifest';
+        if (path.endsWith('.mp4')) return 'direct-mp4';
+        if (path.endsWith('.webm')) return 'direct-webm';
+        if (path.endsWith('.mp3') || path.endsWith('.m4a')) return 'direct-audio';
+      } catch {}
+      return 'other-media-source';
+    };
+    const ancestryFor = (element) => {
+      const markers = [];
+      let current = element;
+      while (current && current.nodeType === 1 && markers.length < 5) {
+        const safe = (value) => /^[A-Za-z0-9_-]{1,64}$/.test(value);
+        markers.push({
+          tag: String(current.tagName || '').toLowerCase().slice(0, 24),
+          id: safe(String(current.id || '')) ? String(current.id) : '',
+          classes: [...(current.classList || [])].filter(safe).slice(0, 6),
+        });
+        current = current.parentElement;
+      }
+      return markers;
+    };
     const passive = window.__KFLAB_PASSIVE_OBSERVER__?.drain?.() ?? { queue: [], removedIds: [], addedIds: [] };
     const media = [...document.querySelectorAll('video,audio')].map((element, index) => {
       const rect = rectFor(element);
       const id = window.__KFLAB_PASSIVE_OBSERVER__?.idOf?.(element) ?? `media-${index + 1}`;
+      const sourceValue = element.currentSrc || element.getAttribute('src') || '';
+      const style = window.getComputedStyle(element);
+      const intersectionWidth = Math.max(0, Math.min(rect.x + rect.width, window.innerWidth) - Math.max(rect.x, 0));
+      const intersectionHeight = Math.max(0, Math.min(rect.y + rect.height, window.innerHeight) - Math.max(rect.y, 0));
+      const elementArea = Math.max(1, rect.width * rect.height);
+      const durationCategory = element.duration === Infinity
+        ? 'infinite-live'
+        : Number.isFinite(element.duration)
+          ? (element.duration <= 30 ? 'finite-short' : 'finite-long')
+          : 'unavailable';
+      const sampleStats = window.__KFLAB_PASSIVE_OBSERVER__?.statsOf?.(element) ?? { sampleCount: 0, restartCount: 0 };
       const error = element.error;
       return {
         id,
+        frameLocalDiscoveryOrder: Number(String(id).replace(/^media-/, '')) || index + 1,
         tag: element.tagName.toLowerCase(),
         src: element.getAttribute('src') || '',
         currentSrc: element.currentSrc || '',
@@ -174,17 +234,32 @@ export async function readPassiveFrameState(frame, frameId) {
         muted: element.muted,
         volume: element.volume,
         autoplay: element.autoplay,
+        loop: element.loop,
         controls: element.controls,
         playsInline: element.playsInline,
         readyState: element.readyState,
         networkState: element.networkState,
         currentTime: element.currentTime,
         duration: Number.isFinite(element.duration) ? element.duration : null,
+        durationCategory,
+        sourceKind: sourceKindFor(sourceValue),
+        ancestry: ancestryFor(element),
+        computedStyle: {
+          display: clip(style.display, 32),
+          visibility: clip(style.visibility, 32),
+          opacity: clip(style.opacity, 16),
+          zIndex: clip(style.zIndex, 32),
+          position: clip(style.position, 32),
+        },
         videoWidth: element.videoWidth || 0,
         videoHeight: element.videoHeight || 0,
         boundingRect: rect,
         viewportCoverageRatio: coverageFor(rect),
+        viewportIntersectionRatio: Number(((intersectionWidth * intersectionHeight) / elementArea).toFixed(6)),
+        visibleArea: Math.round(intersectionWidth * intersectionHeight),
         computedVisibility: visibleFor(element, rect),
+        sampleCount: Number(sampleStats.sampleCount || 0),
+        restartCount: Number(sampleStats.restartCount || 0),
         mediaErrorCode: error?.code ?? null,
         mediaErrorMessage: clip(error?.message, 120),
       };

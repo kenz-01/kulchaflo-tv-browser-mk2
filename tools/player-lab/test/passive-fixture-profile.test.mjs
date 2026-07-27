@@ -40,6 +40,15 @@ test('passive fixture profile observes frames, media, mutations and reports with
 
     assert.equal(report.mediaObservations.length, 3);
     assert.equal(new Set(report.mediaObservations.map((item) => item.id)).size, 3);
+    assert.deepEqual(report.mediaObservations.map((item) => item.discoveryOrder), [1, 2, 3]);
+    assert.ok(report.mediaObservations.every((item) => Number.isInteger(item.frameLocalDiscoveryOrder)));
+    assert.ok(report.mediaObservations.every((item) => typeof item.loop === 'boolean'));
+    assert.ok(report.mediaObservations.every((item) => ['finite-short', 'finite-long', 'infinite-live', 'unavailable'].includes(item.durationCategory)));
+    assert.ok(report.mediaObservations.every((item) => Array.isArray(item.ancestry) && item.ancestry.length <= 5));
+    assert.ok(report.mediaObservations.every((item) => typeof item.computedStyle === 'object'));
+    assert.ok(report.mediaObservations.every((item) => Number.isInteger(item.restartCount)));
+    assert.ok(report.mediaObservations.every((item) => Array.isArray(item.decorativeIndicators)));
+    assert.ok(report.mediaObservations.every((item) => Array.isArray(item.liveStreamIndicators)));
     assert.ok(report.mediaObservations.some((item) => item.tag === 'video' || item.tagType === 'video'));
     assert.equal(report.mediaObservations.reduce((sum, item) => sum + Number(item.sourceChangeCount ?? 0), 0), 1);
     assert.equal(report.lifecycleEvidence['source-change'].length, 1);

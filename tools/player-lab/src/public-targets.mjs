@@ -104,7 +104,7 @@ function validateRegistryInitialUrl(value, targetId) {
   if (parsed.username || parsed.password) {
     throw new Error(`Invalid public target ${targetId}: initial URL credentials are forbidden.`);
   }
-  if (parsed.search || parsed.hash) {
+  if (parsed.hash || (parsed.search && !isExactKulchaFloAttribution(parsed.searchParams))) {
     throw new Error(`Invalid public target ${targetId}: initial URL must not include query or fragment.`);
   }
   if (parsed.port) {
@@ -112,6 +112,11 @@ function validateRegistryInitialUrl(value, targetId) {
   }
   validateAllowedHost(parsed.hostname, targetId);
   return parsed;
+}
+
+function isExactKulchaFloAttribution(searchParams) {
+  const entries = [...searchParams.entries()];
+  return entries.length === 1 && entries[0][0] === 'utm_source' && entries[0][1] === 'KulchaFlo';
 }
 
 function validateAllowedHost(value, targetId) {

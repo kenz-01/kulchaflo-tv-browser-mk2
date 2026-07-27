@@ -4,7 +4,8 @@ import { redactUrl, validateProviderId } from '../src/redact-url.mjs';
 
 test('redactUrl removes query strings and fragments', () => {
   const result = redactUrl('https://example.com/live/player.m3u8?token=secret#frag');
-  assert.equal(result.url, 'https://example.com/live/player.m3u8');
+  assert.equal(result.url, 'https://example.com/.player-lab-redacted-manifest');
+  assert.equal(result.path, '/live/player.m3u8');
   assert.equal(result.omitted, false);
 });
 
@@ -15,9 +16,23 @@ test('redactUrl removes usernames and passwords', () => {
 
 test('redactUrl preserves useful host, port and path', () => {
   const result = redactUrl('http://media.example.test:8080/channel/live/index.mpd?access_key=nope');
-  assert.equal(result.url, 'http://media.example.test:8080/channel/live/index.mpd');
+  assert.equal(result.url, 'http://media.example.test:8080/.player-lab-redacted-manifest');
   assert.equal(result.hostname, 'media.example.test');
   assert.equal(result.path, '/channel/live/index.mpd');
+});
+
+test('redactUrl retains media classification path without storing a raw media URL', () => {
+  const result = redactUrl('https://media.example.test/private/banner.mp4?utm_source=secret');
+  assert.equal(result.url, 'https://media.example.test/.player-lab-redacted-media');
+  assert.equal(result.path, '/private/banner.mp4');
+});
+
+test('redactUrl removes transport-stream and fragmented-media segment paths', () => {
+  for (const path of ['/private/live000016291.ts', '/private/chunk-42.m4s']) {
+    const result = redactUrl(`https://media.example.test${path}?signature=secret`);
+    assert.equal(result.url, 'https://media.example.test/.player-lab-redacted-media');
+    assert.equal(result.path, path);
+  }
 });
 
 test('redactUrl handles malformed and unsupported URLs safely', () => {

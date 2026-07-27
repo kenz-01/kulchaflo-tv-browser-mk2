@@ -14,11 +14,14 @@ test('report model fails with clear message for missing required fields', () => 
 });
 
 test('report model redacts nested URL-bearing fields', () => {
-  const model = createReportModel(sampleReportInput());
+  const input = sampleReportInput();
+  input.mediaObservations.push({ src: 'https://media.example.test/private/banner.mp4?token=secret' });
+  const model = createReportModel(input);
   assert.equal(model.requestedUrl, 'https://example.test/watch');
   assert.equal(model.finalUrl, 'https://example.test/final');
   assert.equal(model.frames[0].url, 'https://example.test/frame');
-  assert.equal(model.mediaObservations[0].src, 'https://cdn.example.test/live/index.m3u8');
+  assert.equal(model.mediaObservations[0].src, 'https://cdn.example.test/.player-lab-redacted-manifest');
+  assert.equal(model.mediaObservations[1].src, 'https://media.example.test/.player-lab-redacted-media');
   assert.equal(model.networkEvidence[0].url, 'https://cdn.example.test/player.js');
 });
 
@@ -37,6 +40,8 @@ test('report model redacts URLs inside diagnostic strings recursively', () => {
   assert.match(json, /https:\/\/nav\.example\.test\/a,/);
   assert.match(json, /https:\/\/nav\.example\.test\/b\./);
   assert.match(json, /https:\/\/player\.example\.test\/embed/);
+  assert.doesNotMatch(json, /live\.m3u8/);
+  assert.match(json, /\.player-lab-redacted-manifest/);
 });
 
 test('report model validates provider id', () => {

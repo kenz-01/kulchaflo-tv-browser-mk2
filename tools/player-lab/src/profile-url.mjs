@@ -297,8 +297,6 @@ function validateRegisteredInitialUrl(value, policy) {
     throw result.error;
   }
   const normalized = new URL(value);
-  normalized.search = '';
-  normalized.hash = '';
   if (normalized.toString() !== policy.initialUrl) {
     throw new Error(`Registered target initial URL mismatch. URL: ${safeUrlForError(value)}`);
   }

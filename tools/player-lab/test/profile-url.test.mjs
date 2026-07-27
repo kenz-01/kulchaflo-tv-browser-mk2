@@ -437,6 +437,29 @@ test('profileUrl registered target metadata reaches canonical report and runtime
   }
 });
 
+test('profileUrl MTM registered attribution query is authorized but omitted from canonical output', async () => {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
+  const closed = { page: 0, context: 0, browser: 0 };
+  try {
+    const result = await profileUrl({
+      targetId: 'mtm-tv',
+      outputRoot,
+      launchBrowserContext: async () => fakeLaunch(closed, {
+        url: () => 'https://www.mercyandtruth.tv/watch/?utm_source=KulchaFlo#removed',
+        screenshot: async ({ path }) => writeFileSync(path, 'png'),
+      }),
+      observePage: async () => sampleObservation(),
+    });
+    assert.equal(result.report.metadata.targetId, 'mtm-tv');
+    assert.equal(result.report.metadata.providerId, 'mtm-tv');
+    assert.equal(result.report.requestedUrl, 'https://www.mercyandtruth.tv/watch/');
+    assert.equal(result.report.finalUrl, 'https://www.mercyandtruth.tv/watch/');
+    assert.doesNotMatch(JSON.stringify(result.report), /utm_source|KulchaFlo|[?#]/);
+  } finally {
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
+
 test('profileUrl registered target resolves fixed registry before fake browser launch', async () => {
   const outputRoot = mkdtempSync(join(tmpdir(), 'player-lab-profile-url-'));
   const closed = { page: 0, context: 0, browser: 0 };

@@ -41,3 +41,45 @@ test('network classification distinguishes nested iframe document safely', () =>
   assert.equal(record.documentKind, 'iframe-document');
   assert.equal(record.url, 'https://example.test/nested-frame.html');
 });
+
+test('network classification retains manifest kind without storing the raw playlist path', () => {
+  const record = classifyNetworkRecord({
+    url: 'https://media.example.test/private/channel/index.m3u8?token=secret',
+    resourceType: 'xhr',
+    method: 'GET',
+  });
+  assert.equal(record.kind, 'hls-manifest');
+  assert.equal(record.url, 'https://media.example.test/.player-lab-redacted-manifest');
+  assert.doesNotMatch(JSON.stringify(record), /private|index\.m3u8|token/);
+});
+
+test('network media response retains host and MIME evidence without a raw media path', () => {
+  const record = classifyNetworkRecord({
+    url: 'https://media.example.test/private/banner.mp4?token=secret',
+    resourceType: 'media',
+    method: 'GET',
+    contentType: 'video/mp4',
+    status: 200,
+  });
+  assert.equal(record.kind, 'media-mime');
+  assert.equal(record.url, 'https://media.example.test/.player-lab-redacted-media');
+  assert.doesNotMatch(JSON.stringify(record), /private|banner\.mp4|token/);
+});
+
+test('network media MIME evidence strips segment and extensionless media paths', () => {
+  for (const url of [
+    'https://media.example.test/private/live000016291.ts?signature=secret',
+    'https://media.example.test/private/chunk?id=42',
+  ]) {
+    const record = classifyNetworkRecord({
+      url,
+      resourceType: 'xhr',
+      method: 'GET',
+      contentType: 'video/mp2t',
+      status: 200,
+    });
+    assert.equal(record.kind, 'media-mime');
+    assert.equal(record.url, 'https://media.example.test/.player-lab-redacted-media');
+    assert.doesNotMatch(JSON.stringify(record), /private|live000016291|chunk|signature|secret/);
+  }
+});

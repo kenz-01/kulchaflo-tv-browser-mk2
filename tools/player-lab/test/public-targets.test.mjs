@@ -21,12 +21,33 @@ test('public target registry loads valid cvm-tv entry', () => {
   });
 });
 
+test('public target registry loads bounded mtm-tv entry without player assumptions', () => {
+  const registry = loadPublicTargets();
+  const target = registry.targets['mtm-tv'];
+  assert.equal(target.providerId, 'mtm-tv');
+  assert.equal(target.initialUrl, 'https://www.mercyandtruth.tv/watch/?utm_source=KulchaFlo');
+  assert.deepEqual(target.allowedMainFrameHosts, ['mercyandtruth.tv', 'www.mercyandtruth.tv']);
+  assert.equal(target.requiredProtocol, 'https:');
+  assert.equal(target.defaultProfileId, 'sony-bravia');
+  assert.deepEqual(getPublicTargetPolicy('mtm-tv'), {
+    mode: 'registered-public-target',
+    targetId: 'mtm-tv',
+    providerId: 'mtm-tv',
+    initialUrl: 'https://www.mercyandtruth.tv/watch/?utm_source=KulchaFlo',
+    allowedMainFrameHosts: ['mercyandtruth.tv', 'www.mercyandtruth.tv'],
+    requiredProtocol: 'https:',
+    defaultProfileId: 'sony-bravia',
+  });
+});
+
 test('public target registry rejects malformed target configurations', () => {
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'not a url' })), /malformed initial URL/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'http://www.cvmtv.com/live' })), /HTTPS/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'https://user:pass@www.cvmtv.com/live' })), /credentials/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'https://www.cvmtv.com/live?token=secret' })), /query or fragment/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'https://www.cvmtv.com/live#frag' })), /query or fragment/);
+  assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'https://www.cvmtv.com/live?utm_source=Other' })), /query or fragment/);
+  assert.throws(() => validatePublicTargetsRegistry(registryWith({ initialUrl: 'https://www.cvmtv.com/live?utm_source=KulchaFlo&extra=value' })), /query or fragment/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ allowedMainFrameHosts: ['*.cvmtv.com'] })), /wildcard/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ allowedMainFrameHosts: ['CVMtv.com'] })), /lowercase/);
   assert.throws(() => validatePublicTargetsRegistry(registryWith({ allowedMainFrameHosts: ['127.0.0.1'] })), /IP hosts/);

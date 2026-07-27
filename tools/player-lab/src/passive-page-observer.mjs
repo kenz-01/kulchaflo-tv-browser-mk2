@@ -143,7 +143,7 @@ export async function observePagePassively({
   await Promise.allSettled([...pendingResponses]);
 
   const evidence = collector.snapshot();
-  const mediaObservations = [...mediaFinal.values()].map((final) => {
+  const mediaObservations = [...mediaFinal.values()].map((final, index) => {
     const first = mediaFirst.get(final.id);
     const sourceChangeCount = evidence.lifecycle['source-change']?.filter((item) => item.mediaId === final.id).length ?? 0;
     const removed = Boolean(evidence.lifecycle['media-removed']?.some((item) => item.mediaId === final.id));
@@ -152,10 +152,14 @@ export async function observePagePassively({
     const replacementDetected = Boolean(replacementAsOriginal || replacementAsNew);
     return {
       ...final,
+      discoveryOrder: index + 1,
       tagType: final.tag,
       firstCurrentTime: first?.currentTime ?? final.currentTime,
       finalCurrentTime: final.currentTime,
       timeAdvanced: Number(final.currentTime) > Number(first?.currentTime ?? final.currentTime),
+      currentTimeDelta: Number((Number(final.currentTime) - Number(first?.currentTime ?? final.currentTime)).toFixed(3)),
+      decorativeIndicators: decorativeIndicatorsFor(final),
+      liveStreamIndicators: liveStreamIndicatorsFor(final),
       sourceChangeCount,
       removed,
       replacementDetected,
@@ -183,6 +187,35 @@ export async function observePagePassively({
     warnings,
     interactionCounters: collectInteractionCounters(frames),
   };
+}
+
+function decorativeIndicatorsFor(media) {
+  const indicators = [];
+  if (media.muted === true && media.autoplay === true) indicators.push('muted-autoplay');
+  if (media.loop === true) indicators.push('loop');
+  if (media.controls === false) indicators.push('no-native-controls');
+  if (media.durationCategory === 'finite-short') indicators.push('finite-short');
+  const width = Number(media.boundingRect?.width ?? 0);
+  const height = Number(media.boundingRect?.height ?? 0);
+  if (width >= 600 && height > 0 && width / height >= 3) indicators.push('wide-shallow-rendering');
+  if (ancestryMatches(media, /\b(banner|hero|header|background|animation|decorative)\b/i)) indicators.push('decorative-ancestry');
+  return indicators;
+}
+
+function liveStreamIndicatorsFor(media) {
+  const indicators = [];
+  if (['hls-manifest', 'dash-manifest'].includes(media.sourceKind)) indicators.push('manifest-source');
+  if (media.sourceKind === 'blob-media-source') indicators.push('managed-media-source');
+  if (media.durationCategory === 'infinite-live') indicators.push('infinite-duration');
+  if (ancestryMatches(media, /\b(player|bradmax|bmp|videojs|vjs|jwplayer|flowplayer|live)\b/i)) indicators.push('player-ancestry');
+  if (media.controls === true) indicators.push('native-controls');
+  return indicators;
+}
+
+function ancestryMatches(media, pattern) {
+  return (media.ancestry ?? []).some((item) =>
+    [item.tag, item.id, ...(item.classes ?? [])].some((value) => pattern.test(String(value))),
+  );
 }
 
 async function recordResponseEvidence(response, page, collector) {
