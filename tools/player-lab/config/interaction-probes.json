@@ -4,7 +4,9 @@
     "kf-post-923-madras-fm-tv": {
       "frameHost": "player.infomaniak.com",
       "selector": ".vjs-big-play-button",
-      "family": "videojs"
+      "family": "videojs",
+      "activation": "keyboard-enter",
+      "frameWaitMs": 12000
     },
     "kf-post-920-tele-peyi": {
       "frameHost": "player.infomaniak.com",
@@ -15,19 +17,20 @@
       "frameHost": "telemicro.com.do",
       "pathPrefix": "/players/15tv/",
       "selector": ".rmp-overlay-button",
-      "family": "telemicro"
+      "family": "radiant"
     },
     "kf-post-911-telecentro-13": {
       "frameHost": "telecentro.com.do",
       "pathPrefix": "/players/13bot",
       "selector": ".rmp-overlay-button",
-      "family": "telemicro"
+      "family": "radiant"
     },
     "kf-post-896-xfm-aruba": {
       "frameHost": "live2.tensila.com",
       "pathPrefix": "/onair-v-1.xfm1027/player.html",
       "selector": ".vjs-big-play-button",
-      "family": "videojs"
+      "family": "videojs",
+      "frameWaitMs": 15000
     },
     "kf-post-894-balchi-tv": {
       "frameHost": "rtmpcontrol.com",
