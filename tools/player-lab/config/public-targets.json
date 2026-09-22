@@ -477,7 +477,7 @@
     },
     "kf-post-737-ziz-tv": {
       "providerId": "ziz-tv",
-      "initialUrl": "https://zizonline.com/",
+      "initialUrl": "https://zizonline.com/tv/",
       "allowedMainFrameHosts": [
         "zizonline.com",
         "www.zizonline.com"
