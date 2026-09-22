@@ -171,3 +171,15 @@ test('Telemicro shared player routes classify as one hosted family', () => {
     assert.ok(result.secondaryFamilies.includes('native-html5'));
   }
 });
+
+
+test('ordinary category scripts do not false-positive as Tego', () => {
+  const result = classifyPlayer({
+    scriptUrls: [
+      'https://example.test/wp-content/plugins/post-category-image/assets/category-public.js',
+      'https://example.test/assets/category-slider.js',
+    ],
+  });
+  assert.notEqual(result.primaryFamily, 'tego');
+  assert.equal(result.secondaryFamilies.includes('tego'), false);
+});
