@@ -154,7 +154,7 @@ function matchRecord(record, signatures) {
       matches.push({ family, reason: 'known DOM id/class/wrapper signal', weight: WEIGHTS.dom });
       continue;
     }
-    if (record.kind === 'script' && (includesToken(signature.scriptPatterns, record.normalized) || urlHostMatches(record.safeValue, signature.hostPatterns))) {
+    if (record.kind === 'script' && includesToken(signature.scriptPatterns, record.normalized)) {
       matches.push({ family, reason: 'known player script URL', weight: WEIGHTS.script });
       continue;
     }
