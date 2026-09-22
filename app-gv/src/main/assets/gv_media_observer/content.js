@@ -4865,6 +4865,7 @@
         if (typeof currentVideo.volume === "number") currentVideo.volume = 1;
       } catch (_) {}
       const playing = radiantTvPlaybackProgressed(currentVideo);
+      const qualityResult = applyRadiantHlsLevel(1080);
       if (playing && !radiantTvFullscreenAttempted) {
         radiantTvFullscreenAttempted = true;
         const fullscreenControl = Array.from(document.querySelectorAll(
@@ -4888,7 +4889,10 @@
         volume: Number(typeof currentVideo.volume === "number" ? currentVideo.volume : 1),
         currentTime: Number(currentVideo.currentTime || 0),
         videoWidth: Number(currentVideo.videoWidth || 0),
-        videoHeight: Number(currentVideo.videoHeight || 0)
+        videoHeight: Number(currentVideo.videoHeight || 0),
+        qualitySource: qualityResult && qualityResult.source || "",
+        qualityApplied: !!(qualityResult && qualityResult.applied),
+        selectedHeight: Number(qualityResult && qualityResult.selectedHeight || 0)
       });
     }, 700);
     return true;
@@ -6360,7 +6364,7 @@
     return [];
   }
 
-  function chooseBestLevel(levels) {
+  function chooseBestLevel(levels, targetMaxHeight) {
     const candidates = levels
       .map((level, index) => ({
         index,
@@ -6372,7 +6376,8 @@
       }))
       .filter((level) => level.height > 0 || level.bitrate > 0);
     if (!candidates.length) return null;
-    const underCap = candidates.filter((level) => level.height > 0 && level.height <= TEGO_TARGET_MAX_HEIGHT);
+    const cap = Number(targetMaxHeight || TEGO_TARGET_MAX_HEIGHT);
+    const underCap = candidates.filter((level) => level.height > 0 && level.height <= cap);
     const pool = underCap.length ? underCap : candidates;
     return pool.sort((a, b) => {
       if (b.height !== a.height) return b.height - a.height;
@@ -6408,7 +6413,7 @@
     };
   }
 
-  function applyRadiantHlsLevel() {
+  function applyRadiantHlsLevel(targetMaxHeight) {
     try {
       const pageWindow = window.wrappedJSObject || window;
       const player = pageWindow.rmp;
@@ -6427,7 +6432,7 @@
         bitrate: level.bitrate || level.maxBitrate || level.averageBitrate,
         label: level.name || level.attrs && level.attrs.RESOLUTION || ""
       }));
-      const best = chooseBestLevel(levels);
+      const best = chooseBestLevel(levels, targetMaxHeight);
       if (!best) {
         return { source: "radiant-hlsjs", applied: false, reason: "no-selectable-hls-levels" };
       }
@@ -6497,7 +6502,7 @@
     if (!isTegoPlayerFrame()) return null;
     const results = [];
     const players = readVideoJsPlayers();
-    const radiantResult = applyRadiantHlsLevel();
+    const radiantResult = applyRadiantHlsLevel(TEGO_TARGET_MAX_HEIGHT);
     if (radiantResult) {
       results.push(radiantResult);
     }
