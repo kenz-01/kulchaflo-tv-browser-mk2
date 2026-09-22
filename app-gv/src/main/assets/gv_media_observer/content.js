@@ -162,6 +162,12 @@
   let compassAudioHooksAttached = false;
   let compassAudioRetryTimers = [];
   let compassAudioReady = false;
+  let zizTvHelperScheduled = false;
+  let zizTvPlayerFirstApplied = false;
+  let zizTvPlayAttempted = false;
+  let zizTvUnmuteAttempted = false;
+  let zizTvFullscreenAttempted = false;
+  const ZIZ_TV_RETRY_DELAYS_MS = [250, 700, 1500, 3000, 5500, 9000];
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
@@ -4329,6 +4335,124 @@
     });
   }
 
+
+  function isZizTvLivePage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    return host === "zizonline.com" && (path === "/tv/channel-5" || path.indexOf("/tv/channel-5/") === 0);
+  }
+
+  function findZizTvVideo() {
+    if (!isZizTvLivePage()) return null;
+    return document.querySelector("#tvVideo") ||
+      Array.from(document.querySelectorAll("video")).find((node) => isVisible(node)) ||
+      null;
+  }
+
+  function applyZizTvPlayerFirst() {
+    if (!isZizTvLivePage()) return false;
+    const video = findZizTvVideo();
+    const root = document.querySelector("#tvScreen") || (video && video.parentElement);
+    if (!video || !root) return false;
+    try {
+      root.style.setProperty("position", "fixed", "important");
+      root.style.setProperty("inset", "0", "important");
+      root.style.setProperty("width", "100vw", "important");
+      root.style.setProperty("height", "100vh", "important");
+      root.style.setProperty("max-width", "none", "important");
+      root.style.setProperty("max-height", "none", "important");
+      root.style.setProperty("margin", "0", "important");
+      root.style.setProperty("padding", "0", "important");
+      root.style.setProperty("background", "#000", "important");
+      root.style.setProperty("z-index", "2147483000", "important");
+      video.style.setProperty("width", "100%", "important");
+      video.style.setProperty("height", "100%", "important");
+      video.style.setProperty("object-fit", "contain", "important");
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      if (!zizTvPlayerFirstApplied) {
+        zizTvPlayerFirstApplied = true;
+        promptPayload({
+          type: "ziz-tv-state",
+          phase: "content-ziz-player-first",
+          pageUrl: window.location.href,
+          videoRect: rectSummary(video)
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function attemptZizTvPlaybackAndPresentation(attemptAtMs) {
+    if (!isZizTvLivePage()) return false;
+    const video = findZizTvVideo();
+    if (!video) return false;
+
+    if (video.paused && !zizTvPlayAttempted) {
+      zizTvPlayAttempted = true;
+      try {
+        const result = video.play();
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      } catch (_) {}
+      const play = document.querySelector("#tvPlay");
+      if (play && isVisible(play)) {
+        try { play.click(); } catch (_) {}
+      }
+    }
+
+    if ((video.muted || Number(video.volume || 0) < 0.95) && !zizTvUnmuteAttempted) {
+      zizTvUnmuteAttempted = true;
+      const unmute = document.querySelector("#tvUnmute") || document.querySelector("#tvMute");
+      if (unmute && isVisible(unmute)) {
+        try { unmute.click(); } catch (_) {}
+      }
+      try {
+        video.muted = false;
+        if (typeof video.volume === "number") video.volume = 1;
+      } catch (_) {}
+    }
+
+    const playing = !video.paused && Number(video.currentTime || 0) > 0.1;
+    if (playing && !zizTvFullscreenAttempted) {
+      zizTvFullscreenAttempted = true;
+      const fullscreen = document.querySelector("#tvFs");
+      if (fullscreen && isVisible(fullscreen)) {
+        try { fullscreen.click(); } catch (_) {}
+      }
+    }
+
+    promptPayload({
+      type: "ziz-tv-state",
+      phase: "content-ziz-playback-check",
+      pageUrl: window.location.href,
+      attemptAtMs: Number(attemptAtMs || 0),
+      playing,
+      paused: !!video.paused,
+      muted: !!video.muted,
+      volume: Number(typeof video.volume === "number" ? video.volume : 1),
+      currentTime: Number(video.currentTime || 0),
+      videoWidth: Number(video.videoWidth || 0),
+      videoHeight: Number(video.videoHeight || 0)
+    });
+    return true;
+  }
+
+  function scheduleZizTvHelper() {
+    if (zizTvHelperScheduled || !isZizTvLivePage()) return;
+    zizTvHelperScheduled = true;
+    ZIZ_TV_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        if (!isZizTvLivePage()) return;
+        applyZizTvPlayerFirst();
+        attemptZizTvPlaybackAndPresentation(delayMs);
+      }, delayMs);
+    });
+  }
+
   function readNovusIntent() {
     try {
       const url = new URL(window.location.href);
@@ -7689,6 +7813,7 @@
   scheduleCompassMinimalHelper();
   scheduleIslandTvMinimalHelper();
   scheduleDbsTvMinimalHelper();
+  scheduleZizTvHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
@@ -7718,6 +7843,7 @@
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
+  window.addEventListener("load", scheduleZizTvHelper, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
