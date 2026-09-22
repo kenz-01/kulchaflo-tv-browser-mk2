@@ -394,6 +394,26 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-926-identite-tele-caraibes": {
+      "providerId": "identite-tele-caraibes",
+      "initialUrl": "https://identiteradio.com/tv/",
+      "allowedMainFrameHosts": [
+        "identiteradio.com",
+        "www.identiteradio.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-925-fusion-tv": {
+      "providerId": "fusion-tv-martinique",
+      "initialUrl": "https://radiofusion.fr/fusion-tv/",
+      "allowedMainFrameHosts": [
+        "radiofusion.fr",
+        "www.radiofusion.fr"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
