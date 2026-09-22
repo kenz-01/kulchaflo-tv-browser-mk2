@@ -294,6 +294,24 @@
         "streamhoster"
       ],
       "globalNames": []
+    },
+    "telemicro": {
+      "hostPatterns": [
+        "telemicro.com.do",
+        "www.telemicro.com.do"
+      ],
+      "pathPatterns": [
+        "/players/5tv/",
+        "/players/15tv/",
+        "/players/13tv/"
+      ],
+      "scriptPatterns": [
+        "telemicro"
+      ],
+      "domPatterns": [
+        "telemicro"
+      ],
+      "globalNames": []
     }
   },
   "manifestExtensions": [
