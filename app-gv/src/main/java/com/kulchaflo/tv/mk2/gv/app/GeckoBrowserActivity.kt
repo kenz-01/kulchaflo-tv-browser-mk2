@@ -9806,6 +9806,20 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val identiteTopContext =
+                isIdentiteProFhiAutoplayContextUrl(activeSessionUrl) ||
+                    isIdentiteProFhiAutoplayContextUrl(currentRootUrl)
+            val identitePermissionUri = isIdentiteProFhiAutoplayContextUrl(permission.uri.orEmpty())
+            val identiteThirdParty = isIdentiteProFhiAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
+            val identiteAutoplayScoped = ENABLE_IDENTITE_PRO_FHI_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    identitePermissionUri ||
+                        (identiteTopContext && identiteThirdParty)
+                    )
             val embeddedLiveVideoJsTopContext =
                 isEmbeddedLiveVideoJsAutoplayContextUrl(activeSessionUrl) ||
                     isEmbeddedLiveVideoJsAutoplayContextUrl(currentRootUrl)
@@ -9872,6 +9886,7 @@ return changed>0;
                 radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 svgAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 embeddedLiveVideoJsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                identiteAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -15323,6 +15338,7 @@ return changed>0;
         private const val ENABLE_RADIANT_TV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_SVG_CLOUDFLARE_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_EMBEDDED_LIVE_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_IDENTITE_PRO_FHI_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15856,6 +15872,17 @@ return changed>0;
 
     private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
         return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
+    }
+
+    private fun isIdentiteProFhiAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "identiteradio.com") return path == "/tv" || path.startsWith("/tv/")
+        if (host == "vdo2.pro-fhi.net") return path.startsWith("/hybrid-stream-video-widget/")
+        return false
     }
 
     private fun isEmbeddedLiveVideoJsAutoplayContextUrl(url: String): Boolean {
