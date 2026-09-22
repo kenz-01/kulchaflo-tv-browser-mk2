@@ -427,7 +427,7 @@
     },
     "kf-post-904-cubavision-internacional": {
       "providerId": "cubavision-internacional",
-      "initialUrl": "https://teveo.cu/",
+      "initialUrl": "https://teveo.cu/live/video/AKDdWvMTYzfsfnNJ",
       "allowedMainFrameHosts": [
         "teveo.cu",
         "www.teveo.cu"
@@ -457,7 +457,7 @@
     },
     "kf-post-744-telemundo-pr": {
       "providerId": "telemundo-puerto-rico",
-      "initialUrl": "https://www.telemundopr.com/",
+      "initialUrl": "https://www.telemundopr.com/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645/",
       "allowedMainFrameHosts": [
         "telemundopr.com",
         "www.telemundopr.com"
@@ -467,7 +467,7 @@
     },
     "kf-post-738-tvc-st-kitts": {
       "providerId": "tvc-st-kitts",
-      "initialUrl": "https://www.tvcplus.live/",
+      "initialUrl": "https://www.tvcplus.live/watch-live-tv",
       "allowedMainFrameHosts": [
         "tvcplus.live",
         "www.tvcplus.live"
