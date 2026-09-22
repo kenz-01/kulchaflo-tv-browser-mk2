@@ -50,7 +50,7 @@ async function run(targetId, outputRoot) {
   const launched = await launchFreshBrowserContext({ profileId: policy.defaultProfileId });
   try {
     const page = await launched.context.newPage();
-    await page.goto(policy.initialUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(policy.initialUrl, { waitUntil: 'domcontentloaded', timeout: Number(probe.navigationTimeoutMs ?? 30000) });
     await page.waitForTimeout(7000);
     const frameDeadline = Date.now() + Number(probe.frameWaitMs ?? 0);
     let frames = page.frames().filter((frame) => safeFrameMatch(frame, probe));
