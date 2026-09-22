@@ -14,6 +14,7 @@ export const PLAYER_FAMILIES = Object.freeze([
   'pro-fhi',
   'streamhoster',
   'telemicro',
+  'radiant',
   'native-html5',
   'unknown',
 ]);
