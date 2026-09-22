@@ -71,6 +71,116 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-924-jamaica-travel-channel": {
+      "providerId": "jamaica-travel-channel",
+      "initialUrl": "https://jamaicatravelchannel.com/",
+      "allowedMainFrameHosts": [
+        "jamaicatravelchannel.com",
+        "www.jamaicatravelchannel.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-923-madras-fm-tv": {
+      "providerId": "madras-fm-tv",
+      "initialUrl": "https://www.madrasfm.tv/",
+      "allowedMainFrameHosts": [
+        "madrasfm.tv",
+        "www.madrasfm.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-922-rht-tv": {
+      "providerId": "rht-guadeloupe-tv",
+      "initialUrl": "https://rhtguadeloupe.fr/live-video/",
+      "allowedMainFrameHosts": [
+        "rhtguadeloupe.fr",
+        "www.rhtguadeloupe.fr"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-921-etv-guadeloupe": {
+      "providerId": "etv-guadeloupe",
+      "initialUrl": "https://www.etv.gp/",
+      "allowedMainFrameHosts": [
+        "etv.gp",
+        "www.etv.gp"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-919-antena-7": {
+      "providerId": "antena-7-do",
+      "initialUrl": "https://www.antena7.com.do/envivo-canal-7/",
+      "allowedMainFrameHosts": [
+        "antena7.com.do",
+        "www.antena7.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-918-bonao-tv": {
+      "providerId": "bonao-tv",
+      "initialUrl": "https://www.bonaotv.com/",
+      "allowedMainFrameHosts": [
+        "bonaotv.com",
+        "www.bonaotv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-914-teleuniverso": {
+      "providerId": "teleuniverso-29",
+      "initialUrl": "https://teleuniversotv.com/",
+      "allowedMainFrameHosts": [
+        "teleuniversotv.com",
+        "www.teleuniversotv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-912-digital-15": {
+      "providerId": "digital-15",
+      "initialUrl": "https://telemicro.com.do/digital-15-en-vivo/",
+      "allowedMainFrameHosts": [
+        "telemicro.com.do",
+        "www.telemicro.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-911-telecentro-13": {
+      "providerId": "telecentro-13",
+      "initialUrl": "https://telecentro.com.do/telecentro-en-vivo/",
+      "allowedMainFrameHosts": [
+        "telecentro.com.do",
+        "www.telecentro.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-910-telemicro-5": {
+      "providerId": "telemicro-5",
+      "initialUrl": "https://telemicro.com.do/telemicro-en-vivo/",
+      "allowedMainFrameHosts": [
+        "telemicro.com.do",
+        "www.telemicro.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-908-telesistema-11": {
+      "providerId": "telesistema-11",
+      "initialUrl": "https://telesistema11.com.do/en-vivo/",
+      "allowedMainFrameHosts": [
+        "telesistema11.com.do",
+        "www.telesistema11.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
