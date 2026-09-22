@@ -197,3 +197,19 @@ test('Radiant Media Player outranks Telemicro wrapper evidence', () => {
   assert.ok(result.secondaryFamilies.includes('telemicro'));
   assert.ok(result.secondaryFamilies.includes('native-html5'));
 });
+
+
+test('same-origin site scripts do not count as hosted-player script evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://telemicro.com.do/players/15tv/index.php'],
+    scriptUrls: [
+      'https://telemicro.com.do/wp-content/themes/site/app.js',
+      'https://telemicro.com.do/wp-includes/js/react.min.js',
+      'https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js',
+    ],
+    domSignals: ['rmp-container rmp-overlay-button'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'radiant');
+  assert.ok(result.secondaryFamilies.includes('telemicro'));
+});
