@@ -10,6 +10,8 @@ export const PLAYER_FAMILIES = Object.freeze([
   'bradmax',
   'tego',
   'novus',
+  'infomaniak',
+  'pro-fhi',
   'native-html5',
   'unknown',
 ]);
