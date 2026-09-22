@@ -17,6 +17,8 @@ test('Bizz and RHT embedded live Video.js helpers stay browser-first and scoped'
     'biztv.com',
     'c.streamhoster.com',
     'rhtguadeloupe.fr',
+    'madrasfm.tv',
+    'radiofusion.fr',
     'player.infomaniak.com',
     'content-embedded-live-videojs-player-first',
     'content-embedded-live-videojs-playback-check'
