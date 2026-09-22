@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "providerId": "unrelated-vimeo",
+  "playerFamily": "vimeo",
+  "trustedMatchingEvidence": {},
+  "supportedCapabilities": ["enabled", "idleMs", "selectors"],
+  "unsupportedRequirements": [],
+  "transportAutohide": {
+    "enabled": true,
+    "idleMs": 3200,
+    "selectors": [".vp-controls"],
+    "oneOwnedTimer": false,
+    "interactionReveal": false,
+    "pagehideCleanup": false,
+    "urlFreeDiagnostics": false
+  },
+  "sourceEvidenceReferences": ["fixture-untrusted-vimeo"]
+}

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "sample-cvm": {
+      "providerId": "sample-cvm",
+      "targetId": "sample-cvm",
+      "playerFamily": "vimeo",
+      "trustedMatchingEvidence": { "frameHost": "vimeo.com", "allowFrameSubdomains": false, "pathPrefix": "/event/", "pathSuffix": "/embed", "referrerHosts": ["sample-cvm.test"] },
+      "transportAutohide": { "idleMs": 3200 }
+    }
+  }
+}

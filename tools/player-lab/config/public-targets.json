@@ -1,0 +1,537 @@
+{
+  "version": 1,
+  "targets": {
+    "cvm-tv": {
+      "providerId": "cvm-tv",
+      "initialUrl": "https://www.cvmtv.com/live",
+      "allowedMainFrameHosts": [
+        "www.cvmtv.com",
+        "cvmtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "mtm-tv": {
+      "providerId": "mtm-tv",
+      "initialUrl": "https://www.mercyandtruth.tv/watch/?utm_source=KulchaFlo",
+      "allowedMainFrameHosts": [
+        "mercyandtruth.tv",
+        "www.mercyandtruth.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-933-islamic-network": {
+      "providerId": "the-islamic-network",
+      "initialUrl": "https://theislamicnetwork.org/",
+      "allowedMainFrameHosts": [
+        "theislamicnetwork.org",
+        "www.theislamicnetwork.org"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-932-biz-tv": {
+      "providerId": "biz-tv",
+      "initialUrl": "https://biztv.com/watch-biztv",
+      "allowedMainFrameHosts": [
+        "biztv.com",
+        "www.biztv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-931-sankhya-television": {
+      "providerId": "sankhya-television",
+      "initialUrl": "https://www.sankhyatv.com/live",
+      "allowedMainFrameHosts": [
+        "sankhyatv.com",
+        "www.sankhyatv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-929-tvcarib": {
+      "providerId": "tvcarib",
+      "initialUrl": "https://tvcarib.com/",
+      "allowedMainFrameHosts": [
+        "tvcarib.com",
+        "www.tvcarib.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-927-teleonce": {
+      "providerId": "teleonce",
+      "initialUrl": "https://cdn.teleonce.com/en-vivo/",
+      "allowedMainFrameHosts": [
+        "cdn.teleonce.com",
+        "teleonce.com",
+        "www.teleonce.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-924-jamaica-travel-channel": {
+      "providerId": "jamaica-travel-channel",
+      "initialUrl": "https://jamaicatravelchannel.com/",
+      "allowedMainFrameHosts": [
+        "jamaicatravelchannel.com",
+        "www.jamaicatravelchannel.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-923-madras-fm-tv": {
+      "providerId": "madras-fm-tv",
+      "initialUrl": "https://www.madrasfm.tv/",
+      "allowedMainFrameHosts": [
+        "madrasfm.tv",
+        "www.madrasfm.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-922-rht-tv": {
+      "providerId": "rht-guadeloupe-tv",
+      "initialUrl": "https://rhtguadeloupe.fr/live-video/",
+      "allowedMainFrameHosts": [
+        "rhtguadeloupe.fr",
+        "www.rhtguadeloupe.fr"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-921-etv-guadeloupe": {
+      "providerId": "etv-guadeloupe",
+      "initialUrl": "https://www.etv.gp/direct/",
+      "allowedMainFrameHosts": [
+        "etv.gp",
+        "www.etv.gp"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-919-antena-7": {
+      "providerId": "antena-7-do",
+      "initialUrl": "https://www.antena7.com.do/envivo-canal-7/",
+      "allowedMainFrameHosts": [
+        "antena7.com.do",
+        "www.antena7.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-918-bonao-tv": {
+      "providerId": "bonao-tv",
+      "initialUrl": "https://www.bonaotv.com/",
+      "allowedMainFrameHosts": [
+        "bonaotv.com",
+        "www.bonaotv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-914-teleuniverso": {
+      "providerId": "teleuniverso-29",
+      "initialUrl": "https://teleuniversotv.com/",
+      "allowedMainFrameHosts": [
+        "teleuniversotv.com",
+        "www.teleuniversotv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-912-digital-15": {
+      "providerId": "digital-15",
+      "initialUrl": "https://telemicro.com.do/digital-15-en-vivo/",
+      "allowedMainFrameHosts": [
+        "telemicro.com.do",
+        "www.telemicro.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-911-telecentro-13": {
+      "providerId": "telecentro-13",
+      "initialUrl": "https://telecentro.com.do/telecentro-en-vivo/",
+      "allowedMainFrameHosts": [
+        "telecentro.com.do",
+        "www.telecentro.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-910-telemicro-5": {
+      "providerId": "telemicro-5",
+      "initialUrl": "https://telemicro.com.do/telemicro-en-vivo/",
+      "allowedMainFrameHosts": [
+        "telemicro.com.do",
+        "www.telemicro.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-908-telesistema-11": {
+      "providerId": "telesistema-11",
+      "initialUrl": "https://telesistema11.com.do/en-vivo/",
+      "allowedMainFrameHosts": [
+        "telesistema11.com.do",
+        "www.telesistema11.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-917-alcarrizos-tv": {
+      "providerId": "alcarrizos-tv",
+      "initialUrl": "https://alcarrizostv.com/",
+      "allowedMainFrameHosts": [
+        "alcarrizostv.com",
+        "www.alcarrizostv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-915-yunavision": {
+      "providerId": "yunavision",
+      "initialUrl": "https://www.yunavision.com/",
+      "allowedMainFrameHosts": [
+        "yunavision.com",
+        "www.yunavision.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-913-cdn-37": {
+      "providerId": "cdn-37",
+      "initialUrl": "https://cdn.com.do/",
+      "allowedMainFrameHosts": [
+        "cdn.com.do",
+        "www.cdn.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-909-teleantillas": {
+      "providerId": "teleantillas",
+      "initialUrl": "https://teleantillas.com.do/radio-page/",
+      "allowedMainFrameHosts": [
+        "teleantillas.com.do",
+        "www.teleantillas.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-905-rtvd": {
+      "providerId": "rtvd",
+      "initialUrl": "https://rtvd.gob.do/",
+      "allowedMainFrameHosts": [
+        "rtvd.gob.do",
+        "www.rtvd.gob.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-930-scorch-tv": {
+      "providerId": "scorch-tv",
+      "initialUrl": "https://www.scorchtv.com/",
+      "allowedMainFrameHosts": [
+        "scorchtv.com",
+        "www.scorchtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-916-adoram-tv": {
+      "providerId": "adoram-tv",
+      "initialUrl": "https://adoramtv.org/programacion-en-vivo/",
+      "allowedMainFrameHosts": [
+        "adoramtv.org",
+        "www.adoramtv.org"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-903-prensa-latina-tv": {
+      "providerId": "prensa-latina-tv",
+      "initialUrl": "https://www.prensa-latina.cu/",
+      "allowedMainFrameHosts": [
+        "prensa-latina.cu",
+        "www.prensa-latina.cu"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-901-bonce-tv": {
+      "providerId": "bonce-tv",
+      "initialUrl": "https://bonce.tv/",
+      "allowedMainFrameHosts": [
+        "bonce.tv",
+        "www.bonce.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-900-live-99-tv": {
+      "providerId": "live-99-tv",
+      "initialUrl": "https://live99fm.com/",
+      "allowedMainFrameHosts": [
+        "live99fm.com",
+        "www.live99fm.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-899-energia-tv": {
+      "providerId": "energia-bonaire-tv",
+      "initialUrl": "https://www.energiabonaire.com/",
+      "allowedMainFrameHosts": [
+        "energiabonaire.com",
+        "www.energiabonaire.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-898-bonaire-tv": {
+      "providerId": "bonaire-tv",
+      "initialUrl": "https://www.bonaire.tv/",
+      "allowedMainFrameHosts": [
+        "bonaire.tv",
+        "www.bonaire.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-897-zns-tv": {
+      "providerId": "zns-tv",
+      "initialUrl": "https://znsbahamas.com/",
+      "allowedMainFrameHosts": [
+        "znsbahamas.com",
+        "www.znsbahamas.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-896-xfm-aruba": {
+      "providerId": "xfm-aruba",
+      "initialUrl": "https://www.xfmaruba.com/",
+      "allowedMainFrameHosts": [
+        "xfmaruba.com",
+        "www.xfmaruba.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-895-vip-radio-live-tv": {
+      "providerId": "vip-radio-aruba-tv",
+      "initialUrl": "https://www.viponlineradio.com/vip-tv/",
+      "allowedMainFrameHosts": [
+        "viponlineradio.com",
+        "www.viponlineradio.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-894-balchi-tv": {
+      "providerId": "balchi-tv",
+      "initialUrl": "https://www.balchitv.com/",
+      "allowedMainFrameHosts": [
+        "balchitv.com",
+        "www.balchitv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-920-tele-peyi": {
+      "providerId": "tele-peyi-guyane",
+      "initialUrl": "https://www.peyiguyane.com/tele-peyi",
+      "allowedMainFrameHosts": [
+        "peyiguyane.com",
+        "www.peyiguyane.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-907-ahora-tv": {
+      "providerId": "ahora-tv-do",
+      "initialUrl": "https://www.ahoratv.com/",
+      "allowedMainFrameHosts": [
+        "ahoratv.com",
+        "www.ahoratv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-906-acento-tv": {
+      "providerId": "acento-tv",
+      "initialUrl": "https://acentotv.acento.com.do/en-vivo.html",
+      "allowedMainFrameHosts": [
+        "acentotv.acento.com.do",
+        "acento.com.do",
+        "www.acento.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-902-tv-direct-13": {
+      "providerId": "tv-direct-13-curacao",
+      "initialUrl": "https://tvdirect13.com/",
+      "allowedMainFrameHosts": [
+        "tvdirect13.com",
+        "www.tvdirect13.com",
+        "directmediacuracao.com",
+        "www.directmediacuracao.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-893-pointe-tv": {
+      "providerId": "pointe-tv-antigua",
+      "initialUrl": "https://pointville.ag/live-stream/",
+      "allowedMainFrameHosts": [
+        "pointville.ag",
+        "www.pointville.ag"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-926-identite-tele-caraibes": {
+      "providerId": "identite-tele-caraibes",
+      "initialUrl": "https://identiteradio.com/tv/",
+      "allowedMainFrameHosts": [
+        "identiteradio.com",
+        "www.identiteradio.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-925-fusion-tv": {
+      "providerId": "fusion-tv-martinique",
+      "initialUrl": "https://radiofusion.fr/fusion-tv/",
+      "allowedMainFrameHosts": [
+        "radiofusion.fr",
+        "www.radiofusion.fr"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-928-svg-tv": {
+      "providerId": "svg-tv",
+      "initialUrl": "https://watchsvgtv.com/",
+      "allowedMainFrameHosts": [
+        "watchsvgtv.com",
+        "www.watchsvgtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-904-cubavision-internacional": {
+      "providerId": "cubavision-internacional",
+      "initialUrl": "https://teveo.cu/live/video/AKDdWvMTYzfsfnNJ",
+      "allowedMainFrameHosts": [
+        "teveo.cu",
+        "www.teveo.cu"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-746-wapa-tv": {
+      "providerId": "wapa-tv",
+      "initialUrl": "https://wapa.tv/envivo",
+      "allowedMainFrameHosts": [
+        "wapa.tv",
+        "www.wapa.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-745-wipr": {
+      "providerId": "wipr",
+      "initialUrl": "https://wipr.pr/envivo/",
+      "allowedMainFrameHosts": [
+        "wipr.pr",
+        "www.wipr.pr"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-744-telemundo-pr": {
+      "providerId": "telemundo-puerto-rico",
+      "initialUrl": "https://www.telemundopr.com/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645/",
+      "allowedMainFrameHosts": [
+        "telemundopr.com",
+        "www.telemundopr.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-738-tvc-st-kitts": {
+      "providerId": "tvc-st-kitts",
+      "initialUrl": "https://www.tvcplus.live/watch-live-tv",
+      "allowedMainFrameHosts": [
+        "tvcplus.live",
+        "www.tvcplus.live"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-737-ziz-tv": {
+      "providerId": "ziz-tv",
+      "initialUrl": "https://zizonline.com/tv/channel-5/",
+      "allowedMainFrameHosts": [
+        "zizonline.com",
+        "www.zizonline.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-736-hgptv": {
+      "providerId": "hgptv",
+      "initialUrl": "https://www.hgptv.com/",
+      "allowedMainFrameHosts": [
+        "hgptv.com",
+        "www.hgptv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-734-mtv-guyana": {
+      "providerId": "mtv-guyana",
+      "initialUrl": "https://www.mtvgy.com/live",
+      "allowedMainFrameHosts": [
+        "mtvgy.com",
+        "www.mtvgy.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-192-tv6": {
+      "providerId": "tv6-tt",
+      "initialUrl": "https://tv6tnt.com/watch_live",
+      "allowedMainFrameHosts": [
+        "tv6tnt.com",
+        "www.tv6tnt.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-928-svg-tv-cloudflare-player": {
+      "providerId": "svg-tv-cloudflare-player",
+      "initialUrl": "https://customer-1drvoydzrkhpnbh4.cloudflarestream.com/64f76b07446d5d8801c4b9f6192ac79b/iframe",
+      "allowedMainFrameHosts": [
+        "customer-1drvoydzrkhpnbh4.cloudflarestream.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-734-mtv-guyana-player": {
+      "providerId": "mtv-guyana-player",
+      "initialUrl": "https://stream.mtvgy.com/mtvlive/embed.html",
+      "allowedMainFrameHosts": [
+        "stream.mtvgy.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    }
+  }
+}

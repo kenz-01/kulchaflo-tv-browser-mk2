@@ -65,13 +65,13 @@ class GvMediaPathController {
         val observation = classifyDirectSource(
             sourceUrl = sourceUrl,
             title = title,
-            reasonPrefix = "extension-media-evidence page=$pageUrl",
+            reasonPrefix = "extension-media-evidence",
             explicitMimeType = mimeType,
         ) ?: return null
         state = State.READY_FOR_PROMOTION
         GvLogger.i(
             TAG,
-            "extension media evidence sourceKind=EXTRACTED_STREAM pageUrl=$pageUrl sourceUrl=${observation.url} mimeHint=${observation.mimeHint ?: "unknown"}"
+            "extension media evidence sourceKind=EXTRACTED_STREAM pageKind=${observation.pageKind} mimeHint=${observation.mimeHint ?: "unknown"}"
         )
         return observation
     }

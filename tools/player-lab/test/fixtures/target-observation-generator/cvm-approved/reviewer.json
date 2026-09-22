@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "authority": "bounded-reviewer-input",
+  "providerId": "cvm-tv",
+  "targetId": "cvm-tv",
+  "playerFamily": "vimeo",
+  "analysisSha256": "a524870035f9c4e36da0f7158ff0560f7673fffd7404fc1d224f2f3349c1c575",
+  "transportAutohide": { "idleMs": 3200 }
+}
