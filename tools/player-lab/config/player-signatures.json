@@ -303,12 +303,8 @@
         "/players/15tv/",
         "/players/13tv/"
       ],
-      "scriptPatterns": [
-        "telemicro"
-      ],
-      "domPatterns": [
-        "telemicro"
-      ],
+      "scriptPatterns": [],
+      "domPatterns": [],
       "globalNames": []
     },
     "radiant": {
