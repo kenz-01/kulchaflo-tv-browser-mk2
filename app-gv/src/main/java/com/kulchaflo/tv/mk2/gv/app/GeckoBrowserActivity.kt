@@ -9806,6 +9806,22 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val embeddedLiveVideoJsTopContext =
+                isEmbeddedLiveVideoJsAutoplayContextUrl(activeSessionUrl) ||
+                    isEmbeddedLiveVideoJsAutoplayContextUrl(currentRootUrl)
+            val embeddedLiveVideoJsPermissionUri =
+                isEmbeddedLiveVideoJsAutoplayContextUrl(permission.uri.orEmpty())
+            val embeddedLiveVideoJsThirdParty =
+                isEmbeddedLiveVideoJsAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
+            val embeddedLiveVideoJsAutoplayScoped = ENABLE_EMBEDDED_LIVE_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    embeddedLiveVideoJsPermissionUri ||
+                        (embeddedLiveVideoJsTopContext && embeddedLiveVideoJsThirdParty)
+                    )
             val svgTopContext = isSvgTvAutoplayContextUrl(activeSessionUrl) || isSvgTvAutoplayContextUrl(currentRootUrl)
             val svgPermissionUri = isSvgTvAutoplayContextUrl(permission.uri.orEmpty())
             val svgThirdPartyCloudflare = isSvgTvCloudflareHost(thirdPartyHost)
@@ -9855,6 +9871,7 @@ return changed>0;
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 svgAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                embeddedLiveVideoJsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -15305,6 +15322,7 @@ return changed>0;
         private const val ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_RADIANT_TV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_SVG_CLOUDFLARE_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_EMBEDDED_LIVE_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15838,6 +15856,19 @@ return changed>0;
 
     private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
         return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
+    }
+
+    private fun isEmbeddedLiveVideoJsAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "biztv.com") return path.startsWith("/watch-biztv")
+        if (host == "c.streamhoster.com") return path.startsWith("/embed/media/")
+        if (host == "rhtguadeloupe.fr") return path.startsWith("/live-video")
+        if (host == "player.infomaniak.com") return true
+        return false
     }
 
     private fun isSvgTvCloudflareHost(host: String?): Boolean {
