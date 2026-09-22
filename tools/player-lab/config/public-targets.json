@@ -251,6 +251,56 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-903-prensa-latina-tv": {
+      "providerId": "prensa-latina-tv",
+      "initialUrl": "https://www.prensa-latina.cu/",
+      "allowedMainFrameHosts": [
+        "prensa-latina.cu",
+        "www.prensa-latina.cu"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-901-bonce-tv": {
+      "providerId": "bonce-tv",
+      "initialUrl": "https://bonce.tv/",
+      "allowedMainFrameHosts": [
+        "bonce.tv",
+        "www.bonce.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-900-live-99-tv": {
+      "providerId": "live-99-tv",
+      "initialUrl": "https://live99fm.com/",
+      "allowedMainFrameHosts": [
+        "live99fm.com",
+        "www.live99fm.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-899-energia-tv": {
+      "providerId": "energia-bonaire-tv",
+      "initialUrl": "https://www.energiabonaire.com/",
+      "allowedMainFrameHosts": [
+        "energiabonaire.com",
+        "www.energiabonaire.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-898-bonaire-tv": {
+      "providerId": "bonaire-tv",
+      "initialUrl": "https://www.bonaire.tv/",
+      "allowedMainFrameHosts": [
+        "bonaire.tv",
+        "www.bonaire.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
