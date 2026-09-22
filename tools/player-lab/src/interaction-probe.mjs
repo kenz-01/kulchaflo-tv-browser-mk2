@@ -68,7 +68,12 @@ async function run(targetId, outputRoot) {
     if (!(await locator.isVisible())) throw new Error('Bounded play control is not visible.');
 
     const before = await mediaSnapshot(frame);
-    if (probe.activation === 'keyboard-enter') {
+    if (probe.activation === 'media-play') {
+      await locator.evaluate(async (element) => {
+        if (!(element instanceof HTMLMediaElement)) throw new Error('Bounded media target is not a media element.');
+        await element.play();
+      });
+    } else if (probe.activation === 'keyboard-enter') {
       await locator.focus();
       if (!(await locator.evaluate((element) => document.activeElement === element))) {
         throw new Error('Bounded play control did not receive focus.');
