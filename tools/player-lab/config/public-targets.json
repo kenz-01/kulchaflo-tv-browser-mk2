@@ -341,6 +341,37 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-920-tele-peyi": {
+      "providerId": "tele-peyi-guyane",
+      "initialUrl": "https://www.peyiguyane.com/tele-peyi",
+      "allowedMainFrameHosts": [
+        "peyiguyane.com",
+        "www.peyiguyane.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-907-ahora-tv": {
+      "providerId": "ahora-tv-do",
+      "initialUrl": "https://www.ahoratv.com/",
+      "allowedMainFrameHosts": [
+        "ahoratv.com",
+        "www.ahoratv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-906-acento-tv": {
+      "providerId": "acento-tv",
+      "initialUrl": "https://acentotv.acento.com.do/en-vivo.html",
+      "allowedMainFrameHosts": [
+        "acentotv.acento.com.do",
+        "acento.com.do",
+        "www.acento.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
