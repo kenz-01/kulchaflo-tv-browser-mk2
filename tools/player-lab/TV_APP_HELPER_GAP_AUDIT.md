@@ -46,12 +46,15 @@ Existing-family classification does **not** automatically authorize copying one 
 - Teleuniverso 29 — Dailymotion
 - TV Direct 13 Curaçao — JWPlayer
 
-### Genuine new family gap
+### Family gaps / capability-generalisation candidates
 
 - Digital 15 — Radiant Media Player
 - Telemicro 5 — Radiant Media Player
+- SVG-TV — Cloudflare Stream
 
-Radiant is the clearest player family in the current tranche that was not part of the original accepted helper bank. It should be treated as one shared family investigation, not two independent provider hacks.
+Radiant is not completely new to the app: the existing Tego quality-policy path already contains `applyRadiantHlsLevel()`, using `window.rmp.getHlsJSInstance()`. That capability is Tego-scoped, so Digital 15 / Telemicro should first test whether the existing Radiant/Hls.js capability can be extracted into a bounded reusable component instead of creating provider-specific helpers.
+
+Cloudflare Stream is a genuinely new hosted-player family in the current helper bank. SVG-TV's current official `watchsvgtv.com` page embeds a Cloudflare Stream customer iframe, so this family now needs Player Lab characterization before any Android runtime work.
 
 ### Generic Hls.js review
 
@@ -105,7 +108,7 @@ The automated target registry initially omitted:
 - #926 Identité Télé Caraïbes
 - #925 Fusion TV
 
-#926 and #925 have now been restored to the profiler registry using their official broadcaster routes. #928 remains intentionally unregistered until a current trustworthy SVG-TV route is established.
+#926 and #925 have been restored to the profiler registry using their official broadcaster routes. #928 is also now registered: the current official SVG-TV route is `https://watchsvgtv.com/`, which embeds Cloudflare Stream.
 
 ## Working conclusion
 
@@ -113,10 +116,11 @@ The unfinished work is substantially smaller than the list of newer Channel post
 
 Priority order:
 
-1. Complete the missing-record profiles (#925/#926; #928 route discovery).
-2. Treat Radiant as the first true new player-family gap.
-3. Test whether Hls.js channels can use one bounded generic browser-play path before creating provider helpers.
-4. Reuse existing YouTube/Vimeo/Dailymotion/JWPlayer/Video.js families for the remaining channels, adding only minimal provider wrappers where evidence shows they are necessary.
-5. Keep channels classified `no-helper-needed` out of helper code unless physical TV validation proves otherwise.
+1. Complete the restored-record profiles (#925/#926/#928).
+2. Characterize Cloudflare Stream for SVG-TV.
+3. Treat standalone Radiant as a capability-generalisation task: reuse/extract the existing Tego-scoped Radiant/Hls.js logic before considering provider helpers.
+4. Test whether Hls.js channels can use one bounded generic browser-play path before creating provider helpers.
+5. Reuse existing YouTube/Vimeo/Dailymotion/JWPlayer/Video.js families for the remaining channels, adding only minimal provider wrappers where evidence shows they are necessary.
+6. Keep channels classified `no-helper-needed` out of helper code unless physical TV validation proves otherwise.
 
 No Android runtime helper should be added solely from family detection; physical Bravia validation remains the final acceptance gate.
