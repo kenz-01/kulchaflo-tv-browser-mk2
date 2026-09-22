@@ -310,6 +310,27 @@
         "telemicro"
       ],
       "globalNames": []
+    },
+    "radiant": {
+      "hostPatterns": [
+        "radiantmediatechs.com",
+        "cdn.radiantmediatechs.com"
+      ],
+      "pathPatterns": [
+        "/rmp/"
+      ],
+      "scriptPatterns": [
+        "radiantmediatechs",
+        "rmp.min.js"
+      ],
+      "domPatterns": [
+        "rmp-container",
+        "rmp-overlay-button",
+        "rmp-play-pause"
+      ],
+      "globalNames": [
+        "RadiantMP"
+      ]
     }
   },
   "manifestExtensions": [
