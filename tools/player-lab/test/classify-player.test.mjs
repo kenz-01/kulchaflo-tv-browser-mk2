@@ -213,3 +213,13 @@ test('same-origin site scripts do not count as hosted-player script evidence', (
   assert.equal(result.primaryFamily, 'radiant');
   assert.ok(result.secondaryFamilies.includes('telemicro'));
 });
+
+
+test('Cloudflare Stream customer iframe classifies as hosted player', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://customer-example.cloudflarestream.com/example/iframe'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'cloudflare-stream');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
