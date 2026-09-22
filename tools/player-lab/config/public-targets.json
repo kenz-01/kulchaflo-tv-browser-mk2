@@ -104,7 +104,7 @@
     },
     "kf-post-921-etv-guadeloupe": {
       "providerId": "etv-guadeloupe",
-      "initialUrl": "https://www.etv.gp/",
+      "initialUrl": "https://www.etv.gp/direct/",
       "allowedMainFrameHosts": [
         "etv.gp",
         "www.etv.gp"
