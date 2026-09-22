@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "provider-specific-conflict",
+  "playerFamily": "vimeo",
+  "analysisSha256": "482d5f39db915b5e9f0cd29198fa838a8c37f3328af8d8ff695faf79e2a5dfd2",
+  "trustedMatchingEvidence": {
+    "frameHost": "vimeo.com",
+    "pathPrefix": "/event/",
+    "pathSuffix": "/embed",
+    "referrerHosts": ["provider-specific.example.test"]
+  },
+  "providerSpecificBehavior": true,
+  "supportedCapabilities": ["oneOwnedTimer"],
+  "unsupportedRequirements": [],
+  "transportAutohide": { "oneOwnedTimer": false }
+}
