@@ -3,7 +3,7 @@ import { PLAYER_FAMILIES } from './player-families.mjs';
 
 export { PLAYER_FAMILIES };
 
-const HOSTED_PLAYER_FAMILIES = new Set(['youtube', 'vimeo', 'dailymotion', 'jwplayer', 'bradmax', 'tego', 'novus']);
+const HOSTED_PLAYER_FAMILIES = new Set(['youtube', 'vimeo', 'dailymotion', 'jwplayer', 'bradmax', 'tego', 'novus', 'infomaniak', 'pro-fhi']);
 const STREAM_TECH_FAMILIES = new Set(['hlsjs', 'shaka', 'native-html5']);
 
 const WEIGHTS = Object.freeze({
