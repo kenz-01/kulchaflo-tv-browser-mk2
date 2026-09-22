@@ -9,6 +9,10 @@ on:
       - "tools/player-lab/**"
   workflow_dispatch:
 
+concurrency:
+  group: player-lab-live-recon-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
