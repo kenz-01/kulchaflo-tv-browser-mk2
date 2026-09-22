@@ -65,6 +65,26 @@ jobs:
           done < <(find reports/recon -type f -name report.json -print0)
           exit 0
 
+      - name: Run bounded interaction probes
+        shell: bash
+        run: |
+          set +e
+          mkdir -p reports/interaction-probes
+          probes=(
+            kf-post-923-madras-fm-tv
+            kf-post-920-tele-peyi
+            kf-post-912-digital-15
+            kf-post-911-telecentro-13
+            kf-post-896-xfm-aruba
+            kf-post-894-balchi-tv
+          )
+          for target in "${probes[@]}"; do
+            echo "PROBE ${target}" | tee -a reports/recon/run-summary.txt
+            npm run interaction-probe -- --target "${target}" --output-root reports/interaction-probes >> reports/recon/run-summary.txt 2>&1
+            echo "probe-exit=$?" | tee -a reports/recon/run-summary.txt
+          done
+          exit 0
+
       - name: Upload recon reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -72,5 +92,6 @@ jobs:
           name: player-lab-live-recon
           path: |
             tools/player-lab/reports/recon
+            tools/player-lab/reports/interaction-probes
           if-no-files-found: warn
           retention-days: 7
