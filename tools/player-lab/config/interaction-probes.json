@@ -39,6 +39,30 @@
       "pathPrefix": "/VideoPlayer/balchitv",
       "selector": ".vjs-big-play-button",
       "family": "videojs"
+    },
+    "kf-post-918-bonao-tv": {
+      "frameHost": "bonaotv.com",
+      "selector": "video",
+      "family": "hlsjs",
+      "activation": "media-play"
+    },
+    "kf-post-916-adoram-tv": {
+      "frameHost": "adoramtv.org",
+      "selector": "video",
+      "family": "native-html5",
+      "activation": "media-play"
+    },
+    "kf-post-915-yunavision": {
+      "frameHost": "yunavision.com",
+      "selector": "video",
+      "family": "hlsjs",
+      "activation": "media-play"
+    },
+    "kf-post-905-rtvd": {
+      "frameHost": "rtvd.gob.do",
+      "selector": "video",
+      "family": "hlsjs",
+      "activation": "media-play"
     }
   }
 }
