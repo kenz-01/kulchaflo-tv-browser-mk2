@@ -18,6 +18,7 @@ const cases = [
   ['infomaniak', { iframeUrls: ['https://player.infomaniak.com/?channel=71605&player=11390'] }],
   ['pro-fhi', { iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'] }],
   ['streamhoster', { iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'] }],
+  ['telemicro', { iframeUrls: ['https://telemicro.com.do/players/5tv/index.php'] }],
   ['native-html5', { mediaElementCount: 1 }],
 ];
 
@@ -157,4 +158,16 @@ test('BizTV Streamhoster iframe remains hosted-player primary', () => {
   });
   assert.equal(result.primaryFamily, 'streamhoster');
   assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('Telemicro shared player routes classify as one hosted family', () => {
+  for (const path of ['5tv', '15tv', '13tv']) {
+    const result = classifyPlayer({
+      iframeUrls: [`https://telemicro.com.do/players/${path}/index.php`],
+      mediaElementCount: 1,
+    });
+    assert.equal(result.primaryFamily, 'telemicro');
+    assert.ok(result.secondaryFamilies.includes('native-html5'));
+  }
 });
