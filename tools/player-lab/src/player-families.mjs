@@ -15,6 +15,7 @@ export const PLAYER_FAMILIES = Object.freeze([
   'streamhoster',
   'telemicro',
   'radiant',
+  'cloudflare-stream',
   'native-html5',
   'unknown',
 ]);
