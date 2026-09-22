@@ -50,7 +50,7 @@ jobs:
         run: |
           set +e
           mkdir -p reports/recon
-          mapfile -t targets < <(node -e 'const r=require("./config/public-targets.json"); console.log(Object.keys(r.targets).filter(k=>k.startsWith("kf-post-")).sort((a,b)=>{const ai=Number(a.match(/kf-post-(\\d+)/)?.[1]||0); const bi=Number(b.match(/kf-post-(\\d+)/)?.[1]||0); return bi-ai;}).join("\\n"))')
+          mapfile -t targets < <(node -e 'const r=require("./config/public-targets.json"); Object.keys(r.targets).filter(k=>k.startsWith("kf-post-")).sort((a,b)=>{const ai=Number(a.match(/kf-post-(\\d+)/)?.[1]||0); const bi=Number(b.match(/kf-post-(\\d+)/)?.[1]||0); return bi-ai;}).forEach(k=>console.log(k))')
           : > reports/recon/run-summary.txt
           for target in "${targets[@]}"; do
             echo "=== ${target} ===" | tee -a reports/recon/run-summary.txt
