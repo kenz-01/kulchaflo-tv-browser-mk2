@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "identity-mismatch",
+  "playerFamily": "vimeo",
+  "analysisSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "trustedMatchingEvidence": {},
+  "supportedCapabilities": [],
+  "unsupportedRequirements": []
+}

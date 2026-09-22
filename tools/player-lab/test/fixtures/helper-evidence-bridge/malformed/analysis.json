@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "providerId": "malformed-source",
+  "evidenceSummary": { "primaryPlayerFamily": "not-a-family" }
+}
