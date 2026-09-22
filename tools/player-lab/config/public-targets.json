@@ -20,6 +20,57 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-933-islamic-network": {
+      "providerId": "the-islamic-network",
+      "initialUrl": "https://theislamicnetwork.org/",
+      "allowedMainFrameHosts": [
+        "theislamicnetwork.org",
+        "www.theislamicnetwork.org"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-932-biz-tv": {
+      "providerId": "biz-tv",
+      "initialUrl": "https://biztv.com/watch-biztv",
+      "allowedMainFrameHosts": [
+        "biztv.com",
+        "www.biztv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-931-sankhya-television": {
+      "providerId": "sankhya-television",
+      "initialUrl": "https://www.sankhyatv.com/live",
+      "allowedMainFrameHosts": [
+        "sankhyatv.com",
+        "www.sankhyatv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-929-tvcarib": {
+      "providerId": "tvcarib",
+      "initialUrl": "https://tvcarib.com/",
+      "allowedMainFrameHosts": [
+        "tvcarib.com",
+        "www.tvcarib.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-927-teleonce": {
+      "providerId": "teleonce",
+      "initialUrl": "https://cdn.teleonce.com/en-vivo/",
+      "allowedMainFrameHosts": [
+        "cdn.teleonce.com",
+        "teleonce.com",
+        "www.teleonce.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
