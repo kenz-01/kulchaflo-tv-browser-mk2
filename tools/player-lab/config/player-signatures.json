@@ -200,11 +200,9 @@
         "/player.php"
       ],
       "scriptPatterns": [
-        "tegotv",
-        "tego"
+        "tegotv"
       ],
       "domPatterns": [
-        "tego",
         "tegotv"
       ],
       "globalNames": []
