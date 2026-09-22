@@ -277,6 +277,23 @@
       "globalNames": [
         "fluidPlayer"
       ]
+    },
+    "streamhoster": {
+      "hostPatterns": [
+        "streamhoster.com",
+        "c.streamhoster.com",
+        "secure.streamhoster.com"
+      ],
+      "pathPatterns": [
+        "/embed/media/"
+      ],
+      "scriptPatterns": [
+        "streamhoster"
+      ],
+      "domPatterns": [
+        "streamhoster"
+      ],
+      "globalNames": []
     }
   },
   "manifestExtensions": [
