@@ -15,6 +15,8 @@ const cases = [
   ['bradmax', { iframeUrls: ['https://bradm.ax/player/live'], domSignals: ['bradmax-player'] }],
   ['tego', { iframeUrls: ['https://player.tegotv.com/player.php?channel=1'], domSignals: ['tegotv-player'] }],
   ['novus', { scriptUrls: ['https://novus.telearuba.aw/assets/novus.js'], domSignals: ['novus-channel'] }],
+  ['infomaniak', { iframeUrls: ['https://player.infomaniak.com/?channel=71605&player=11390'] }],
+  ['pro-fhi', { iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'] }],
   ['native-html5', { mediaElementCount: 1 }],
 ];
 
@@ -126,4 +128,22 @@ test('configured families match supported player families except unknown', () =>
   const configured = Object.keys(loadPlayerSignatures().families).sort();
   const supported = PLAYER_FAMILIES.filter((family) => family !== 'unknown').sort();
   assert.deepEqual(configured, supported);
+});
+
+
+test('new live hosted-player families outrank generic HTML5 evidence', () => {
+  const infomaniak = classifyPlayer({
+    iframeUrls: ['https://player.infomaniak.com/?channel=example&player=example'],
+    mediaElementCount: 1,
+  });
+  assert.equal(infomaniak.primaryFamily, 'infomaniak');
+  assert.ok(infomaniak.secondaryFamilies.includes('native-html5'));
+
+  const proFhi = classifyPlayer({
+    iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'],
+    domSignals: ['fluid-player'],
+    mediaElementCount: 1,
+  });
+  assert.equal(proFhi.primaryFamily, 'pro-fhi');
+  assert.ok(proFhi.secondaryFamilies.includes('native-html5'));
 });
