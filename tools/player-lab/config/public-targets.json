@@ -477,7 +477,7 @@
     },
     "kf-post-737-ziz-tv": {
       "providerId": "ziz-tv",
-      "initialUrl": "https://zizonline.com/tv/",
+      "initialUrl": "https://zizonline.com/tv/channel-5/",
       "allowedMainFrameHosts": [
         "zizonline.com",
         "www.zizonline.com"
@@ -497,7 +497,7 @@
     },
     "kf-post-734-mtv-guyana": {
       "providerId": "mtv-guyana",
-      "initialUrl": "https://www.mtvgy.com/",
+      "initialUrl": "https://www.mtvgy.com/live",
       "allowedMainFrameHosts": [
         "mtvgy.com",
         "www.mtvgy.com"
