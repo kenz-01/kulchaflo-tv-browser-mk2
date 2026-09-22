@@ -1,0 +1,75 @@
+name: Player Lab live-channel recon
+
+on:
+  push:
+    branches:
+      - player-helper-newest-live-recon-phase1
+    paths:
+      - ".github/workflows/player-lab-live-recon.yml"
+      - "tools/player-lab/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: tools/player-lab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: tools/player-lab/package-lock.json
+
+      - name: Install Player Lab
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Player Lab tests
+        run: npm test
+
+      - name: Profile newest live targets
+        shell: bash
+        run: |
+          set +e
+          mkdir -p reports/recon
+          targets=(
+            kf-post-933-islamic-network
+            kf-post-932-biz-tv
+            kf-post-931-sankhya-television
+            kf-post-929-tvcarib
+            kf-post-927-teleonce
+            kf-post-924-jamaica-travel-channel
+            kf-post-923-madras-fm-tv
+            kf-post-922-rht-tv
+            kf-post-921-etv-guadeloupe
+          )
+          : > reports/recon/run-summary.txt
+          for target in "${targets[@]}"; do
+            echo "=== ${target} ===" | tee -a reports/recon/run-summary.txt
+            npm run profile -- --target "${target}" --observe-ms 8000 --navigation-timeout-ms 30000 --output-root reports/recon >> reports/recon/run-summary.txt 2>&1
+            code=$?
+            echo "exit=${code}" | tee -a reports/recon/run-summary.txt
+          done
+          exit 0
+
+      - name: Upload recon reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-lab-live-recon
+          path: |
+            tools/player-lab/reports/recon
+          if-no-files-found: warn
+          retention-days: 7
