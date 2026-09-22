@@ -181,6 +181,56 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-917-alcarrizos-tv": {
+      "providerId": "alcarrizos-tv",
+      "initialUrl": "https://alcarrizostv.com/",
+      "allowedMainFrameHosts": [
+        "alcarrizostv.com",
+        "www.alcarrizostv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-915-yunavision": {
+      "providerId": "yunavision",
+      "initialUrl": "https://www.yunavision.com/",
+      "allowedMainFrameHosts": [
+        "yunavision.com",
+        "www.yunavision.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-913-cdn-37": {
+      "providerId": "cdn-37",
+      "initialUrl": "https://cdn.com.do/",
+      "allowedMainFrameHosts": [
+        "cdn.com.do",
+        "www.cdn.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-909-teleantillas": {
+      "providerId": "teleantillas",
+      "initialUrl": "https://teleantillas.com.do/radio-page/",
+      "allowedMainFrameHosts": [
+        "teleantillas.com.do",
+        "www.teleantillas.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-905-rtvd": {
+      "providerId": "rtvd",
+      "initialUrl": "https://rtvd.gob.do/",
+      "allowedMainFrameHosts": [
+        "rtvd.gob.do",
+        "www.rtvd.gob.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
