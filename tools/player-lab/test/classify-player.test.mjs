@@ -17,6 +17,7 @@ const cases = [
   ['novus', { scriptUrls: ['https://novus.telearuba.aw/assets/novus.js'], domSignals: ['novus-channel'] }],
   ['infomaniak', { iframeUrls: ['https://player.infomaniak.com/?channel=71605&player=11390'] }],
   ['pro-fhi', { iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'] }],
+  ['streamhoster', { iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'] }],
   ['native-html5', { mediaElementCount: 1 }],
 ];
 
@@ -146,4 +147,14 @@ test('new live hosted-player families outrank generic HTML5 evidence', () => {
   });
   assert.equal(proFhi.primaryFamily, 'pro-fhi');
   assert.ok(proFhi.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('BizTV Streamhoster iframe remains hosted-player primary', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'streamhoster');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
 });
