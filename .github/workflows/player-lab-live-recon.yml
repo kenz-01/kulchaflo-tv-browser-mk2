@@ -21,7 +21,7 @@ permissions:
 jobs:
   profile:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: tools/player-lab
@@ -45,29 +45,30 @@ jobs:
       - name: Run Player Lab tests
         run: npm test
 
-      - name: Profile newest live targets
+      - name: Profile registered reverse-ID live targets
         shell: bash
         run: |
           set +e
           mkdir -p reports/recon
-          targets=(
-            kf-post-933-islamic-network
-            kf-post-932-biz-tv
-            kf-post-931-sankhya-television
-            kf-post-929-tvcarib
-            kf-post-927-teleonce
-            kf-post-924-jamaica-travel-channel
-            kf-post-923-madras-fm-tv
-            kf-post-922-rht-tv
-            kf-post-921-etv-guadeloupe
-          )
+          mapfile -t targets < <(node -e 'const r=require("./config/public-targets.json"); console.log(Object.keys(r.targets).filter(k=>k.startsWith("kf-post-")).sort((a,b)=>{const ai=Number(a.match(/kf-post-(\\d+)/)?.[1]||0); const bi=Number(b.match(/kf-post-(\\d+)/)?.[1]||0); return bi-ai;}).join("\\n"))')
           : > reports/recon/run-summary.txt
           for target in "${targets[@]}"; do
             echo "=== ${target} ===" | tee -a reports/recon/run-summary.txt
-            npm run profile -- --target "${target}" --observe-ms 8000 --navigation-timeout-ms 30000 --output-root reports/recon >> reports/recon/run-summary.txt 2>&1
+            npm run profile -- --target "${target}" --observe-ms 7000 --navigation-timeout-ms 25000 --output-root reports/recon >> reports/recon/run-summary.txt 2>&1
             code=$?
-            echo "exit=${code}" | tee -a reports/recon/run-summary.txt
+            echo "profile-exit=${code}" | tee -a reports/recon/run-summary.txt
           done
+          exit 0
+
+      - name: Analyze successful profiles
+        shell: bash
+        run: |
+          set +e
+          while IFS= read -r -d '' report; do
+            echo "ANALYZE ${report}" | tee -a reports/recon/run-summary.txt
+            npm run analyze -- --report "${report}" >> reports/recon/run-summary.txt 2>&1
+            echo "analyze-exit=$?" | tee -a reports/recon/run-summary.txt
+          done < <(find reports/recon -type f -name report.json -print0)
           exit 0
 
       - name: Upload recon reports
