@@ -172,6 +172,7 @@
   let embeddedLiveVideoJsApplied = false;
   let proFhiLiveScheduled = false;
   let proFhiLiveApplied = false;
+  let historicalLiveGapScheduled = false;
   const RADIANT_TV_RETRY_DELAYS_MS = [250, 750, 1600, 3200, 6000, 10000];
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
@@ -4344,6 +4345,169 @@
 
 
 
+
+  function historicalLiveGapKind() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host === "wapa.tv" && path.indexOf("/envivo") === 0) return "wapa";
+    if (host === "wipr.pr" && path.indexOf("/envivo") === 0) return "wipr";
+    if (host === "zizonline.com" && path.indexOf("/tv/channel-5") === 0) return "ziz";
+    if (host === "tv6tnt.com" && path.indexOf("/watch_live") === 0) return "tv6";
+    return "";
+  }
+
+  function findHistoricalLiveGapTarget(kind) {
+    if (kind === "wapa") {
+      return document.querySelector(".flowplayer") || document.querySelector("video");
+    }
+    if (kind === "wipr") {
+      return document.querySelector(".video-js") || document.querySelector("video");
+    }
+    if (kind === "ziz") {
+      const video = Array.from(document.querySelectorAll("video")).find((node) => {
+        try {
+          const r = node.getBoundingClientRect();
+          return r.width >= 500 && r.height >= 250;
+        } catch (_) { return false; }
+      });
+      return video && (video.closest("[class*='player' i],[id*='player' i]") || video);
+    }
+    if (kind === "tv6") {
+      return Array.from(document.querySelectorAll("iframe")).find((frame) => {
+        try {
+          const src = new URL(String(frame.getAttribute("src") || frame.src || ""), window.location.href);
+          return src.hostname.toLowerCase() === "geo.dailymotion.com" &&
+            src.pathname.toLowerCase() === "/player/x8dgt.html";
+        } catch (_) {
+          return false;
+        }
+      }) || null;
+    }
+    return null;
+  }
+
+  function applyHistoricalLiveGapPlayerFirst(kind) {
+    const target = findHistoricalLiveGapTarget(kind);
+    if (!target) return false;
+    try {
+      const keep = new Set();
+      let node = target;
+      while (node && node !== document.body) {
+        keep.add(node);
+        node = node.parentElement;
+      }
+      Array.from(document.body.children).forEach((child) => {
+        if (!keep.has(child) && child !== target) child.style.setProperty("display", "none", "important");
+      });
+      node = target;
+      while (node && node !== document.body) {
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("inset", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "none", "important");
+        node.style.setProperty("max-height", "none", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("z-index", "2147483000", "important");
+        node = node.parentElement;
+      }
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      promptPayload({
+        type: "historical-live-gap-state",
+        phase: "content-historical-live-gap-player-first",
+        pageUrl: window.location.href,
+        provider: kind,
+        target: summarizeNode(target),
+        targetRect: rectSummary(target)
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function attemptHistoricalLiveGapPlayback(kind) {
+    if (kind === "wapa") {
+      const video = document.querySelector("video");
+      if (video) {
+        try {
+          video.muted = false;
+          video.volume = 1;
+        } catch (_) {}
+        if (!video.paused && Number(video.currentTime || 0) > 0.1) return true;
+      }
+      const play = document.querySelector(".fp-playbutton");
+      if (play && isVisible(play)) {
+        try { play.click(); } catch (_) {}
+        return true;
+      }
+      return false;
+    }
+    if (kind === "wipr") {
+      const video = document.querySelector("video");
+      if (video) {
+        try {
+          video.muted = false;
+          video.volume = 1;
+          if (video.paused) {
+            const p = video.play();
+            if (p && typeof p.catch === "function") p.catch(() => {});
+          }
+        } catch (_) {}
+        return true;
+      }
+      const play = document.querySelector(".vjs-big-play-button");
+      if (play && isVisible(play)) {
+        try { play.click(); } catch (_) {}
+        return true;
+      }
+      return false;
+    }
+    if (kind === "ziz") {
+      const videos = Array.from(document.querySelectorAll("video"));
+      const video = videos.find((node) => {
+        try {
+          const r = node.getBoundingClientRect();
+          return r.width >= 500 && r.height >= 250;
+        } catch (_) { return false; }
+      }) || videos[0];
+      if (!video) return false;
+      try {
+        video.muted = false;
+        video.volume = 1;
+        if (video.paused && video.readyState >= 2) {
+          const p = video.play();
+          if (p && typeof p.catch === "function") p.catch(() => {});
+        }
+      } catch (_) {}
+      const unmute = document.querySelector("#tvUnmute");
+      if (video.muted && unmute && isVisible(unmute)) {
+        try { unmute.click(); } catch (_) {}
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function scheduleHistoricalLiveGapHelper() {
+    const kind = historicalLiveGapKind();
+    if (historicalLiveGapScheduled || !kind) return;
+    historicalLiveGapScheduled = true;
+    [150, 500, 1200, 2500, 5000, 9000].forEach((delayMs) => {
+      setTimeout(() => {
+        const currentKind = historicalLiveGapKind();
+        if (!currentKind) return;
+        applyHistoricalLiveGapPlayerFirst(currentKind);
+        if (currentKind !== "tv6") attemptHistoricalLiveGapPlayback(currentKind);
+      }, delayMs);
+    });
+  }
+
   function isIdentiteTvTopPage() {
     const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
     const path = String(window.location.pathname || "").toLowerCase();
@@ -8279,6 +8443,7 @@
   scheduleSvgTvCloudflareHelper();
   scheduleEmbeddedLiveVideoJsHelper();
   scheduleIdentiteProFhiHelper();
+  scheduleHistoricalLiveGapHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
@@ -8312,6 +8477,7 @@
   window.addEventListener("load", scheduleSvgTvCloudflareHelper, { once: true });
   window.addEventListener("load", scheduleEmbeddedLiveVideoJsHelper, { once: true });
   window.addEventListener("load", scheduleIdentiteProFhiHelper, { once: true });
+  window.addEventListener("load", scheduleHistoricalLiveGapHelper, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
