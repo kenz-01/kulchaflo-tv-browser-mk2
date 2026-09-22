@@ -327,6 +327,19 @@
       "globalNames": [
         "RadiantMP"
       ]
+    },
+    "cloudflare-stream": {
+      "hostPatterns": [
+        "cloudflarestream.com"
+      ],
+      "pathPatterns": [],
+      "scriptPatterns": [
+        "cloudflarestream.com"
+      ],
+      "domPatterns": [
+        "cloudflare-stream"
+      ],
+      "globalNames": []
     }
   },
   "manifestExtensions": [
