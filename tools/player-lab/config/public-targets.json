@@ -437,7 +437,7 @@
     },
     "kf-post-746-wapa-tv": {
       "providerId": "wapa-tv",
-      "initialUrl": "https://wapa.tv/",
+      "initialUrl": "https://wapa.tv/envivo",
       "allowedMainFrameHosts": [
         "wapa.tv",
         "www.wapa.tv"
@@ -447,7 +447,7 @@
     },
     "kf-post-745-wipr": {
       "providerId": "wipr",
-      "initialUrl": "https://wipr.pr/",
+      "initialUrl": "https://wipr.pr/envivo/",
       "allowedMainFrameHosts": [
         "wipr.pr",
         "www.wipr.pr"
