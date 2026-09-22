@@ -44,6 +44,10 @@ A passing channel should:
 | Madras FM TV | Infomaniak + Video.js | bounded play/unmute, full viewport |
 | Fusion TV | Infomaniak + Video.js | bounded play/unmute, full viewport |
 | Identité Télé Caraïbes | pro-fhi | main 1080-capable hybrid live widget selected, secondary playlist suppressed, bounded play/unmute, full viewport |
+| WAPA TV | Flowplayer | one bounded start assist if needed, audio on, exact player full viewport |
+| WIPR | Video.js | one bounded start assist if needed, audio on, exact player full viewport; do not invent 1080 above source quality |
+| ZIZ TV | Hls.js/custom player | existing playback retained, audio restored, exact player full viewport |
+| TV6 | Dailymotion | exact x8dgt live iframe isolated, autoplay permitted, browser player full viewport; no native promotion |
 
 ## Per-channel pass record
 
