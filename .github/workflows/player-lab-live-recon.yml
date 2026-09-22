@@ -7,6 +7,12 @@ on:
     paths:
       - ".github/workflows/player-lab-live-recon.yml"
       - "tools/player-lab/**"
+      - "app-gv/**"
+      - "app/src/main/res/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - "gradlew"
   workflow_dispatch:
 
 concurrency:
@@ -102,4 +108,32 @@ jobs:
             tools/player-lab/reports/recon
             tools/player-lab/reports/interaction-probes
           if-no-files-found: warn
+          retention-days: 7
+
+
+  build-bravia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build Bravia release APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app-gv:assembleBraviaRelease --console=plain
+
+      - name: Upload Bravia APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kulchaflo-bravia-live-gap-phase1
+          path: app-gv/build/outputs/apk/bravia/release/*.apk
+          if-no-files-found: error
           retention-days: 7
