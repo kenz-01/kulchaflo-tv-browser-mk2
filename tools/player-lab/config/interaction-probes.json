@@ -88,6 +88,20 @@
       "family": "dailymotion",
       "activation": "dom-click",
       "frameWaitMs": 12000
+    },
+    "kf-post-932-biz-tv": {
+      "frameHost": "c.streamhoster.com",
+      "pathPrefix": "/embed/media/",
+      "selector": ".vjs-mute-control",
+      "family": "videojs",
+      "activation": "dom-click"
+    },
+    "kf-post-922-rht-tv": {
+      "frameHost": "player.infomaniak.com",
+      "selector": ".vjs-mute-control",
+      "family": "videojs",
+      "activation": "dom-click",
+      "frameWaitMs": 12000
     }
   }
 }
