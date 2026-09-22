@@ -27,6 +27,8 @@ test('Radiant TV helper source parses and stays narrowly scoped', () => {
   assert.ok(source.includes('video.volume = 1'));
   assert.ok(source.includes('radiantTvFullscreenAttempted'));
   assert.ok(source.includes('.rmp-overlay-button'));
+  assert.ok(source.includes('applyRadiantHlsLevel(1080)'));
+  assert.ok(source.includes('selectedHeight'));
 
   // The first Radiant helper remains browser-first. No direct/native media
   // promotion is introduced by this family-specific implementation.
