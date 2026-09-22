@@ -166,6 +166,8 @@
   let radiantTvPlayerFirstApplied = false;
   let radiantTvPlayAttempted = false;
   let radiantTvFullscreenAttempted = false;
+  let svgTvCloudflareScheduled = false;
+  let svgTvCloudflarePlayerFirstApplied = false;
   const RADIANT_TV_RETRY_DELAYS_MS = [250, 750, 1600, 3200, 6000, 10000];
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
@@ -4335,6 +4337,104 @@
   }
 
 
+
+  function isSvgTvTopPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    return host === "watchsvgtv.com" && (path === "" || path === "/" || path.indexOf("/live") === 0);
+  }
+
+  function findSvgTvCloudflareFrame() {
+    if (!isSvgTvTopPage()) return null;
+    return Array.from(document.querySelectorAll("iframe")).find((frame) => {
+      try {
+        const src = new URL(String(frame.getAttribute("src") || frame.src || ""), window.location.href);
+        return src.hostname.toLowerCase().endsWith(".cloudflarestream.com") &&
+          src.pathname.toLowerCase().endsWith("/iframe");
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function ensureSvgTvCloudflareAutoplay(frame) {
+    if (!frame) return false;
+    try {
+      const src = new URL(String(frame.getAttribute("src") || frame.src || ""), window.location.href);
+      if (src.searchParams.get("autoplay") === "true") return false;
+      src.searchParams.set("autoplay", "true");
+      frame.setAttribute("allow", "accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;");
+      frame.setAttribute("allowfullscreen", "true");
+      frame.src = src.toString();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function applySvgTvCloudflarePlayerFirst() {
+    if (!isSvgTvTopPage()) return false;
+    const frame = findSvgTvCloudflareFrame();
+    if (!frame) return false;
+    const reloaded = ensureSvgTvCloudflareAutoplay(frame);
+    try {
+      Array.from(document.querySelectorAll("iframe")).forEach((candidate) => {
+        if (candidate !== frame) candidate.style.setProperty("display", "none", "important");
+      });
+      let node = frame;
+      const keep = new Set();
+      while (node && node !== document.body) {
+        keep.add(node);
+        node = node.parentElement;
+      }
+      Array.from(document.body.children).forEach((child) => {
+        if (!keep.has(child) && child !== frame) child.style.setProperty("display", "none", "important");
+      });
+      node = frame;
+      while (node && node !== document.body) {
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("inset", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "none", "important");
+        node.style.setProperty("max-height", "none", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("z-index", "2147483000", "important");
+        node = node.parentElement;
+      }
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      if (!svgTvCloudflarePlayerFirstApplied) {
+        svgTvCloudflarePlayerFirstApplied = true;
+        promptPayload({
+          type: "svg-tv-state",
+          phase: "content-svg-cloudflare-player-first",
+          pageUrl: window.location.href,
+          autoplayReloaded: reloaded,
+          iframeRect: rectSummary(frame)
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function scheduleSvgTvCloudflareHelper() {
+    if (svgTvCloudflareScheduled || !isSvgTvTopPage()) return;
+    svgTvCloudflareScheduled = true;
+    [100, 500, 1200, 2500, 5000, 9000].forEach((delayMs) => {
+      setTimeout(() => {
+        if (!isSvgTvTopPage()) return;
+        applySvgTvCloudflarePlayerFirst();
+      }, delayMs);
+    });
+  }
+
   function radiantTvRouteKind() {
     const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
     const path = String(window.location.pathname || "").toLowerCase();
@@ -7891,6 +7991,7 @@
   scheduleIslandTvMinimalHelper();
   scheduleDbsTvMinimalHelper();
   scheduleRadiantTvHelper();
+  scheduleSvgTvCloudflareHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
@@ -7921,6 +8022,7 @@
   window.addEventListener("load", scheduleCaribVisionPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleRadiantTvHelper, { once: true });
+  window.addEventListener("load", scheduleSvgTvCloudflareHelper, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
