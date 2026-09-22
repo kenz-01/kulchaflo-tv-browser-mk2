@@ -85,6 +85,10 @@ jobs:
             kf-post-916-adoram-tv
             kf-post-915-yunavision
             kf-post-905-rtvd
+            kf-post-746-wapa-tv
+            kf-post-745-wipr
+            kf-post-737-ziz-tv
+            kf-post-192-tv6
           )
           for target in "${probes[@]}"; do
             echo "PROBE ${target}" | tee -a reports/recon/run-summary.txt
