@@ -17,13 +17,15 @@
       "frameHost": "telemicro.com.do",
       "pathPrefix": "/players/15tv/",
       "selector": ".rmp-overlay-button",
-      "family": "radiant"
+      "family": "radiant",
+      "activation": "dom-click"
     },
     "kf-post-911-telecentro-13": {
       "frameHost": "telecentro.com.do",
       "pathPrefix": "/players/13bot",
       "selector": ".rmp-overlay-button",
-      "family": "radiant"
+      "family": "radiant",
+      "activation": "dom-click"
     },
     "kf-post-896-xfm-aruba": {
       "frameHost": "live2.tensila.com",
