@@ -231,6 +231,26 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-930-scorch-tv": {
+      "providerId": "scorch-tv",
+      "initialUrl": "https://www.scorchtv.com/",
+      "allowedMainFrameHosts": [
+        "scorchtv.com",
+        "www.scorchtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-916-adoram-tv": {
+      "providerId": "adoram-tv",
+      "initialUrl": "https://adoramtv.org/programacion-en-vivo/",
+      "allowedMainFrameHosts": [
+        "adoramtv.org",
+        "www.adoramtv.org"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
