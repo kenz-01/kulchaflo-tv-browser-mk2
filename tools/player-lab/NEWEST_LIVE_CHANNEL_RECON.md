@@ -98,3 +98,18 @@ These additions are classifier/signature work only. They do not authorize Androi
 The remaining step for every `browser profile required` target is to run the existing Player Lab browser profiler against the registered public target. That profiler requires a browser-capable runtime with outbound access. This ChatGPT execution environment cannot resolve external hosts from the local container, and the GitHub repository currently has no workflow wired to execute these profiling jobs remotely.
 
 The branch therefore intentionally stops before inventing player selectors, autoplay behavior, synthetic taps, native promotion, or Android runtime changes from web-search evidence alone.
+
+
+## Queue completion additions
+
+The canonical reverse-ID audit also confirms:
+- #920 Télé Péyi Guyane — official current live page registered at PÉYI GUYANE.
+- #907 Ahora TV — official current live page registered.
+- #906 Acento TV — official current live page registered.
+- #902 TV Direct 13 — official Direct Media Curaçao web route registered.
+- #893 Pointe TV — official Pointville live-stream route registered.
+- #891 Island TV Plus — already covered by the accepted Island TV Vimeo single-player-shell helper family and marks the lower boundary of this newest unsolved tranche.
+
+#904 Cubavisión Internacional is confirmed as a Channel record, but the reconnaissance branch intentionally does not register an unverified web route. Current public evidence points to Cuba's official TV/Teveo ecosystem, but an exact durable browser target has not yet been established strongly enough for the fixed public-target registry.
+
+No #892 live-channel record was established by the recovered metadata audit. The workflow therefore does not invent one.
