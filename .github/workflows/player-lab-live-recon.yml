@@ -89,6 +89,8 @@ jobs:
             kf-post-745-wipr
             kf-post-737-ziz-tv
             kf-post-192-tv6
+            kf-post-932-biz-tv
+            kf-post-922-rht-tv
           )
           for target in "${probes[@]}"; do
             echo "PROBE ${target}" | tee -a reports/recon/run-summary.txt
