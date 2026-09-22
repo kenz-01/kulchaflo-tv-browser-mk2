@@ -507,7 +507,7 @@
     },
     "kf-post-192-tv6": {
       "providerId": "tv6-tt",
-      "initialUrl": "https://tv6tnt.com/",
+      "initialUrl": "https://tv6tnt.com/watch_live",
       "allowedMainFrameHosts": [
         "tv6tnt.com",
         "www.tv6tnt.com"
