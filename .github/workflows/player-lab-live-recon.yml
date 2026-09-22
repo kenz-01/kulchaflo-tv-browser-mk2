@@ -1,12 +1,6 @@
 name: Player Lab live-channel recon
 
 on:
-  push:
-    branches:
-      - player-helper-newest-live-recon-phase1
-    paths:
-      - ".github/workflows/player-lab-live-recon.yml"
-      - "tools/player-lab/**"
   pull_request:
     branches:
       - main
