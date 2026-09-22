@@ -424,6 +424,96 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-904-cubavision-internacional": {
+      "providerId": "cubavision-internacional",
+      "initialUrl": "https://teveo.cu/",
+      "allowedMainFrameHosts": [
+        "teveo.cu",
+        "www.teveo.cu"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-746-wapa-tv": {
+      "providerId": "wapa-tv",
+      "initialUrl": "https://wapa.tv/",
+      "allowedMainFrameHosts": [
+        "wapa.tv",
+        "www.wapa.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-745-wipr": {
+      "providerId": "wipr",
+      "initialUrl": "https://wipr.pr/",
+      "allowedMainFrameHosts": [
+        "wipr.pr",
+        "www.wipr.pr"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-744-telemundo-pr": {
+      "providerId": "telemundo-puerto-rico",
+      "initialUrl": "https://www.telemundopr.com/",
+      "allowedMainFrameHosts": [
+        "telemundopr.com",
+        "www.telemundopr.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-738-tvc-st-kitts": {
+      "providerId": "tvc-st-kitts",
+      "initialUrl": "https://www.tvcplus.live/",
+      "allowedMainFrameHosts": [
+        "tvcplus.live",
+        "www.tvcplus.live"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-737-ziz-tv": {
+      "providerId": "ziz-tv",
+      "initialUrl": "https://zizonline.com/",
+      "allowedMainFrameHosts": [
+        "zizonline.com",
+        "www.zizonline.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-736-hgptv": {
+      "providerId": "hgptv",
+      "initialUrl": "https://www.hgptv.com/",
+      "allowedMainFrameHosts": [
+        "hgptv.com",
+        "www.hgptv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-734-mtv-guyana": {
+      "providerId": "mtv-guyana",
+      "initialUrl": "https://www.mtvgy.com/",
+      "allowedMainFrameHosts": [
+        "mtvgy.com",
+        "www.mtvgy.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-192-tv6": {
+      "providerId": "tv6-tt",
+      "initialUrl": "https://tv6tnt.com/",
+      "allowedMainFrameHosts": [
+        "tv6tnt.com",
+        "www.tv6tnt.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
