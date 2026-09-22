@@ -124,3 +124,44 @@ Priority order:
 6. Keep channels classified `no-helper-needed` out of helper code unless physical TV validation proves otherwise.
 
 No Android runtime helper should be added solely from family detection; physical Bravia validation remains the final acceptance gate.
+
+
+## TV acceptance contract
+
+A live-channel helper is not accepted merely because media can play in Chromium. The target television experience is:
+
+1. Launch the official live route from Kulcha Flo.
+2. Start the live programme automatically when browser/device policy permits.
+3. Present audio on at normal volume without requiring a viewer mute toggle.
+4. Enter true fullscreen or a clean player-first fullscreen-like presentation immediately.
+5. Prefer/retain 1080p or better when the broadcaster offers it and the device/network/player can sustain it; do not break adaptive streaming by forcing an unavailable rendition.
+6. Keep transport controls available to the remote when needed, then allow them to get out of the way.
+7. Back must escape cleanly to Kulcha Flo and must not instantly restart or re-promote the stream.
+8. No duplicate audio/video, background players, ad-media promotion, repeated blind tap loops, or broad native-media promotion.
+
+Physical Sony Bravia validation remains the final acceptance gate for these behaviors.
+
+## Historical-gap pass — current evidence
+
+- WAPA TV (#746) — Flowplayer, existing family. Passive profile is paused/unready; bounded interaction probe is required before deciding whether a minimal Flowplayer wrapper is needed.
+- WIPR (#745) — Video.js, existing family. Passive profile is paused/unready; bounded interaction probe is required.
+- ZIZ TV (#737) — Hls.js/browser-managed video is already autoplaying at 1920x1080 in simulation, but muted. A narrow browser-first helper has been implemented on `player-helper-ziz-phase1` to provide player-first layout, audio-on, one bounded play fallback, fullscreen request, and scoped autoplay permission. Physical Bravia validation is pending.
+- MTV Guyana (#734) — the official Wix shell embeds `https://stream.mtvgy.com/mtvlive/embed.html`. The outer page exposed no known family; the inner official player is now registered as a direct diagnostic target.
+- TV6 Trinidad & Tobago (#192) — Dailymotion, existing family. Passive profile was already playing with audio on at 1280x720. Targeted probe/TV presentation validation will determine whether only a scoped player-first wrapper is needed.
+- SVG-TV (#928) — the official page contains a Cloudflare Stream live surface plus secondary YouTube content. The visible live surface was off-air during capture and displayed “Stream has not started yet.” The Cloudflare iframe itself is now registered as a direct diagnostic target, so off-air state is not mistaken for helper failure.
+
+## Implementation status
+
+- Radiant family (Telemicro 5 / Digital 15 / Telecentro 13): phase-1 browser-first helper implemented on `player-helper-radiant-phase1`; automated test/profile/analyze/probe gate is green. Physical Bravia validation pending.
+- ZIZ: phase-1 browser-first helper implemented on `player-helper-ziz-phase1`; automated validation is running. Physical Bravia validation pending.
+- SVG Cloudflare Stream: classification/inner-player diagnostics running; no runtime helper yet.
+- MTV Guyana inner player: direct diagnostics running; no runtime helper yet.
+- WAPA/WIPR/TV6 historical reuse cases: targeted probes running before any runtime code is added.
+
+## Remaining non-TV work
+
+1. Finish the SVG Cloudflare and MTV Guyana inner-player diagnostics.
+2. Consume targeted probe results for WAPA, WIPR, ZIZ and TV6.
+3. Add only the minimal existing-family wrappers justified by those probes.
+4. Re-check restored/newer family cases (Infomaniak, Streamhoster, pro-fhi, generic Hls.js/Video.js) against the acceptance contract rather than simple “media plays” success.
+5. Produce the final Bravia validation batch grouped by helper family so physical testing is short and regression-safe.
