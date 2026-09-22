@@ -9806,6 +9806,18 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val svgTopContext = isSvgTvAutoplayContextUrl(activeSessionUrl) || isSvgTvAutoplayContextUrl(currentRootUrl)
+            val svgPermissionUri = isSvgTvAutoplayContextUrl(permission.uri.orEmpty())
+            val svgThirdPartyCloudflare = isSvgTvCloudflareHost(thirdPartyHost)
+            val svgAutoplayScoped = ENABLE_SVG_CLOUDFLARE_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    svgPermissionUri ||
+                        (svgTopContext && svgThirdPartyCloudflare)
+                    )
             val radiantTopContext = isRadiantTvAutoplayContextUrl(activeSessionUrl) || isRadiantTvAutoplayContextUrl(currentRootUrl)
             val radiantPermissionUri = isRadiantTvAutoplayContextUrl(permission.uri.orEmpty())
             val radiantThirdParty = isRadiantTvAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
@@ -9842,6 +9854,7 @@ return changed>0;
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                svgAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -15291,6 +15304,7 @@ return changed>0;
         private const val ENABLE_CVC9_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_RADIANT_TV_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_SVG_CLOUDFLARE_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15824,6 +15838,23 @@ return changed>0;
 
     private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
         return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
+    }
+
+    private fun isSvgTvCloudflareHost(host: String?): Boolean {
+        val normalized = host?.lowercase().orEmpty().removePrefix("www.")
+        return normalized.endsWith(".cloudflarestream.com") || normalized == "cloudflarestream.com"
+    }
+
+    private fun isSvgTvAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "watchsvgtv.com") {
+            return path.isBlank() || path == "/" || path.startsWith("/live")
+        }
+        return isSvgTvCloudflareHost(host) && path.endsWith("/iframe")
     }
 
     private fun isRadiantTvAutoplayContextUrl(url: String): Boolean {
