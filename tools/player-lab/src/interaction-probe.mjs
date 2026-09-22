@@ -52,7 +52,12 @@ async function run(targetId, outputRoot) {
     const page = await launched.context.newPage();
     await page.goto(policy.initialUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(7000);
-    const frames = page.frames().filter((frame) => safeFrameMatch(frame, probe));
+    const frameDeadline = Date.now() + Number(probe.frameWaitMs ?? 0);
+    let frames = page.frames().filter((frame) => safeFrameMatch(frame, probe));
+    while (frames.length === 0 && Date.now() < frameDeadline) {
+      await page.waitForTimeout(500);
+      frames = page.frames().filter((frame) => safeFrameMatch(frame, probe));
+    }
     if (frames.length !== 1) {
       throw new Error(`Expected exactly one bounded player frame; found ${frames.length}.`);
     }
@@ -63,7 +68,15 @@ async function run(targetId, outputRoot) {
     if (!(await locator.isVisible())) throw new Error('Bounded play control is not visible.');
 
     const before = await mediaSnapshot(frame);
-    await locator.click({ timeout: 5000 });
+    if (probe.activation === 'keyboard-enter') {
+      await locator.focus();
+      if (!(await locator.evaluate((element) => document.activeElement === element))) {
+        throw new Error('Bounded play control did not receive focus.');
+      }
+      await locator.press('Enter');
+    } else {
+      await locator.click({ timeout: 5000 });
+    }
     await page.waitForTimeout(5000);
     const after = await mediaSnapshot(frame);
     const playbackStarted = after.some((media, index) => {
@@ -81,7 +94,8 @@ async function run(targetId, outputRoot) {
       family: probe.family,
       frameHost: probe.frameHost,
       selector: probe.selector,
-      clickCount: 1,
+      activation: probe.activation ?? 'pointer-click',
+      activationCount: 1,
       playbackStarted,
       before,
       after,
