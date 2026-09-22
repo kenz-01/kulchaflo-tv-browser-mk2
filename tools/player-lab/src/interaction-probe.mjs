@@ -74,6 +74,11 @@ async function run(targetId, outputRoot) {
         throw new Error('Bounded play control did not receive focus.');
       }
       await locator.press('Enter');
+    } else if (probe.activation === 'dom-click') {
+      await locator.evaluate((element) => {
+        if (typeof element.click !== 'function') throw new Error('Bounded play control is not clickable.');
+        element.click();
+      });
     } else {
       await locator.click({ timeout: 5000 });
     }
