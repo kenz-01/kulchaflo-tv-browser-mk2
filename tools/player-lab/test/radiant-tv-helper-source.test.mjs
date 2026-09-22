@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const sourcePath = resolve(process.cwd(), '../../app-gv/src/main/assets/gv_media_observer/content.js');
+const activityPath = resolve(process.cwd(), '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt');
 
 test('Radiant TV helper source parses and stays narrowly scoped', () => {
   const source = readFileSync(sourcePath, 'utf8');
@@ -36,4 +37,22 @@ test('Radiant TV helper source parses and stays narrowly scoped', () => {
   assert.equal(helper.includes('EXTRACTED_STREAM'), false);
   assert.equal(helper.includes('PROMOTE_DIRECT_CANDIDATE'), false);
   assert.equal(helper.includes('Media3'), false);
+});
+
+
+test('Radiant TV autoplay permission remains scoped to the three live routes', () => {
+  const source = readFileSync(activityPath, 'utf8');
+  for (const marker of [
+    'ENABLE_RADIANT_TV_AUTOPLAY_PERMISSION_ALLOW = true',
+    'isRadiantTvAutoplayContextUrl',
+    '/telemicro-en-vivo',
+    '/digital-15-en-vivo',
+    '/players/5tv/',
+    '/players/15tv/',
+    '/telecentro-en-vivo',
+    '/players/13bot/',
+    'radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW'
+  ]) {
+    assert.ok(source.includes(marker), `missing Radiant autoplay marker: ${marker}`);
+  }
 });
