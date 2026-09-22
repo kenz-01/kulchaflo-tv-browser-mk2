@@ -4346,6 +4346,8 @@
     const path = String(window.location.pathname || "").toLowerCase();
     if (host === "biztv.com" && path.indexOf("/watch-biztv") === 0) return "biz";
     if (host === "rhtguadeloupe.fr" && path.indexOf("/live-video") === 0) return "rht";
+    if (host === "madrasfm.tv" && (path === "" || path === "/")) return "madras";
+    if (host === "radiofusion.fr" && path.indexOf("/fusion-tv") === 0) return "fusion";
     return "";
   }
 
@@ -4354,6 +4356,8 @@
     const referrer = String(document.referrer || "").toLowerCase();
     if (host === "c.streamhoster.com" && referrer.indexOf("biztv.com/watch-biztv") >= 0) return "biz";
     if (host === "player.infomaniak.com" && referrer.indexOf("rhtguadeloupe.fr/live-video") >= 0) return "rht";
+    if (host === "player.infomaniak.com" && referrer.indexOf("madrasfm.tv") >= 0) return "madras";
+    if (host === "player.infomaniak.com" && referrer.indexOf("radiofusion.fr/fusion-tv") >= 0) return "fusion";
     return "";
   }
 
