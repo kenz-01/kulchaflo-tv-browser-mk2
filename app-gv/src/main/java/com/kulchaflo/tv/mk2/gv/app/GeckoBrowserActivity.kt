@@ -15867,6 +15867,8 @@ return changed>0;
         if (host == "biztv.com") return path.startsWith("/watch-biztv")
         if (host == "c.streamhoster.com") return path.startsWith("/embed/media/")
         if (host == "rhtguadeloupe.fr") return path.startsWith("/live-video")
+        if (host == "madrasfm.tv") return path.isBlank() || path == "/"
+        if (host == "radiofusion.fr") return path.startsWith("/fusion-tv")
         if (host == "player.infomaniak.com") return true
         return false
     }
