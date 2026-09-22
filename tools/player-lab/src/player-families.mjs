@@ -13,6 +13,7 @@ export const PLAYER_FAMILIES = Object.freeze([
   'infomaniak',
   'pro-fhi',
   'streamhoster',
+  'telemicro',
   'native-html5',
   'unknown',
 ]);
