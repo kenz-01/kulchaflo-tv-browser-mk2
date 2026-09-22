@@ -68,17 +68,20 @@
       "frameHost": "wapa.tv",
       "selector": ".fp-playbutton",
       "family": "flowplayer",
-      "activation": "dom-click"
+      "activation": "dom-click",
+      "frameWaitMs": 15000
     },
     "kf-post-745-wipr": {
       "frameHost": "wipr.pr",
       "selector": ".vjs-big-play-button",
       "family": "videojs",
-      "activation": "dom-click"
+      "activation": "dom-click",
+      "navigationTimeoutMs": 60000,
+      "frameWaitMs": 12000
     },
     "kf-post-737-ziz-tv": {
       "frameHost": "zizonline.com",
-      "selector": "#tvPlay",
+      "selector": "#tvUnmute",
       "family": "hlsjs",
       "activation": "dom-click"
     },
@@ -87,7 +90,8 @@
       "selector": ".playback_button",
       "family": "dailymotion",
       "activation": "dom-click",
-      "frameWaitMs": 12000
+      "frameWaitMs": 12000,
+      "pathPrefix": "/player/x8dgt.html"
     },
     "kf-post-932-biz-tv": {
       "frameHost": "c.streamhoster.com",
