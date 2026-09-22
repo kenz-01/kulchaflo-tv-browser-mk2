@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "providerId": "sample-cvm",
+  "targetId": "sample-cvm",
+  "evidenceSummary": { "primaryPlayerFamily": "vimeo" }
+}

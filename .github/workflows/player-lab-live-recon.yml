@@ -1,0 +1,105 @@
+name: Player Lab live-channel recon
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/player-lab-live-recon.yml"
+      - "tools/player-lab/**"
+  workflow_dispatch:
+
+concurrency:
+  group: player-lab-live-recon-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: tools/player-lab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: tools/player-lab/package-lock.json
+
+      - name: Install Player Lab
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Player Lab tests
+        run: npm test
+
+      - name: Profile registered reverse-ID live targets
+        shell: bash
+        run: |
+          set +e
+          mkdir -p reports/recon
+          mapfile -t targets < <(node -e 'const r=require("./config/public-targets.json"); Object.keys(r.targets).filter(k=>k.startsWith("kf-post-")).sort((a,b)=>{const ai=Number(a.match(/kf-post-(\\d+)/)?.[1]||0); const bi=Number(b.match(/kf-post-(\\d+)/)?.[1]||0); return bi-ai;}).forEach(k=>console.log(k))')
+          : > reports/recon/run-summary.txt
+          for target in "${targets[@]}"; do
+            echo "=== ${target} ===" | tee -a reports/recon/run-summary.txt
+            npm run profile -- --target "${target}" --observe-ms 7000 --navigation-timeout-ms 25000 --output-root reports/recon >> reports/recon/run-summary.txt 2>&1
+            code=$?
+            echo "profile-exit=${code}" | tee -a reports/recon/run-summary.txt
+          done
+          exit 0
+
+      - name: Analyze successful profiles
+        shell: bash
+        run: |
+          set +e
+          while IFS= read -r -d '' report; do
+            echo "ANALYZE ${report}" | tee -a reports/recon/run-summary.txt
+            npm run analyze -- --report "${report}" >> reports/recon/run-summary.txt 2>&1
+            echo "analyze-exit=$?" | tee -a reports/recon/run-summary.txt
+          done < <(find reports/recon -type f -name report.json -print0)
+          exit 0
+
+      - name: Run bounded interaction probes
+        shell: bash
+        run: |
+          set +e
+          mkdir -p reports/interaction-probes
+          probes=(
+            kf-post-923-madras-fm-tv
+            kf-post-920-tele-peyi
+            kf-post-912-digital-15
+            kf-post-911-telecentro-13
+            kf-post-896-xfm-aruba
+            kf-post-894-balchi-tv
+            kf-post-918-bonao-tv
+            kf-post-916-adoram-tv
+            kf-post-915-yunavision
+            kf-post-905-rtvd
+          )
+          for target in "${probes[@]}"; do
+            echo "PROBE ${target}" | tee -a reports/recon/run-summary.txt
+            npm run interaction-probe -- --target "${target}" --output-root reports/interaction-probes >> reports/recon/run-summary.txt 2>&1
+            echo "probe-exit=$?" | tee -a reports/recon/run-summary.txt
+          done
+          exit 0
+
+      - name: Upload recon reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-lab-live-recon
+          path: |
+            tools/player-lab/reports/recon
+            tools/player-lab/reports/interaction-probes
+          if-no-files-found: warn
+          retention-days: 7

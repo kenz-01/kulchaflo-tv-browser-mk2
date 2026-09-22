@@ -67,7 +67,7 @@ class GvPromotedMediaPlayer(
 
     fun play(source: GvMediaPathController.Observation) {
         if (activeSource?.url == source.url) {
-            GvLogger.i(TAG, "promoted media unchanged url=${source.url}")
+            GvLogger.i(TAG, "promoted media unchanged pageKind=${source.pageKind}")
             return
         }
         releaseInternal(reason = "replace-source")
@@ -112,15 +112,15 @@ class GvPromotedMediaPlayer(
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     when (playbackState) {
-                        Player.STATE_BUFFERING -> GvLogger.i(TAG, "player buffering url=${source.url}")
-                        Player.STATE_READY -> GvLogger.i(TAG, "player prepared url=${source.url}")
-                        Player.STATE_ENDED -> GvLogger.i(TAG, "player ended url=${source.url}")
+                        Player.STATE_BUFFERING -> GvLogger.i(TAG, "player buffering pageKind=${source.pageKind}")
+                        Player.STATE_READY -> GvLogger.i(TAG, "player prepared pageKind=${source.pageKind}")
+                        Player.STATE_ENDED -> GvLogger.i(TAG, "player ended pageKind=${source.pageKind}")
                     }
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     if (isPlaying) {
-                        GvLogger.i(TAG, "player started url=${source.url}")
+                        GvLogger.i(TAG, "player started pageKind=${source.pageKind}")
                     }
                 }
 
@@ -128,14 +128,14 @@ class GvPromotedMediaPlayer(
                     val width = videoSize.width
                     val height = videoSize.height
                     if (width > 0 && height > 0) {
-                        GvLogger.i(TAG, "player video size=${width}x$height url=${source.url}")
+                        GvLogger.i(TAG, "player video size=${width}x$height pageKind=${source.pageKind}")
                     }
                 }
 
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     GvLogger.e(
                         TAG,
-                        "player failed errorType=${error.errorCodeName} message=${error.message ?: "unknown"} url=${source.url}",
+                        "player failed errorType=${error.errorCodeName} pageKind=${source.pageKind}",
                         error
                     )
                     listener?.onPromotedPlayerError(source, error)
@@ -155,7 +155,7 @@ class GvPromotedMediaPlayer(
 
         GvLogger.i(
             TAG,
-            "player backend=media3 qualityPolicy=highest-supported-bitrate url=${source.url} mimeType=${normalizeMimeType(source.mimeHint) ?: "unknown"} pageKind=${source.pageKind}"
+            "player backend=media3 qualityPolicy=highest-supported-bitrate mimeType=${normalizeMimeType(source.mimeHint) ?: "unknown"} pageKind=${source.pageKind}"
         )
     }
 
@@ -176,7 +176,7 @@ class GvPromotedMediaPlayer(
     }
 
     private fun releaseInternal(reason: String) {
-        val previousUrl = activeSource?.url
+        val hadPreviousSource = activeSource != null
         playerView?.player = null
         player?.release()
         player = null
@@ -184,8 +184,8 @@ class GvPromotedMediaPlayer(
         activeSource = null
         host.removeAllViews()
         host.visibility = android.view.View.GONE
-        if (previousUrl != null) {
-            GvLogger.i(TAG, "promoted media exited reason=$reason url=$previousUrl")
+        if (hadPreviousSource) {
+            GvLogger.i(TAG, "promoted media exited reason=$reason")
         }
     }
 

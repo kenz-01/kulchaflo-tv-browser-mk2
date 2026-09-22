@@ -1,0 +1,88 @@
+{
+  "provenance": "Manually minimized, redacted evidence sample derived from the existing CVM Player Lab report. This is not the full report.",
+  "metadata": {
+    "providerId": "cvm-tv",
+    "profilerVersion": "0.1.0-checkpoint3c",
+    "policyMode": "registered-public-target",
+    "targetId": "cvm-tv",
+    "requestedProfile": "sony-bravia",
+    "browserRuntimeType": "system",
+    "passiveObservationOnly": true
+  },
+  "requestedUrl": "https://www.cvmtv.com/live",
+  "finalUrl": "https://www.cvmtv.com/live",
+  "frames": [
+    { "id": "frame-1", "hostname": "www.cvmtv.com", "url": "https://www.cvmtv.com/live", "domInspectionSucceeded": true },
+    { "id": "frame-2", "hostname": "vimeo.com", "url": "https://vimeo.com/event/4401057/embed", "domInspectionSucceeded": true },
+    { "id": "frame-3", "url": null, "domInspectionSucceeded": false },
+    { "id": "frame-4", "hostname": "player.vimeo.com", "url": "https://player.vimeo.com/static/proxy.html", "domInspectionSucceeded": true }
+  ],
+  "scripts": [
+    { "host": "www.cvmtv.com", "path": "/assets/index.js" },
+    { "host": "f.vimeocdn.com", "path": "/p/player.js" },
+    { "host": "www.gstatic.com", "path": "/recaptcha/releases/api.js" }
+  ],
+  "iframes": [
+    { "host": "vimeo.com", "path": "/event/4401057/embed", "title": "CVM Television Live Stream", "allow": "autoplay; fullscreen" },
+    { "host": "player.vimeo.com", "path": "/static/proxy.html", "title": "Vimeo LocalStorage Proxy" }
+  ],
+  "mediaObservations": [
+    {
+      "id": "frame-2:media-1",
+      "tag": "video",
+      "src": null,
+      "currentSrc": null,
+      "readyState": 4,
+      "networkState": 2,
+      "paused": false,
+      "muted": false,
+      "volume": 1,
+      "autoplay": false,
+      "controls": false,
+      "timeAdvanced": false,
+      "sourceChangeCount": 0,
+      "replacementDetected": false
+    }
+  ],
+  "networkEvidence": [
+    { "kind": "document", "host": "www.cvmtv.com", "resourceType": "document", "status": 200, "contentType": "text/html" },
+    { "kind": "iframe-document,known-player-or-cdn-host", "host": "vimeo.com", "resourceType": "document" },
+    { "kind": "player-script", "host": "f.vimeocdn.com", "resourceType": "script" },
+    { "kind": "hls-manifest,media-mime", "host": "live-ak.vimeocdn.com", "resourceType": "xhr", "contentType": "application/vnd.apple.mpegurl" }
+  ],
+  "candidateControls": [
+    { "matchedKinds": ["live"], "frameId": "frame-1" },
+    { "matchedKinds": ["play"], "frameId": "frame-2" },
+    { "matchedKinds": ["fullscreen"], "frameId": "frame-2" },
+    { "matchedKinds": ["mute"], "frameId": "frame-2" },
+    { "matchedKinds": ["play"], "frameId": "frame-2" },
+    { "matchedKinds": ["pause"], "frameId": "frame-2" },
+    { "matchedKinds": ["fullscreen"], "frameId": "frame-2" }
+  ],
+  "playerClassification": {
+    "primaryFamily": "vimeo",
+    "secondaryFamilies": ["native-html5"],
+    "confidence": "high"
+  },
+  "routeClassification": {
+    "route": "embedded-player browser-first",
+    "confidence": "medium"
+  },
+  "lifecycleEvidence": {
+    "interactionCounters": {
+      "click": 0,
+      "pointer": 0,
+      "keyboard": 0,
+      "play": 0,
+      "pause": 0,
+      "requestFullscreen": 0
+    }
+  },
+  "warnings": [],
+  "omissions": [
+    "Cookies, Authorization headers, request bodies, response bodies, localStorage and sessionStorage are not captured."
+  ],
+  "truncation": {
+    "relevantNetworkRecords": { "truncated": false, "limit": 500 }
+  }
+}

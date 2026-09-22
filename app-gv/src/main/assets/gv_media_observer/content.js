@@ -8,7 +8,15 @@
   const NOVUS_CHANNEL_SELECT_DELAYS_MS = [350, 1200, 2600, 4500];
   const NOVUS_PLAYABLE_CHECK_DELAYS_MS = [1200, 2600, 5000, 8000, 12000, 16000, 22000, 30000];
   const CGTV_PLAY_ASSIST_DELAYS_MS = [900, 2400, 5200];
-  const CGTV_TOP_OFFSET_PX = 8;
+  const CHTV_PLAY_ASSIST_DELAYS_MS = [700, 1800, 4000, 6500];
+  const CHTV_FULLSCREEN_ASSIST_DELAYS_MS = [2200, 4200, 7000];
+  const CARIBVISION_PLAY_ASSIST_DELAYS_MS = [900, 2400, 5200];
+  const CARIBVISION_FULLSCREEN_ASSIST_DELAYS_MS = [2200, 4200, 7000];
+  const CARIBVISION_OFFICIAL_HLS_HOST = "5dcabf026b188.streamlock.net";
+  const CARIBVISION_OFFICIAL_HLS_PATH = "/CaribVision/livestream/playlist.m3u8";
+  const DBSTV_OFFICIAL_HLS_HOST = "stream.dbstvstlucia.com";
+  const DBSTV_OFFICIAL_HLS_PATH = "/hls/dbstv_main.m3u8";
+  const CGTV_TOP_OFFSET_PX = 0;
   const NOVUS_AUTOPLAY_MAX_ATTEMPTS = 6;
   const ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE = true;
   const ENABLE_ABS_TEGO_PLAYER_FULLSCREEN_LIKE = true;
@@ -16,7 +24,36 @@
   const ENABLE_TTT_TEGO_AUTOSTART_HACKS = false;
   const ENABLE_TTT_TEGO_READINESS_ASSIST = true;
   const TTT_TEGO_READINESS_ASSIST_DELAY_MS = 18000;
+  const PLAYER_HELPER_REGISTRY = Object.freeze([
+    Object.freeze({
+      id: "cvm-tv-embedded-vimeo",
+      providerId: "cvm-tv",
+      playerFamily: "embedded-vimeo",
+      match: Object.freeze({
+        frameHost: "vimeo.com",
+        allowFrameSubdomains: true,
+        pathPrefix: "/event/",
+        pathSuffix: "/embed",
+        referrerHosts: Object.freeze(["cvmtv.com", "www.cvmtv.com"])
+      }),
+      capabilities: Object.freeze({
+        transportAutohide: Object.freeze({
+          enabled: true,
+          idleMs: 3200,
+          idleClass: "kf-cvm-vimeo-transport-idle",
+          styleId: "kf-cvm-vimeo-transport-autohide-style",
+          selectors: Object.freeze([".vp-controls", ".vp-sidedock", ".vp-title"])
+        })
+      })
+    })
+  ]);
+  const TRANSPORT_AUTOHIDE_INTERACTION_EVENTS = Object.freeze([
+    "mousemove", "pointermove", "mousedown", "pointerdown", "keydown", "touchstart"
+  ]);
   let lastSignature = "";
+  let mediaCandidateSettlement = { signature: "", stableObservationCount: 0 };
+  let mediaPublishTimer = null;
+  let mediaCollectionActive = true;
   let lastTegoSignature = "";
   let absTegoStartupReprobeStarted = false;
   let absTegoStartupReprobeStopped = false;
@@ -71,6 +108,72 @@
   let cgtvFullscreenAssistAttempted = false;
   let cgtvBradmaxPlaybackHookAttached = false;
   let cgtvBradmaxFullscreenPollStarted = false;
+  let chtvPlayAssistScheduled = false;
+  let chtvPlayAssistLastKey = "";
+  let chtvFullscreenAssistScheduled = false;
+  let chtvFullscreenAssistLastKey = "";
+  let chtvFullscreenAssistClickCount = 0;
+  let caribvisionSessionStateLastKey = "";
+  let caribvisionPlayAssistScheduled = false;
+  let caribvisionPlayAssistLastKey = "";
+  let caribvisionFullscreenAssistScheduled = false;
+  let caribvisionFullscreenAssistLastKey = "";
+  let caribvisionAudioDomClickDone = false;
+  let caribvisionFullscreenDomClickDone = false;
+  let cvmVimeoPlayerFirstApplied = false;
+  let cvmVimeoQualityPreferenceResolved = false;
+  let transportAutohideEngine = null;
+  let islandTvPlayerFirstApplied = false;
+  let islandTvPlayerFirstObserverAttached = false;
+  let islandTvPlayerFirstAppliedLogged = false;
+  let islandTvSelectedFrameFoundLogged = false;
+  let islandTvShellGuardAttached = false;
+  let dbsTvPlayerFirstApplied = false;
+  let dbsTvPlayerFirstObserverAttached = false;
+  let dbsTvPlayerFirstAppliedLogged = false;
+  let dbsTvSourceFoundLogged = false;
+  let dbsTvShellGuardAttached = false;
+  let dbsTvBrowserPlayAttempted = false;
+  let cbnVirginIslandsLayoutApplied = false;
+  let cbnVirginIslandsAutoplayAttempted = false;
+  let cbnVirginIslandsMutedFallbackAttempted = false;
+  let cbnVirginIslandsMutedFallbackRetryCount = 0;
+  let cbnVirginIslandsMutedFallbackRetryTimer = null;
+  let cbnVirginIslandsPointerSleepRequested = false;
+  let cbnVirginIslandsPointerSleepTimer = null;
+  let cnc3PlayerFirstApplied = false;
+  let gbnPlayerFirstApplied = false;
+  let gbnPlayerFirstObserverAttached = false;
+  let gbnPlayerFirstAppliedLogged = false;
+  let gbnPlayerFirstNoTargetLogged = false;
+  let gbnPlayerFirstRetryLogCount = 0;
+  let gbnConsentFrameDetectedLogged = false;
+  let cvc9ConsentFrameDetectedLogged = false;
+  let cvc9PlayerFirstApplied = false;
+  let cvc9PlayerFirstObserverAttached = false;
+  let cvc9PlayerFirstAppliedLogged = false;
+  let cvc9PlayerFirstNoTargetLogged = false;
+  let cvc9PlayerFirstRetryLogCount = 0;
+  let compassPlayerFirstApplied = false;
+  let compassPlayerFirstObserverAttached = false;
+  let compassPlayerFirstAppliedLogged = false;
+  let compassPlayControlFoundLogged = false;
+  let compassTrustedAudioListenerAttached = false;
+  let compassAudioHooksAttached = false;
+  let compassAudioRetryTimers = [];
+  let compassAudioReady = false;
+  let radiantTvHelperScheduled = false;
+  let radiantTvPlayerFirstApplied = false;
+  let radiantTvPlayAttempted = false;
+  let radiantTvFullscreenAttempted = false;
+  const RADIANT_TV_RETRY_DELAYS_MS = [250, 750, 1600, 3200, 6000, 10000];
+  const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
+  const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
+  const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
+  const ISLANDTV_VIMEO_SCRIPT_VERSION = "islandtv-vimeo-v1";
+  const ISLANDTV_PLAYER_SHELL_ID = "kf-islandtv-player-shell";
+  const DBSTV_SCRIPT_VERSION = "dbstv-videojs-v1";
+  const DBSTV_PLAYER_SHELL_ID = "kf-dbstv-player-shell";
 
   function isVisible(element) {
     if (!element) return false;
@@ -108,6 +211,2270 @@
     return path.indexOf("/stream") === 0;
   }
 
+  function isCvmLiveTopPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cvmtv.com" && host !== "www.cvmtv.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live" || path.indexOf("/live/") === 0 || path.indexOf("/more-pages/cvm-live-stream") === 0;
+  }
+
+  function isCvmVimeoEmbedFrame() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "vimeo.com" && !host.endsWith(".vimeo.com")) return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path.indexOf("/event/") === 0 && path.endsWith("/embed");
+  }
+
+  function isIslandTvHomePage() {
+    const host = (window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "islandtv.tv") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "" || path === "/";
+  }
+
+  function islandTvSelectedEventId() {
+    const channel = String(new URLSearchParams(window.location.search || "").get("kf_channel") || "").trim().toLowerCase();
+    return channel === "island-tv-plus" ? "4894719" : "5561018";
+  }
+
+  function islandTvSelectedEventIdFromUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""), window.location.href);
+      const channel = String(parsed.searchParams.get("kf_channel") || "").trim().toLowerCase();
+      return channel === "island-tv-plus" ? "4894719" : "5561018";
+    } catch (_) {
+      return islandTvSelectedEventId();
+    }
+  }
+
+  function islandTvCanonicalEmbedSrc(eventId) {
+    if (String(eventId || "") === "4894719") {
+      return "https://vimeo.com/event/4894719/embed/f5862251f9/interaction";
+    }
+    return "https://vimeo.com/event/5561018/embed/a24357f7a8/interaction";
+  }
+
+  function isIslandTvVimeoEventFrame() {
+    const host = (window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "vimeo.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path.indexOf("/event/") === 0 && (path.indexOf("/embed") >= 0 || path.indexOf("/interaction") >= 0);
+  }
+
+  function isIslandTvContextUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""), window.location.href);
+      const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+      const path = parsed.pathname.toLowerCase();
+      if (host === "islandtv.tv" && (path === "" || path === "/")) {
+        return true;
+      }
+      return host === "vimeo.com" && path.indexOf("/event/") === 0 && (path.indexOf("/embed") >= 0 || path.indexOf("/interaction") >= 0);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isCbnVirginIslandsLivePage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cbnvirginislands.com" && host !== "www.cbnvirginislands.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/cbn-tv" || path.indexOf("/cbn-tv/") === 0;
+  }
+
+  function isCbnVirginIslandsEmbedFrame() {
+    const href = String(window.location.href || "").toLowerCase();
+    return href.indexOf("cbnvirginislands-com.filesusr.com/html/") >= 0;
+  }
+
+  function isCnc3LiveStreamPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "cnc3.co.tt" && host !== "www.cnc3.co.tt") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live-stream" || path.indexOf("/live-stream/") === 0;
+  }
+
+  function isGbnLiveTelevisionPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "gbn.gd") return false;
+    const path = String(window.location.pathname || "").toLowerCase();
+    return path === "/live-television" || path === "/live-television/";
+  }
+
+  function isCompassTvHomePage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host !== "compasstv.ky") return false;
+    const path = String(window.location.pathname || "").toLowerCase();
+    return path === "" || path === "/";
+  }
+
+  function isGbnDailymotionConsentFrame() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host !== "consent.dailymotion.com") return false;
+    if (path !== "/index.html" && path.indexOf("/consent") < 0) return false;
+    const referrer = String(document.referrer || "").toLowerCase();
+    const search = String(window.location.search || "").toLowerCase();
+    const href = String(window.location.href || "").toLowerCase();
+    return (
+      referrer.indexOf("gbn.gd/live-television") >= 0 ||
+      referrer.indexOf("dailymotion.com/embed/video/x85vz1r") >= 0 ||
+      referrer.indexOf("x85vz1r") >= 0 ||
+      search.indexOf("x85vz1r") >= 0 ||
+      href.indexOf("x85vz1r") >= 0
+    );
+  }
+
+  function isCvc9DailymotionWatchPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    return host === "dailymotion.com" && (path === "/video/x7gy059" || path.indexOf("/video/x7gy059/") === 0);
+  }
+
+  function isCvc9DailymotionPlayerFrame() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host !== "geo.dailymotion.com" || path.indexOf("/player/") !== 0) {
+      return false;
+    }
+    const referrer = String(document.referrer || "").toLowerCase();
+    return referrer.indexOf("colorvision.com.do/en-vivo") >= 0 || referrer.indexOf("dailymotion.com/video/x7gy059") >= 0;
+  }
+
+  function isCvc9DailymotionConsentFrame() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host !== "consent.dailymotion.com") {
+      return false;
+    }
+    if (path !== "/index.html" && path.indexOf("/consent") < 0) {
+      return false;
+    }
+    const referrer = String(document.referrer || "").toLowerCase();
+    const search = String(window.location.search || "").toLowerCase();
+    return (
+      referrer.indexOf("dailymotion.com/video/x7gy059") >= 0 ||
+      referrer.indexOf("geo.dailymotion.com/player/") >= 0 ||
+      search.indexOf("consent_origin=https%3a%2f%2fconsent.dailymotion.com") >= 0 ||
+      search.indexOf("preload_message=true") >= 0
+    );
+  }
+
+  function isCvc9DailymotionConsentContext() {
+    return isCvc9DailymotionWatchPage() || isCvc9DailymotionPlayerFrame() || isCvc9DailymotionConsentFrame();
+  }
+
+  function isGbnContext() {
+    return isGbnLiveTelevisionPage() || isGbnDailymotionConsentFrame();
+  }
+
+  function emitGbnConsentFrameDetected(source) {
+    if (gbnConsentFrameDetectedLogged || !isGbnDailymotionConsentFrame()) return false;
+    if (isCvc9AdclickPage()) return false;
+    gbnConsentFrameDetectedLogged = true;
+    promptPayload({
+      type: "gbn-live-state",
+      phase: "content-gbn-consent-frame-detected",
+      pageUrl: window.location.href,
+      candidateCount: 0,
+      source: String(source || "scan")
+    });
+    return true;
+  }
+
+  function ensureGbnConsentFrameDetector() {
+    if (!isGbnDailymotionConsentFrame()) {
+      return false;
+    }
+    emitGbnConsentFrameDetected("initial");
+    try {
+      const observer = new MutationObserver(() => {
+        if (!isGbnDailymotionConsentFrame() || gbnConsentFrameDetectedLogged) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        emitGbnConsentFrameDetected("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "aria-hidden"]
+      });
+    } catch (_) {}
+    return true;
+  }
+
+  function emitCvc9ConsentFrameDetected(source) {
+    if (cvc9ConsentFrameDetectedLogged || !isCvc9DailymotionConsentFrame()) return false;
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    if (host === "adclick.g.doubleclick.net") return false;
+    cvc9ConsentFrameDetectedLogged = true;
+    promptPayload({
+      type: "cvc9-live-state",
+      phase: "content-cvc9-consent-frame-detected",
+      pageUrl: window.location.href,
+      candidateCount: 0,
+      source: String(source || "scan")
+    });
+    return true;
+  }
+
+  function ensureCvc9ConsentFrameDetector() {
+    if (!isCvc9DailymotionConsentFrame()) {
+      return false;
+    }
+    emitCvc9ConsentFrameDetected("initial");
+    try {
+      const observer = new MutationObserver(() => {
+        if (!isCvc9DailymotionConsentFrame() || cvc9ConsentFrameDetectedLogged) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        emitCvc9ConsentFrameDetected("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "aria-hidden"]
+      });
+    } catch (_) {}
+    return true;
+  }
+
+  function isCvc9AdclickPage() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    return host === "adclick.g.doubleclick.net" && path.indexOf("/pcs/click") === 0;
+  }
+
+  function cvc9PlayerFirstLog(phase, source, candidateCount) {
+    promptPayload({
+      type: "cvc9-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown")
+    });
+  }
+
+  function scoreCvc9PlayerFirstCandidate(node) {
+    if (!node || !isVisible(node)) return -1;
+    let rect;
+    try {
+      rect = node.getBoundingClientRect();
+    } catch (_) {
+      return -1;
+    }
+    if (!rect || rect.width < 120 || rect.height < 68) return -1;
+    const tag = String(node.tagName || "").toLowerCase();
+    const src = String((node.getAttribute && node.getAttribute("src")) || node.src || "").toLowerCase();
+    const cls = String(node.className || "").toLowerCase();
+    let score = rect.width * rect.height;
+    if (tag === "iframe") score += 3000000;
+    if (tag === "video") score += 2500000;
+    if (src.indexOf("geo.dailymotion.com/player") >= 0) score += 4000000;
+    if (src.indexOf("dailymotion.com/embed") >= 0 || src.indexOf("dailymotion.com/player") >= 0) score += 2500000;
+    if (cls.indexOf("player") >= 0 || cls.indexOf("video") >= 0) score += 200000;
+    return score;
+  }
+
+  function findCvc9PlayerFirstCandidates() {
+    const selector = [
+      "iframe[src*='geo.dailymotion.com/player']",
+      "iframe[src*='dailymotion.com/embed']",
+      "iframe[src*='dailymotion.com/player']",
+      "video"
+    ].join(",");
+    return Array.from(document.querySelectorAll(selector)).filter((node) => scoreCvc9PlayerFirstCandidate(node) >= 0);
+  }
+
+  function resolveCvc9PlayerFirstTarget(node) {
+    if (!node) return null;
+    let target = node;
+    let bestScore = scoreCvc9PlayerFirstCandidate(node);
+    let cursor = node.parentElement;
+    for (let depth = 0; cursor && depth < 4; depth += 1) {
+      if (cursor === document.body || cursor === document.documentElement) break;
+      if (!isVisible(cursor)) {
+        cursor = cursor.parentElement;
+        continue;
+      }
+      let rect;
+      try {
+        rect = cursor.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+      if (!rect || rect.width < 120 || rect.height < 68) {
+        cursor = cursor.parentElement;
+        continue;
+      }
+      const parentScore = rect.width * rect.height;
+      if (parentScore >= bestScore * 0.92 && parentScore <= bestScore * 1.8) {
+        target = cursor;
+        bestScore = parentScore;
+      }
+      cursor = cursor.parentElement;
+    }
+    return target;
+  }
+
+  function fillCvc9PlayerFirstNode(node) {
+    if (!node || !node.style) return;
+    node.style.setProperty("position", "fixed", "important");
+    node.style.setProperty("inset", "0", "important");
+    node.style.setProperty("left", "0", "important");
+    node.style.setProperty("top", "0", "important");
+    node.style.setProperty("width", "100vw", "important");
+    node.style.setProperty("height", "100vh", "important");
+    node.style.setProperty("max-width", "100vw", "important");
+    node.style.setProperty("max-height", "100vh", "important");
+    node.style.setProperty("margin", "0", "important");
+    node.style.setProperty("padding", "0", "important");
+    node.style.setProperty("border", "0", "important");
+    node.style.setProperty("overflow", "hidden", "important");
+    node.style.setProperty("background", "#000", "important");
+    node.style.setProperty("z-index", "2147483647", "important");
+  }
+
+  function applyCvc9PlayerFirstRootStyles() {
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("min-width", "100vw", "important");
+      node.style.setProperty("min-height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+  }
+
+  function applyCvc9WatchPageChromeSuppression(target) {
+    if (!isCvc9DailymotionWatchPage()) return;
+    const quietSelectors = [
+      "header",
+      "footer",
+      "[class*='sidebar']",
+      "[class*='Sidebar']",
+      "[class*='recommend']",
+      "[class*='Recommend']",
+      "[class*='related']",
+      "[class*='Related']"
+    ];
+    quietSelectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || node === target || node.contains(target) || target.contains(node)) return;
+          if (!node.style) return;
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        });
+      } catch (_) {}
+    });
+  }
+
+  function applyCvc9DailymotionPlayerFirstLayout(source) {
+    if (cvc9PlayerFirstApplied || isCvc9AdclickPage()) return false;
+    const watchPage = isCvc9DailymotionWatchPage();
+    const playerFrame = isCvc9DailymotionPlayerFrame();
+    if (!watchPage && !playerFrame) return false;
+    applyCvc9PlayerFirstRootStyles();
+    const candidates = playerFrame
+      ? Array.from(document.querySelectorAll("video,iframe,[id*='player'],[class*='player'],main,body")).filter((node) => {
+          if (!node || node === document.documentElement) return false;
+          try {
+            const rect = node.getBoundingClientRect();
+            return rect.width > 120 && rect.height > 68;
+          } catch (_) {
+            return false;
+          }
+        })
+      : findCvc9PlayerFirstCandidates();
+    const sortedCandidates = candidates.slice().sort((a, b) => scoreCvc9PlayerFirstCandidate(b) - scoreCvc9PlayerFirstCandidate(a));
+    const target = resolveCvc9PlayerFirstTarget(sortedCandidates[0] || (playerFrame ? (document.querySelector("video") || document.body) : null));
+    if (!target) {
+      const sourceText = String(source || "unknown");
+      if (sourceText.indexOf("retry-") === 0 && cvc9PlayerFirstRetryLogCount < 3) {
+        cvc9PlayerFirstRetryLogCount += 1;
+        cvc9PlayerFirstLog("content-cvc9-player-first-retry", sourceText, candidates.length);
+      } else if (!cvc9PlayerFirstNoTargetLogged && (sourceText === "retry-12000" || sourceText === "observer-expire" || sourceText === "load")) {
+        cvc9PlayerFirstNoTargetLogged = true;
+        cvc9PlayerFirstLog("content-cvc9-player-first-no-target", sourceText, candidates.length);
+      }
+      return false;
+    }
+    fillCvc9PlayerFirstNode(target);
+    try {
+      Array.from(target.querySelectorAll("iframe,video,[class*='player'],[id*='player']")).forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("width", "100%", "important");
+        node.style.setProperty("height", "100%", "important");
+        node.style.setProperty("max-width", "100%", "important");
+        node.style.setProperty("max-height", "100%", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("background", "#000", "important");
+      });
+    } catch (_) {}
+    if (playerFrame) {
+      [document.body, document.querySelector("main"), document.querySelector("#root"), document.querySelector("[id*='player']")].forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("overflow", "hidden", "important");
+        node.style.setProperty("background", "#000", "important");
+      });
+    } else {
+      applyCvc9WatchPageChromeSuppression(target);
+    }
+    try {
+      target.setAttribute("data-kf-cvc9-player-first", "1");
+    } catch (_) {}
+    cvc9PlayerFirstApplied = true;
+    if (!cvc9PlayerFirstAppliedLogged) {
+      cvc9PlayerFirstAppliedLogged = true;
+      cvc9PlayerFirstLog("content-cvc9-player-first-applied", source, candidates.length);
+    }
+    return true;
+  }
+
+  function scheduleCvc9DailymotionPlayerFirstLayout() {
+    if (isCvc9AdclickPage()) return false;
+    if (!isCvc9DailymotionWatchPage() && !isCvc9DailymotionPlayerFrame()) return false;
+    applyCvc9DailymotionPlayerFirstLayout("initial");
+    const retryApply = (source) => applyCvc9DailymotionPlayerFirstLayout(source);
+    CVC9_PLAYER_FIRST_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => retryApply(`retry-${delayMs}`), delayMs);
+    });
+    const domReady = () => retryApply("dom-content-loaded");
+    const loaded = () => retryApply("load");
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", domReady, { once: true });
+    } else {
+      domReady();
+    }
+    window.addEventListener("load", loaded, { once: true });
+    if (cvc9PlayerFirstObserverAttached) return true;
+    cvc9PlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        if (cvc9PlayerFirstApplied) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        retryApply("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "src"]
+      });
+      setTimeout(() => {
+        try {
+          observer.disconnect();
+        } catch (_) {}
+        if (!cvc9PlayerFirstApplied) {
+          retryApply("observer-expire");
+        }
+      }, 15000);
+    } catch (_) {}
+    return true;
+  }
+
+  function gbnPlayerFirstLog(phase, source, candidateCount, details) {
+    const extra = details && typeof details === "object" ? details : {};
+    promptPayload(Object.assign({
+      type: "gbn-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown")
+    }, extra));
+  }
+
+  function scoreGbnOfficialIframe(node) {
+    if (!node || !isVisible(node)) return -1;
+    let rect;
+    try {
+      rect = node.getBoundingClientRect();
+    } catch (_) {
+      return -1;
+    }
+    if (!rect || rect.width < 120 || rect.height < 68) return -1;
+    const tag = String(node.tagName || "").toLowerCase();
+    const src = String((node.getAttribute && node.getAttribute("src")) || node.src || "").toLowerCase();
+    if (tag !== "iframe" || src.indexOf("x85vz1r") < 0 || src.indexOf("dailymotion") < 0) return -1;
+    let score = rect.width * rect.height;
+    if (src.indexOf("geo.dailymotion.com/player.html") >= 0) score += 5000000;
+    if (src.indexOf("geo.dailymotion.com/player") >= 0) score += 4000000;
+    if (src.indexOf("dailymotion.com/embed/video/x85vz1r") >= 0) score += 3000000;
+    return score;
+  }
+
+  function findGbnOfficialIframe() {
+    const selectors = [
+      "iframe[src*='dailymotion.com/embed/video/x85vz1r']",
+      "iframe[src*='geo.dailymotion.com/player.html'][src*='x85vz1r']",
+      "iframe[src*='geo.dailymotion.com/player'][src*='x85vz1r']",
+      "iframe[src*='x85vz1r'][src*='dailymotion']",
+      "iframe[src*='x85vz1r'][src*='geo.dailymotion.com']"
+    ];
+    const seen = new Set();
+    let best = null;
+    let bestScore = -1;
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || seen.has(node)) return;
+          seen.add(node);
+          const score = scoreGbnOfficialIframe(node);
+          if (score > bestScore) {
+            best = node;
+            bestScore = score;
+          }
+        });
+      } catch (_) {}
+    });
+    return bestScore >= 0 ? best : null;
+  }
+
+  function isGbnResponsiveWrapper(node) {
+    if (!node || !node.style) return false;
+    const style = String(node.getAttribute("style") || "").toLowerCase();
+    const cls = String(node.className || "").toLowerCase();
+    return (
+      style.indexOf("position:relative") >= 0 ||
+      cls.indexOf("video") >= 0 ||
+      cls.indexOf("player") >= 0 ||
+      cls.indexOf("embed") >= 0 ||
+      cls.indexOf("fluid") >= 0 ||
+      cls.indexOf("responsive") >= 0 ||
+      cls.indexOf("dailymotion") >= 0
+    ) && (
+      style.indexOf("padding-bottom:56.25%") >= 0 ||
+      style.indexOf("padding-bottom: 56.25%") >= 0 ||
+      cls.indexOf("fluid-width-video-wrapper") >= 0 ||
+      cls.indexOf("embed-responsive") >= 0
+    );
+  }
+
+  function isForbiddenGbnWrapper(node) {
+    if (!node) return true;
+    const tag = String(node.tagName || "").toLowerCase();
+    if (["html", "body", "script", "style", "link", "meta", "noscript"].indexOf(tag) >= 0) {
+      return true;
+    }
+    const cls = String(node.className || "").toLowerCase();
+    return cls.indexOf("et-l--header") >= 0 ||
+      cls.indexOf("et-l--footer") >= 0 ||
+      cls.indexOf("main-header") >= 0 ||
+      cls.indexOf("main-footer") >= 0;
+  }
+
+  function describeGbnTarget(node, label) {
+    if (!node) return String(label || "unknown");
+    const tag = String(node.tagName || "").toLowerCase();
+    const cls = String(node.className || "").trim().replace(/\s+/g, ".").slice(0, 80);
+    return `${String(label || tag)}:${tag}${cls ? "." + cls : ""}`;
+  }
+
+  function resolveGbnOfficialIframeWrapper(iframe) {
+    if (!iframe) return null;
+    let iframeRect;
+    try {
+      iframeRect = iframe.getBoundingClientRect();
+    } catch (_) {
+      iframeRect = null;
+    }
+    const iframeArea = iframeRect ? iframeRect.width * iframeRect.height : 0;
+    let best = iframe;
+    let bestScore = 60;
+    let cursor = iframe;
+    for (let depth = 0; cursor && depth <= 2; depth += 1) {
+      if (depth > 0) {
+        cursor = cursor.parentElement;
+      }
+      if (!cursor || isForbiddenGbnWrapper(cursor) || !isVisible(cursor)) {
+        continue;
+      }
+      let rect;
+      try {
+        rect = cursor.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+      if (!rect || rect.width < 120 || rect.height < 68) continue;
+      const area = rect.width * rect.height;
+      const tag = String(cursor.tagName || "").toLowerCase();
+      const cls = String(cursor.className || "").toLowerCase();
+      let score = depth === 0 ? 80 : (depth === 1 ? 120 : 95);
+      if (isGbnResponsiveWrapper(cursor)) score += 180;
+      if (area >= iframeArea * 0.95 && area <= iframeArea * 2.5) score += 140;
+      else if (area <= iframeArea * 6) score += 40;
+      else score -= 160;
+      if (["main", "article", "section", "header", "footer", "nav"].indexOf(tag) >= 0) score -= 180;
+      if (
+        cls.indexOf("et_pb_section") >= 0 ||
+        cls.indexOf("et_pb_row") >= 0 ||
+        cls.indexOf("et_pb_column") >= 0 ||
+        cls.indexOf("container") >= 0 ||
+        cls.indexOf("post") >= 0 ||
+        cls.indexOf("content") >= 0
+      ) {
+        score -= 80;
+      }
+      if (score > bestScore) {
+        best = cursor;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  function applyGbnPlayerFirstWrapperStyles(target, iframe) {
+    if (!target || !target.style || !iframe || !iframe.style) return;
+    target.style.setProperty("position", "fixed", "important");
+    target.style.setProperty("inset", "0", "important");
+    target.style.setProperty("left", "0", "important");
+    target.style.setProperty("top", "0", "important");
+    target.style.setProperty("width", "100vw", "important");
+    target.style.setProperty("height", "100vh", "important");
+    target.style.setProperty("max-width", "100vw", "important");
+    target.style.setProperty("max-height", "100vh", "important");
+    target.style.setProperty("z-index", "2147483647", "important");
+    target.style.setProperty("background", "#000", "important");
+    target.style.setProperty("overflow", "hidden", "important");
+    target.style.setProperty("margin", "0", "important");
+    target.style.setProperty("padding", "0", "important");
+    target.style.setProperty("transform", "none", "important");
+    if (target !== iframe) {
+      iframe.style.setProperty("position", "absolute", "important");
+      iframe.style.setProperty("left", "0", "important");
+      iframe.style.setProperty("top", "0", "important");
+      iframe.style.setProperty("width", "100%", "important");
+      iframe.style.setProperty("height", "100%", "important");
+    } else {
+      iframe.style.setProperty("position", "fixed", "important");
+      iframe.style.setProperty("left", "0", "important");
+      iframe.style.setProperty("top", "0", "important");
+      iframe.style.setProperty("width", "100vw", "important");
+      iframe.style.setProperty("height", "100vh", "important");
+    }
+    iframe.style.setProperty("border", "0", "important");
+    iframe.style.setProperty("background", "#000", "important");
+    iframe.style.setProperty("margin", "0", "important");
+    iframe.style.setProperty("padding", "0", "important");
+    iframe.style.setProperty("transform", "none", "important");
+  }
+
+  function applyGbnPlayerFirstRootStyles() {
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("min-width", "100vw", "important");
+      node.style.setProperty("min-height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+  }
+
+  function hideGbnVisualNode(node) {
+    if (!node || !node.style) return;
+    const tag = String(node.tagName || "").toLowerCase();
+    if (["script", "style", "link", "meta", "noscript"].indexOf(tag) >= 0) return;
+    node.style.setProperty("display", "none", "important");
+    node.style.setProperty("visibility", "hidden", "important");
+    node.style.setProperty("pointer-events", "none", "important");
+  }
+
+  function buildGbnPlayerPath(target) {
+    const path = new Set();
+    let cursor = target;
+    while (cursor && cursor !== document.documentElement) {
+      path.add(cursor);
+      cursor = cursor.parentElement;
+    }
+    if (document.documentElement) path.add(document.documentElement);
+    if (document.body) path.add(document.body);
+    return path;
+  }
+
+  function isOutsideGbnPlayerPath(node, target, path) {
+    if (!node || path.has(node)) return false;
+    if (node === target) return false;
+    if (node.contains(target) || target.contains(node)) return false;
+    return true;
+  }
+
+  function applyGbnWatchPageChromeSuppression(target) {
+    if (!isGbnLiveTelevisionPage()) return;
+    const path = buildGbnPlayerPath(target);
+    path.forEach((node) => {
+      const parent = node && node.parentElement;
+      if (!parent) return;
+      Array.from(parent.children || []).forEach((sibling) => {
+        if (!isOutsideGbnPlayerPath(sibling, target, path)) return;
+        hideGbnVisualNode(sibling);
+      });
+    });
+    const quietSelectors = [
+      "#main-header",
+      "#main-footer",
+      "#top-header",
+      ".et-l--header",
+      ".et-l--footer",
+      "header",
+      "footer",
+      "nav",
+      "[role='banner']",
+      "[role='navigation']",
+      "[class*='header']",
+      "[class*='Header']",
+      "[class*='nav']",
+      "[class*='Nav']",
+      "[class*='menu']",
+      "[class*='Menu']",
+      "[class*='social']",
+      "[class*='Social']"
+    ];
+    quietSelectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!isOutsideGbnPlayerPath(node, target, path)) return;
+          hideGbnVisualNode(node);
+        });
+      } catch (_) {}
+    });
+  }
+
+  function applyGbnDailymotionEmbedPlayerFirstLayout(source) {
+    if (gbnPlayerFirstApplied || isCvc9AdclickPage()) return false;
+    const livePage = isGbnLiveTelevisionPage();
+    if (!livePage) return false;
+    applyGbnPlayerFirstRootStyles();
+    const iframe = findGbnOfficialIframe();
+    const candidateCount = iframe ? 1 : 0;
+    const target = resolveGbnOfficialIframeWrapper(iframe);
+    if (!iframe || !target) {
+      const sourceText = String(source || "unknown");
+      if (sourceText.indexOf("retry-") === 0 && gbnPlayerFirstRetryLogCount < 3) {
+        gbnPlayerFirstRetryLogCount += 1;
+        gbnPlayerFirstLog("content-gbn-player-first-retry", sourceText, candidateCount);
+      } else if (!gbnPlayerFirstNoTargetLogged && (sourceText === "retry-12000" || sourceText === "observer-expire" || sourceText === "load")) {
+        gbnPlayerFirstNoTargetLogged = true;
+        gbnPlayerFirstLog("content-gbn-player-first-no-target", sourceText, candidateCount);
+      }
+      return false;
+    }
+    applyGbnPlayerFirstWrapperStyles(target, iframe);
+    try {
+      target.setAttribute("data-kf-gbn-player-first", "1");
+      iframe.setAttribute("data-kf-gbn-iframe", "1");
+    } catch (_) {}
+    applyGbnWatchPageChromeSuppression(target);
+    gbnPlayerFirstApplied = true;
+    if (!gbnPlayerFirstAppliedLogged) {
+      gbnPlayerFirstAppliedLogged = true;
+      gbnPlayerFirstLog("content-gbn-player-first-applied", source, 1, {
+        target: "gbn-outer-iframe",
+        targetSummary: describeGbnTarget(target, target === iframe ? "iframe-target" : "wrapper-target"),
+        iframeSrc: String((iframe.getAttribute && iframe.getAttribute("src")) || iframe.src || "")
+      });
+    }
+    return true;
+  }
+
+  function scheduleGbnDailymotionPlayerFirstLayout() {
+    if (isCvc9AdclickPage()) return false;
+    if (!isGbnLiveTelevisionPage()) return false;
+    applyGbnDailymotionEmbedPlayerFirstLayout("initial");
+    const retryApply = (source) => applyGbnDailymotionEmbedPlayerFirstLayout(source);
+    GBN_PLAYER_FIRST_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => retryApply(`retry-${delayMs}`), delayMs);
+    });
+    const domReady = () => retryApply("dom-content-loaded");
+    const loaded = () => retryApply("load");
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", domReady, { once: true });
+    } else {
+      domReady();
+    }
+    window.addEventListener("load", loaded, { once: true });
+    if (gbnPlayerFirstObserverAttached) return true;
+    gbnPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        if (gbnPlayerFirstApplied) {
+          try {
+            observer.disconnect();
+          } catch (_) {}
+          return;
+        }
+        retryApply("mutation");
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "src"]
+      });
+      setTimeout(() => {
+        try {
+          observer.disconnect();
+        } catch (_) {}
+        if (!gbnPlayerFirstApplied) {
+          retryApply("observer-expire");
+        }
+      }, 15000);
+    } catch (_) {}
+    return true;
+  }
+
+  function compassLog(phase, source, candidateCount, details) {
+    promptPayload(Object.assign({
+      type: "compass-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown"),
+      scriptVersion: COMPASS_TV_SCRIPT_VERSION
+    }, details && typeof details === "object" ? details : {}));
+  }
+
+  function findCompassTarget() {
+    if (!isCompassTvHomePage()) return null;
+    const selectors = [
+      ".container.jw-player-container",
+      ".jw-player",
+      ".video-player",
+      ".live-feed-wrapper",
+      `#videoPlayer-${COMPASS_TV_PLAYER_ID}`
+    ];
+    for (const selector of selectors) {
+      try {
+        const node = document.querySelector(selector);
+        if (node && isVisible(node)) return node;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function hideCompassChrome(target) {
+    const selectors = [
+      "header.site-header",
+      ".utility-header-menu-wrapper",
+      ".header-menu-wrapper",
+      ".live-tv-btn-svg-cont",
+      ".video-grid-block",
+      "footer.site-footer"
+    ];
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || node === target || node.contains(target) || target.contains(node)) return;
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        });
+      } catch (_) {}
+    });
+  }
+
+  function applyCompassPlayerFirst(source) {
+    if (compassPlayerFirstApplied || !isCompassTvHomePage()) return false;
+    const target = findCompassTarget();
+    if (!target) return false;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    target.style.setProperty("position", "fixed", "important");
+    target.style.setProperty("inset", "0", "important");
+    target.style.setProperty("left", "0", "important");
+    target.style.setProperty("top", "0", "important");
+    target.style.setProperty("right", "0", "important");
+    target.style.setProperty("bottom", "0", "important");
+    target.style.setProperty("width", "100vw", "important");
+    target.style.setProperty("height", "100vh", "important");
+    target.style.setProperty("min-width", "100vw", "important");
+    target.style.setProperty("min-height", "100vh", "important");
+    target.style.setProperty("max-width", "none", "important");
+    target.style.setProperty("max-height", "none", "important");
+    target.style.setProperty("margin", "0", "important");
+    target.style.setProperty("padding", "0", "important");
+    target.style.setProperty("border", "0", "important");
+    target.style.setProperty("border-radius", "0", "important");
+    target.style.setProperty("box-shadow", "none", "important");
+    target.style.setProperty("background", "#000", "important");
+    target.style.setProperty("overflow", "hidden", "important");
+    target.style.setProperty("transform", "none", "important");
+    target.style.setProperty("translate", "none", "important");
+    target.style.setProperty("z-index", "2147483647", "important");
+    [".jw-player", ".video-player", ".live-feed-wrapper", `#videoPlayer-${COMPASS_TV_PLAYER_ID}`, ".jwplayer", ".jw-wrapper", ".jw-aspect", ".jw-media"].forEach((selector) => {
+      try {
+        Array.from(target.querySelectorAll(selector)).forEach((node) => {
+          if (!node || !node.style) return;
+          node.style.setProperty("margin", "0", "important");
+          node.style.setProperty("padding", "0", "important");
+          node.style.setProperty("border", "0", "important");
+          node.style.setProperty("border-radius", "0", "important");
+          node.style.setProperty("box-shadow", "none", "important");
+          node.style.setProperty("overflow", "hidden", "important");
+          node.style.setProperty("background", "#000", "important");
+          node.style.setProperty("width", "100%", "important");
+          node.style.setProperty("height", "100%", "important");
+          node.style.setProperty("max-width", "none", "important");
+          node.style.setProperty("max-height", "none", "important");
+        });
+      } catch (_) {}
+    });
+    let parent = target.parentElement;
+    for (let depth = 0; parent && parent !== document.body && depth < 2; depth += 1, parent = parent.parentElement) {
+      if (!parent.style) continue;
+      parent.style.setProperty("margin", "0", "important");
+      parent.style.setProperty("padding", "0", "important");
+      parent.style.setProperty("border", "0", "important");
+      parent.style.setProperty("border-radius", "0", "important");
+      parent.style.setProperty("background", "#000", "important");
+    }
+    hideCompassChrome(target);
+    compassPlayerFirstApplied = true;
+    if (!compassPlayerFirstAppliedLogged) {
+      compassPlayerFirstAppliedLogged = true;
+      compassLog("content-compass-player-first-applied", source, 1, { playerId: COMPASS_TV_PLAYER_ID });
+    }
+    return true;
+  }
+
+  function compassAudioAlreadyReady(video) {
+    return !!(video && video.muted === false && typeof video.volume === "number" && video.volume > 0);
+  }
+
+  function clearCompassAudioRetryTimers() {
+    compassAudioRetryTimers.forEach((timerId) => {
+      try { clearTimeout(timerId); } catch (_) {}
+    });
+    compassAudioRetryTimers = [];
+  }
+
+  function silentCompassUnmute() {
+    if (compassAudioReady || !isCompassTvHomePage()) return compassAudioReady;
+    const target = findCompassTarget() || document;
+    const video = target.querySelector ? target.querySelector("video") : document.querySelector("video");
+    if (compassAudioAlreadyReady(video)) {
+      compassAudioReady = true;
+      clearCompassAudioRetryTimers();
+      return true;
+    }
+    try {
+      const api = typeof window.jwplayer === "function" ? window.jwplayer(COMPASS_TV_PLAYER_ID) : null;
+      if (api && typeof api.setMute === "function") api.setMute(false);
+      if (api && typeof api.setVolume === "function") api.setVolume(100);
+    } catch (_) {}
+    if (video) {
+      try { video.defaultMuted = false; } catch (_) {}
+      try { video.muted = false; } catch (_) {}
+      try { if (typeof video.volume === "number") video.volume = 1; } catch (_) {}
+    }
+    if (compassAudioAlreadyReady(video)) {
+      compassAudioReady = true;
+      clearCompassAudioRetryTimers();
+      return true;
+    }
+    try {
+      const api = typeof window.jwplayer === "function" ? window.jwplayer(COMPASS_TV_PLAYER_ID) : null;
+      if (api && typeof api.getMute === "function" && typeof api.getVolume === "function" && api.getMute() === false && Number(api.getVolume()) > 0) {
+        compassAudioReady = true;
+        clearCompassAudioRetryTimers();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function scheduleCompassSilentUnmuteBurst(source) {
+    if (compassAudioReady || !isCompassTvHomePage()) return;
+    clearCompassAudioRetryTimers();
+    [0, 250, 750, 1500, 3000, 6000, 10000, 15000].forEach((delayMs) => {
+      const timerId = setTimeout(() => {
+        compassAudioRetryTimers = compassAudioRetryTimers.filter((item) => item !== timerId);
+        if (compassAudioReady || !isCompassTvHomePage()) return;
+        silentCompassUnmute(source);
+      }, delayMs);
+      compassAudioRetryTimers.push(timerId);
+    });
+  }
+
+  function attachCompassAudioHooksOnce() {
+    if (compassAudioHooksAttached || !isCompassTvHomePage()) return;
+    compassAudioHooksAttached = true;
+    let videoHooked = false;
+    let jwHooked = false;
+    const attachVideoHooks = () => {
+      if (videoHooked || !isCompassTvHomePage()) return;
+      const target = findCompassTarget() || document;
+      const video = target.querySelector ? target.querySelector("video") : document.querySelector("video");
+      if (!video) return;
+      videoHooked = true;
+      ["loadedmetadata", "canplay", "play", "playing", "volumechange"].forEach((eventName) => {
+        try { video.addEventListener(eventName, () => scheduleCompassSilentUnmuteBurst(eventName), true); } catch (_) {}
+      });
+      scheduleCompassSilentUnmuteBurst("video-hooks");
+    };
+    const attachJwHooks = () => {
+      if (jwHooked || !isCompassTvHomePage()) return;
+      try {
+        if (typeof window.jwplayer !== "function") return;
+        const api = window.jwplayer(COMPASS_TV_PLAYER_ID);
+        if (!api || typeof api.on !== "function") return;
+        jwHooked = true;
+        ["ready", "play", "firstFrame", "levelsChanged"].forEach((eventName) => {
+          try { api.on(eventName, () => scheduleCompassSilentUnmuteBurst(`jw-${eventName}`)); } catch (_) {}
+        });
+        scheduleCompassSilentUnmuteBurst("jw-hooks");
+      } catch (_) {}
+    };
+    attachVideoHooks();
+    attachJwHooks();
+    [500, 1500, 3000, 6000, 10000].forEach((delayMs) => {
+      setTimeout(() => {
+        if (compassAudioReady || !isCompassTvHomePage()) return;
+        attachVideoHooks();
+        attachJwHooks();
+      }, delayMs);
+    });
+  }
+
+  function attachCompassTrustedAudioOnce() {
+    if (compassTrustedAudioListenerAttached || !isCompassTvHomePage()) return;
+    compassTrustedAudioListenerAttached = true;
+    const listener = (event) => {
+      const target = findCompassTarget();
+      if (!target || !event || !event.target || !target.contains(event.target)) return;
+      scheduleCompassSilentUnmuteBurst("trusted-interaction");
+    };
+    document.addEventListener("click", listener, true);
+    document.addEventListener("pointerup", listener, true);
+  }
+
+  function findCompassPlayControl() {
+    if (!isCompassTvHomePage()) return null;
+    const selectors = [
+      ".jw-player #play-btn",
+      "#play-btn",
+      ".jwplayer .jw-icon-playback",
+      "button[aria-label*='play' i]",
+      "[role='button'][aria-label*='play' i]"
+    ];
+    const rejected = ["share", "search", "menu", "close", "mute", "volume", "settings", "next", "previous"];
+    for (const selector of selectors) {
+      try {
+        for (const node of Array.from(document.querySelectorAll(selector))) {
+          if (!isVisible(node)) continue;
+          const blob = [
+            node.getAttribute && node.getAttribute("aria-label"),
+            node.getAttribute && node.getAttribute("title"),
+            node.textContent,
+            node.className
+          ].join(" ").toLowerCase();
+          if (rejected.some((word) => blob.indexOf(word) >= 0)) continue;
+          if (blob.indexOf("play") < 0 && blob.indexOf("jw-icon-playback") < 0) continue;
+          return node;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function emitCompassPlayControl(source) {
+    if (compassPlayControlFoundLogged || !isCompassTvHomePage()) return false;
+    const control = findCompassPlayControl();
+    if (!control) return false;
+    const target = findCompassTarget();
+    let rect = null;
+    let targetRect = null;
+    try { rect = control.getBoundingClientRect(); } catch (_) {}
+    try { targetRect = target && target.getBoundingClientRect ? target.getBoundingClientRect() : null; } catch (_) {}
+    compassPlayControlFoundLogged = true;
+    scheduleCompassSilentUnmuteBurst("play-control-found");
+    compassLog("content-compass-play-control-found", source, 1, {
+      playerId: COMPASS_TV_PLAYER_ID,
+      x: rect ? Math.round(rect.left) : -1,
+      y: rect ? Math.round(rect.top) : -1,
+      width: rect ? Math.round(rect.width) : -1,
+      height: rect ? Math.round(rect.height) : -1,
+      centerX: rect ? Math.round(rect.left + rect.width / 2) : -1,
+      centerY: rect ? Math.round(rect.top + rect.height / 2) : -1,
+      playerTargetLeft: targetRect ? Math.round(targetRect.left) : -1,
+      playerTargetTop: targetRect ? Math.round(targetRect.top) : -1,
+      playerTargetWidth: targetRect ? Math.round(targetRect.width) : -1,
+      playerTargetHeight: targetRect ? Math.round(targetRect.height) : -1,
+      playerTargetCenterX: targetRect ? Math.round(targetRect.left + targetRect.width / 2) : -1,
+      playerTargetCenterY: targetRect ? Math.round(targetRect.top + targetRect.height / 2) : -1
+    });
+    return true;
+  }
+
+  function scheduleCompassMinimalHelper() {
+    if (!isCompassTvHomePage()) return false;
+    attachCompassTrustedAudioOnce();
+    attachCompassAudioHooksOnce();
+    const apply = (source) => {
+      applyCompassPlayerFirst(source);
+      emitCompassPlayControl(source);
+    };
+    apply("initial");
+    const delays = [250, 750, 1500, 3000];
+    delays.forEach((delayMs) => setTimeout(() => apply(`retry-${delayMs}`), delayMs));
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => apply("dom-content-loaded"), { once: true });
+    } else {
+      apply("dom-content-loaded");
+    }
+    window.addEventListener("load", () => apply("load"), { once: true });
+    if (compassPlayerFirstObserverAttached) return true;
+    compassPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        apply("mutation");
+        if (compassPlayerFirstApplied && compassPlayControlFoundLogged) {
+          try { observer.disconnect(); } catch (_) {}
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (_) {}
+      }, 5000);
+    } catch (_) {}
+    return true;
+  }
+
+  function applyCvmVimeoPlayerFirstLayout() {
+    if (cvmVimeoPlayerFirstApplied) return false;
+    const shouldApply = isCvmLiveTopPage() || isCvmVimeoEmbedFrame();
+    if (!shouldApply) return false;
+    const target = isCvmLiveTopPage()
+      ? Array.from(document.querySelectorAll("iframe")).find((node) => {
+          const src = String(node.src || node.getAttribute("src") || "").toLowerCase();
+          return src.indexOf("vimeo.com/event/") >= 0 && src.indexOf("/embed") >= 0;
+        })
+      : (document.querySelector("iframe") || document.body);
+    if (!target) return false;
+    try {
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("width", "100vw", "important");
+        document.documentElement.style.setProperty("height", "100vh", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        document.documentElement.style.setProperty("background", "#000", "important");
+      }
+      if (document.body && document.body.style) {
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("width", "100vw", "important");
+        document.body.style.setProperty("height", "100vh", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+        document.body.style.setProperty("background", "#000", "important");
+      }
+      if (target && target.style) {
+        target.style.setProperty("position", "fixed", "important");
+        target.style.setProperty("left", "0", "important");
+        target.style.setProperty("top", "0", "important");
+        target.style.setProperty("width", "100vw", "important");
+        target.style.setProperty("height", "100vh", "important");
+        target.style.setProperty("max-width", "100vw", "important");
+        target.style.setProperty("max-height", "100vh", "important");
+        target.style.setProperty("margin", "0", "important");
+        target.style.setProperty("padding", "0", "important");
+        target.style.setProperty("border", "0", "important");
+        target.style.setProperty("z-index", "2147483647", "important");
+        target.style.setProperty("background", "#000", "important");
+      }
+      cvmVimeoPlayerFirstApplied = true;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function maybePreferCvmVimeo1080p() {
+    if (cvmVimeoQualityPreferenceResolved || !isCvmVimeoEmbedFrame()) return false;
+    try {
+      const PlayerCtor = window.Vimeo && window.Vimeo.Player;
+      if (typeof PlayerCtor !== "function") return false;
+      const root = Array.from(document.querySelectorAll("iframe, div[data-vimeo-id], div[data-vimeo-url]")).find((node) => {
+        const src = String(node.src || node.getAttribute("data-vimeo-url") || "").toLowerCase();
+        return src.indexOf("vimeo.com") >= 0 || node.hasAttribute("data-vimeo-id") || node.hasAttribute("data-vimeo-url");
+      });
+      if (!root) return false;
+      const player = new PlayerCtor(root);
+      Promise.resolve(player.getQualities())
+        .then((qualities) => {
+          const preferred = Array.isArray(qualities)
+            ? qualities.find((quality) => String((quality && (quality.id || quality.label)) || "").toLowerCase() === "1080p")
+            : null;
+          if (!preferred) {
+            cvmVimeoQualityPreferenceResolved = true;
+            return null;
+          }
+          return Promise.resolve(player.getQuality())
+            .then((current) => {
+              if (String(current || "").toLowerCase() === "1080p") {
+                cvmVimeoQualityPreferenceResolved = true;
+                return current;
+              }
+              return player.setQuality(preferred.id || preferred.label || "1080p");
+            })
+            .then(() => {
+              cvmVimeoQualityPreferenceResolved = true;
+            })
+            .catch(() => {
+              cvmVimeoQualityPreferenceResolved = true;
+            });
+        })
+        .catch(() => {});
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function matchesExactOrSubdomain(host, expectedHost, allowSubdomains) {
+    return host === expectedHost || (allowSubdomains && host.endsWith("." + expectedHost));
+  }
+
+  function hostnameFromUrl(value) {
+    try {
+      return new URL(String(value || "")).hostname.toLowerCase();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function matchesPlayerHelperPolicy(policy) {
+    if (!policy || !policy.match) return false;
+    const match = policy.match;
+    const frameHost = String(window.location.hostname || "").toLowerCase();
+    const framePath = String(window.location.pathname || "").toLowerCase();
+    const referrerHost = hostnameFromUrl(document.referrer);
+    if (!matchesExactOrSubdomain(frameHost, match.frameHost, match.allowFrameSubdomains)) return false;
+    if (!framePath.startsWith(match.pathPrefix) || !framePath.endsWith(match.pathSuffix)) return false;
+    return Array.isArray(match.referrerHosts) && match.referrerHosts.indexOf(referrerHost) >= 0;
+  }
+
+  function matchedPlayerHelperPolicy() {
+    return PLAYER_HELPER_REGISTRY.find((policy) => matchesPlayerHelperPolicy(policy)) || null;
+  }
+
+  function installTransportAutohideCapability(policy) {
+    const capability = policy && policy.capabilities && policy.capabilities.transportAutohide;
+    if (!capability || !capability.enabled || transportAutohideEngine) return false;
+    const root = document.documentElement;
+    if (!root) return false;
+    try {
+      if (!document.getElementById(capability.styleId)) {
+        const style = document.createElement("style");
+        style.id = capability.styleId;
+        style.textContent = capability.selectors
+          .map((selector) => "html." + capability.idleClass + " " + selector)
+          .join(",") + "{opacity:0!important;visibility:hidden!important;pointer-events:none!important;transition:opacity 160ms ease!important;}";
+        (document.head || document.documentElement).appendChild(style);
+      }
+    } catch (_) {}
+
+    const engine = {
+      timer: null,
+      visibility: "visible"
+    };
+    transportAutohideEngine = engine;
+    const emit = (phase, reason, delayMs) => {
+      const payload = {
+        type: "player-helper-capability",
+        policyId: policy.id,
+        capability: "transport-autohide",
+        phase,
+        reason: String(reason || "idle")
+      };
+      if (typeof delayMs === "number") payload.delayMs = delayMs;
+      promptPayload(payload);
+    };
+    const setIdle = (reason) => {
+      engine.timer = null;
+      if (!matchesPlayerHelperPolicy(policy)) return;
+      if (root.classList) root.classList.add(capability.idleClass);
+      if (engine.visibility !== "hidden") {
+        engine.visibility = "hidden";
+        emit("hidden", reason);
+      }
+    };
+    const scheduleHide = (reason, logSchedule) => {
+      if (engine.timer) {
+        clearTimeout(engine.timer);
+        engine.timer = null;
+      }
+      engine.timer = setTimeout(() => setIdle(reason), capability.idleMs);
+      if (logSchedule) emit("scheduled", reason, capability.idleMs);
+    };
+    const wake = (event) => {
+      if (!matchesPlayerHelperPolicy(policy)) return;
+      const wasHidden = engine.visibility === "hidden";
+      if (root.classList) root.classList.remove(capability.idleClass);
+      engine.visibility = "visible";
+      if (wasHidden) emit("wake", event && event.type ? String(event.type) : "interaction");
+      scheduleHide(wasHidden ? "wake-idle" : "interaction-idle", false);
+    };
+    TRANSPORT_AUTOHIDE_INTERACTION_EVENTS.forEach((eventName) => {
+      try {
+        window.addEventListener(eventName, wake, true);
+      } catch (_) {}
+    });
+    try {
+      window.addEventListener("pagehide", () => {
+        if (engine.timer) {
+          clearTimeout(engine.timer);
+          engine.timer = null;
+        }
+      }, { once: true });
+    } catch (_) {}
+    scheduleHide("install", true);
+    return true;
+  }
+
+  function installMatchedPlayerHelperCapabilities() {
+    const policy = matchedPlayerHelperPolicy();
+    if (!policy) return false;
+    return installTransportAutohideCapability(policy);
+  }
+
+  function islandTvLog(phase, source, candidateCount, details) {
+    promptPayload(Object.assign({
+      type: "islandtv-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown"),
+      scriptVersion: ISLANDTV_VIMEO_SCRIPT_VERSION
+    }, details && typeof details === "object" ? details : {}));
+  }
+
+  function isIslandTvDesktopHiddenAncestor(node) {
+    let current = node;
+    while (current && current !== document.body) {
+      if (current.classList && current.classList.contains("grve-desktop-row-hide")) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
+
+  function findIslandTvSelectedIframe() {
+    if (!isIslandTvHomePage()) return null;
+    const eventId = islandTvSelectedEventId();
+    const selectors = [
+      `iframe[src*="/event/${eventId}/"]`,
+      `iframe[src*="vimeo.com/event/${eventId}/"]`
+    ];
+    const matches = [];
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (node && matches.indexOf(node) < 0) {
+            matches.push(node);
+          }
+        });
+      } catch (_) {}
+    });
+    const visible = matches.find((node) => {
+      if (!isVisible(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 8 && rect.height > 8;
+    });
+    const preferredHidden = matches.find((node) => !isIslandTvDesktopHiddenAncestor(node));
+    return {
+      eventId,
+      matches,
+      iframe: visible || preferredHidden || matches[0] || null
+    };
+  }
+
+  function islandTvSelectedEmbedSrc(selected) {
+    const eventId = selected && selected.eventId ? selected.eventId : islandTvSelectedEventId();
+    const iframe = selected && selected.iframe ? selected.iframe : null;
+    const rawSrc = iframe ? String(iframe.src || iframe.getAttribute("src") || "").trim() : "";
+    return rawSrc || islandTvCanonicalEmbedSrc(eventId);
+  }
+
+  function revealIslandTvSelectedFramePath(iframe) {
+    if (!iframe) return;
+    let current = iframe;
+    while (current && current !== document.body) {
+      if (current.style) {
+        const classList = current.classList || { contains: () => false };
+        const looksLikePane =
+          classList.contains("lvca-tab-pane") ||
+          classList.contains("lvca-tab") ||
+          classList.contains("lvca-panel") ||
+          classList.contains("lvca-content") ||
+          classList.contains("grve-tab-content") ||
+          classList.contains("tab-pane") ||
+          classList.contains("tabs-panel");
+        if (looksLikePane || current === iframe.parentElement) {
+          current.style.setProperty("display", "block", "important");
+          current.style.setProperty("visibility", "visible", "important");
+          current.style.setProperty("opacity", "1", "important");
+          current.style.setProperty("pointer-events", "auto", "important");
+        }
+      }
+      const parent = current.parentElement;
+      if (parent && parent.classList && parent.classList.contains("lvca-tab-panes")) {
+        Array.from(parent.children).forEach((child) => {
+          if (!(child instanceof Element)) return;
+          if (child.contains(iframe)) {
+            child.style.setProperty("display", "block", "important");
+            child.style.setProperty("visibility", "visible", "important");
+            child.style.setProperty("opacity", "1", "important");
+            child.style.setProperty("pointer-events", "auto", "important");
+          } else if (child.classList && child.classList.contains("lvca-tab-pane")) {
+            child.style.setProperty("display", "none", "important");
+            child.style.setProperty("visibility", "hidden", "important");
+            child.style.setProperty("opacity", "0", "important");
+            child.style.setProperty("pointer-events", "none", "important");
+          }
+        });
+      }
+      current = parent;
+    }
+  }
+
+  function isIslandTvChromeNode(node, target) {
+    return !!(node && target && (node === target || node.contains(target) || target.contains(node)));
+  }
+
+  function hideIslandTvChrome(target) {
+    const selectors = [
+      "#grve-header",
+      "#grve-anchor-menu",
+      "footer",
+      "aside",
+      ".sidebar",
+      ".widget",
+      ".widgets",
+      ".popup",
+      ".modal",
+      ".overlay",
+      ".et_pb_column",
+      ".et_pb_sidebar",
+      ".grve-widget"
+    ];
+    selectors.forEach((selector) => {
+      try {
+        Array.from(document.querySelectorAll(selector)).forEach((node) => {
+          if (!node || isIslandTvChromeNode(node, target)) return;
+          if (!isVisible(node)) return;
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        });
+      } catch (_) {}
+    });
+    const ancestors = [];
+    let current = target;
+    while (current && current !== document.body && current.parentElement) {
+      ancestors.push(current);
+      current = current.parentElement;
+    }
+    ancestors.forEach((ancestor) => {
+      const parent = ancestor.parentElement;
+      if (!parent) return;
+      Array.from(parent.children).forEach((child) => {
+        if (ancestors.indexOf(child) >= 0 || child === target || child.contains(target)) return;
+        if (child.tagName && String(child.tagName).toLowerCase() === "script") return;
+        if (!isVisible(child)) return;
+        child.style.setProperty("display", "none", "important");
+        child.style.setProperty("visibility", "hidden", "important");
+        child.style.setProperty("pointer-events", "none", "important");
+      });
+    });
+  }
+
+  function isIslandTvAdUrl(value) {
+    const text = String(value || "").toLowerCase();
+    return text.indexOf("googleads") >= 0 ||
+      text.indexOf("doubleclick") >= 0 ||
+      text.indexOf("googletagmanager") >= 0 ||
+      text.indexOf("googlesyndication") >= 0 ||
+      text.indexOf("google-analytics") >= 0 ||
+      text.indexOf("analytics.google") >= 0 ||
+      text.indexOf("pagead") >= 0;
+  }
+
+  function disableIslandTvExtraFrames(selectedIframe) {
+    let disabledFrameCount = 0;
+    const frames = Array.from(document.querySelectorAll("iframe"));
+    frames.forEach((node) => {
+      if (!node || node === selectedIframe) return;
+      const src = String(node.src || node.getAttribute("src") || "").toLowerCase();
+      if (src.indexOf("/event/5561018/") < 0 && src.indexOf("/event/4894719/") < 0) return;
+      try { node.setAttribute("src", "about:blank"); } catch (_) {}
+      try { node.removeAttribute("srcdoc"); } catch (_) {}
+      try { node.remove(); } catch (_) {
+        try {
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("visibility", "hidden", "important");
+          node.style.setProperty("pointer-events", "none", "important");
+        } catch (_) {}
+      }
+      disabledFrameCount += 1;
+    });
+    return disabledFrameCount;
+  }
+
+  function suppressIslandTvOutsideShell(shell) {
+    if (!shell || !document.body) return;
+    Array.from(document.body.children).forEach((child) => {
+      if (!(child instanceof Element) || child === shell) return;
+      const tagName = String(child.tagName || "").toLowerCase();
+      if (tagName === "script") {
+        if (isIslandTvAdUrl(child.getAttribute("src") || "")) {
+          try { child.remove(); } catch (_) {}
+        }
+        return;
+      }
+      const childSrc = child.getAttribute && (child.getAttribute("src") || child.getAttribute("data-src") || "");
+      const shouldRemove = tagName === "iframe" || isIslandTvAdUrl(childSrc) || isIslandTvAdUrl(child.className) || isIslandTvAdUrl(child.id);
+      if (shouldRemove) {
+        try { child.remove(); } catch (_) {}
+        return;
+      }
+      try {
+        child.style.setProperty("display", "none", "important");
+        child.style.setProperty("visibility", "hidden", "important");
+        child.style.setProperty("pointer-events", "none", "important");
+      } catch (_) {}
+    });
+  }
+
+  function guardIslandTvSinglePlayerShell() {
+    if (islandTvShellGuardAttached || !isIslandTvHomePage()) return;
+    const shell = document.getElementById(ISLANDTV_PLAYER_SHELL_ID);
+    if (!shell || !document.body) return;
+    islandTvShellGuardAttached = true;
+    suppressIslandTvOutsideShell(shell);
+    try {
+      const observer = new MutationObserver(() => {
+        suppressIslandTvOutsideShell(shell);
+      });
+      observer.observe(document.body, { childList: true, subtree: false });
+    } catch (_) {}
+  }
+
+  function ensureIslandTvSinglePlayerShell(selected) {
+    if (!selected || !selected.iframe || !document.body) return null;
+    const eventId = selected.eventId || islandTvSelectedEventId();
+    const embedSrc = islandTvSelectedEmbedSrc(selected);
+    const shell = document.getElementById(ISLANDTV_PLAYER_SHELL_ID) || document.createElement("div");
+    shell.id = ISLANDTV_PLAYER_SHELL_ID;
+    shell.style.setProperty("position", "fixed", "important");
+    shell.style.setProperty("inset", "0", "important");
+    shell.style.setProperty("left", "0", "important");
+    shell.style.setProperty("top", "0", "important");
+    shell.style.setProperty("right", "0", "important");
+    shell.style.setProperty("bottom", "0", "important");
+    shell.style.setProperty("width", "100vw", "important");
+    shell.style.setProperty("height", "100vh", "important");
+    shell.style.setProperty("margin", "0", "important");
+    shell.style.setProperty("padding", "0", "important");
+    shell.style.setProperty("border", "0", "important");
+    shell.style.setProperty("border-radius", "0", "important");
+    shell.style.setProperty("box-shadow", "none", "important");
+    shell.style.setProperty("background", "#000", "important");
+    shell.style.setProperty("overflow", "hidden", "important");
+    shell.style.setProperty("z-index", "2147483647", "important");
+    if (!shell.parentElement) {
+      document.body.appendChild(shell);
+    }
+    let shellIframe = shell.querySelector("iframe");
+    const expectedSrc = islandTvCanonicalEmbedSrc(eventId);
+    if (!shellIframe) {
+      shellIframe = document.createElement("iframe");
+      shell.appendChild(shellIframe);
+    }
+    const activeSrc = String(shellIframe.getAttribute("src") || shellIframe.src || "").trim();
+    if (activeSrc !== embedSrc && activeSrc !== expectedSrc) {
+      shellIframe.setAttribute("src", embedSrc || expectedSrc);
+    }
+    shellIframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture; encrypted-media");
+    shellIframe.setAttribute("allowfullscreen", "");
+    shellIframe.setAttribute("frameborder", "0");
+    shellIframe.style.setProperty("position", "absolute", "important");
+    shellIframe.style.setProperty("inset", "0", "important");
+    shellIframe.style.setProperty("left", "0", "important");
+    shellIframe.style.setProperty("top", "0", "important");
+    shellIframe.style.setProperty("right", "0", "important");
+    shellIframe.style.setProperty("bottom", "0", "important");
+    shellIframe.style.setProperty("width", "100vw", "important");
+    shellIframe.style.setProperty("height", "100vh", "important");
+    shellIframe.style.setProperty("margin", "0", "important");
+    shellIframe.style.setProperty("padding", "0", "important");
+    shellIframe.style.setProperty("border", "0", "important");
+    shellIframe.style.setProperty("border-radius", "0", "important");
+    shellIframe.style.setProperty("box-shadow", "none", "important");
+    shellIframe.style.setProperty("background", "#000", "important");
+    const disabledFrameCount = disableIslandTvExtraFrames(shellIframe);
+    suppressIslandTvOutsideShell(shell);
+    guardIslandTvSinglePlayerShell();
+    return {
+      shell,
+      iframe: shellIframe,
+      eventId,
+      iframeSrc: String(shellIframe.getAttribute("src") || shellIframe.src || "").trim(),
+      disabledFrameCount
+    };
+  }
+
+  function applyIslandTvPlayerFirstLayout(source) {
+    if (islandTvPlayerFirstApplied || !isIslandTvHomePage()) return false;
+    const selected = findIslandTvSelectedIframe();
+    if (!selected || !selected.iframe) return false;
+    revealIslandTvSelectedFramePath(selected.iframe);
+    const shellState = ensureIslandTvSinglePlayerShell(selected);
+    if (!shellState || !shellState.iframe || !shellState.shell) return false;
+    const iframe = shellState.iframe;
+    const target = shellState.shell;
+    const iframeRect = iframe.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect ? target.getBoundingClientRect() : null;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    hideIslandTvChrome(target);
+    if (!islandTvSelectedFrameFoundLogged) {
+      islandTvSelectedFrameFoundLogged = true;
+      islandTvLog("content-islandtv-selected-frame-found", source, selected.matches.length || 1, {
+        eventId: shellState.eventId,
+        iframeSrc: shellState.iframeSrc,
+        targetKind: "shell",
+        x: Math.round(iframeRect.left),
+        y: Math.round(iframeRect.top),
+        width: Math.round(iframeRect.width),
+        height: Math.round(iframeRect.height),
+        centerX: Math.round(iframeRect.left + iframeRect.width / 2),
+        centerY: Math.round(iframeRect.top + iframeRect.height / 2),
+        targetLeft: targetRect ? Math.round(targetRect.left) : -1,
+        targetTop: targetRect ? Math.round(targetRect.top) : -1,
+        targetWidth: targetRect ? Math.round(targetRect.width) : -1,
+        targetHeight: targetRect ? Math.round(targetRect.height) : -1,
+        targetCenterX: targetRect ? Math.round(targetRect.left + targetRect.width / 2) : -1,
+        targetCenterY: targetRect ? Math.round(targetRect.top + targetRect.height / 2) : -1
+      });
+    }
+    islandTvPlayerFirstApplied = true;
+    if (!islandTvPlayerFirstAppliedLogged) {
+      islandTvPlayerFirstAppliedLogged = true;
+      islandTvLog("content-islandtv-player-first-applied", source, 1, {
+        eventId: shellState.eventId,
+        targetKind: "shell",
+        iframeSrc: shellState.iframeSrc,
+        disabledFrameCount: shellState.disabledFrameCount,
+        shellApplied: true
+      });
+    }
+    return true;
+  }
+
+  function scheduleIslandTvMinimalHelper() {
+    if (!isIslandTvHomePage()) return false;
+    const apply = (source) => {
+      applyIslandTvPlayerFirstLayout(source);
+    };
+    apply("initial");
+    [250, 750, 1500, 3000, 5000, 8000].forEach((delayMs) => {
+      setTimeout(() => apply(`retry-${delayMs}`), delayMs);
+    });
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => apply("dom-content-loaded"), { once: true });
+    } else {
+      apply("dom-content-loaded");
+    }
+    window.addEventListener("load", () => apply("load"), { once: true });
+    if (islandTvPlayerFirstObserverAttached) return true;
+    islandTvPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        apply("mutation");
+        if (islandTvPlayerFirstApplied) {
+          try { observer.disconnect(); } catch (_) {}
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (_) {}
+      }, 12000);
+    } catch (_) {}
+    return true;
+  }
+
+  function isDbsTvLivePage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    if (host !== "dbstvstlucia.com" && host !== "www.dbstvstlucia.com") return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path === "/live-stream" || path === "/live-stream/";
+  }
+
+  function isExactDbsTvOfficialHlsUrl(rawUrl) {
+    try {
+      const url = new URL(String(rawUrl || "").trim(), window.location.href);
+      const host = (url.hostname || "").toLowerCase();
+      const path = (url.pathname || "").toLowerCase();
+      return host === DBSTV_OFFICIAL_HLS_HOST && path.indexOf(DBSTV_OFFICIAL_HLS_PATH) >= 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dbsTvLog(phase, source, candidateCount, details) {
+    promptPayload(Object.assign({
+      type: "dbstv-live-state",
+      phase,
+      pageUrl: window.location.href,
+      candidateCount: Number(candidateCount || 0),
+      source: String(source || "unknown"),
+      scriptVersion: DBSTV_SCRIPT_VERSION
+    }, details && typeof details === "object" ? details : {}));
+  }
+
+  function findDbsTvOfficialSource(scope) {
+    const root = scope || document;
+    let nodes = [];
+    try {
+      nodes = Array.from(root.querySelectorAll('source[src*="stream.dbstvstlucia.com/hls/dbstv_main.m3u8" i],source[type="application/x-mpegURL" i]'));
+    } catch (_) {
+      nodes = [];
+    }
+    return nodes.find((node) => {
+      try {
+        const sourceUrl = String(node.getAttribute("src") || node.src || "").trim();
+        return isExactDbsTvOfficialHlsUrl(sourceUrl);
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function findDbsTvPlayerRoot() {
+    if (!isDbsTvLivePage()) return null;
+    const exactSource = findDbsTvOfficialSource(document);
+    if (exactSource) {
+      return exactSource.closest("video-js,.video-js,[data-vjs-player]") || exactSource.parentElement || null;
+    }
+    const candidates = Array.from(document.querySelectorAll("video-js,.video-js,[data-vjs-player]"));
+    return candidates.find((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        return !!findDbsTvOfficialSource(node);
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function isDbsTvAdNodeText(value) {
+    const text = String(value || "").toLowerCase();
+    return text.indexOf("googleads") >= 0 ||
+      text.indexOf("doubleclick") >= 0 ||
+      text.indexOf("googletagmanager") >= 0 ||
+      text.indexOf("googlesyndication") >= 0 ||
+      text.indexOf("google-analytics") >= 0 ||
+      text.indexOf("analytics.google") >= 0 ||
+      text.indexOf("pagead") >= 0 ||
+      text.indexOf("onesignal") >= 0 ||
+      text.indexOf("boxzilla") >= 0 ||
+      text.indexOf("codesigner-modal") >= 0;
+  }
+
+  function suppressDbsTvOutsideShell(shell) {
+    if (!shell || !document.body) return;
+    Array.from(document.body.children).forEach((child) => {
+      if (!(child instanceof Element) || child === shell) return;
+      const tagName = String(child.tagName || "").toLowerCase();
+      if (tagName === "script") {
+        if (isDbsTvAdNodeText(child.getAttribute("src") || "")) {
+          try { child.remove(); } catch (_) {}
+        }
+        return;
+      }
+      const src = child.getAttribute && (child.getAttribute("src") || child.getAttribute("data-src") || "");
+      const shouldRemove =
+        tagName === "iframe" ||
+        isDbsTvAdNodeText(src) ||
+        isDbsTvAdNodeText(child.className) ||
+        isDbsTvAdNodeText(child.id);
+      if (shouldRemove) {
+        try { child.remove(); } catch (_) {}
+        return;
+      }
+      try {
+        child.style.setProperty("display", "none", "important");
+        child.style.setProperty("visibility", "hidden", "important");
+        child.style.setProperty("pointer-events", "none", "important");
+      } catch (_) {}
+    });
+  }
+
+  function guardDbsTvPlayerShell() {
+    if (dbsTvShellGuardAttached || !isDbsTvLivePage()) return;
+    const shell = document.getElementById(DBSTV_PLAYER_SHELL_ID);
+    if (!shell || !document.body) return;
+    dbsTvShellGuardAttached = true;
+    suppressDbsTvOutsideShell(shell);
+    try {
+      const observer = new MutationObserver(() => {
+        suppressDbsTvOutsideShell(shell);
+      });
+      observer.observe(document.body, { childList: true, subtree: false });
+    } catch (_) {}
+  }
+
+  function ensureDbsTvPlayerShell(player) {
+    if (!player || !document.body) return null;
+    const sourceNode = findDbsTvOfficialSource(player) || findDbsTvOfficialSource(document);
+    const sourceUrl = String(sourceNode && (sourceNode.getAttribute("src") || sourceNode.src) || "").trim();
+    if (!sourceUrl || !isExactDbsTvOfficialHlsUrl(sourceUrl)) return null;
+    const shell = document.getElementById(DBSTV_PLAYER_SHELL_ID) || document.createElement("div");
+    shell.id = DBSTV_PLAYER_SHELL_ID;
+    shell.style.setProperty("position", "fixed", "important");
+    shell.style.setProperty("inset", "0", "important");
+    shell.style.setProperty("left", "0", "important");
+    shell.style.setProperty("top", "0", "important");
+    shell.style.setProperty("right", "0", "important");
+    shell.style.setProperty("bottom", "0", "important");
+    shell.style.setProperty("width", "100vw", "important");
+    shell.style.setProperty("height", "100vh", "important");
+    shell.style.setProperty("background", "#000", "important");
+    shell.style.setProperty("z-index", "2147483647", "important");
+    shell.style.setProperty("overflow", "hidden", "important");
+    shell.style.setProperty("margin", "0", "important");
+    shell.style.setProperty("padding", "0", "important");
+    shell.style.setProperty("border", "0", "important");
+    shell.style.setProperty("border-radius", "0", "important");
+    shell.style.setProperty("box-shadow", "none", "important");
+    if (!shell.parentElement) {
+      document.body.appendChild(shell);
+    }
+    if (player.parentElement !== shell) {
+      shell.appendChild(player);
+    }
+    [player].concat(Array.from(player.querySelectorAll("video-js,.video-js,video"))).forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("max-width", "none", "important");
+      node.style.setProperty("max-height", "none", "important");
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("border", "0", "important");
+      node.style.setProperty("border-radius", "0", "important");
+      node.style.setProperty("box-shadow", "none", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    suppressDbsTvOutsideShell(shell);
+    guardDbsTvPlayerShell();
+    return { shell, player, sourceUrl };
+  }
+
+  function maybePlayDbsTvVideo(player) {
+    if (dbsTvBrowserPlayAttempted || !player) return;
+    const video = player.querySelector("video");
+    if (!video) return;
+    dbsTvBrowserPlayAttempted = true;
+    try {
+      const result = video.play();
+      if (result && typeof result.catch === "function") {
+        result.catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  function applyDbsTvPlayerFirstLayout(source) {
+    if (dbsTvPlayerFirstApplied || !isDbsTvLivePage()) return false;
+    const player = findDbsTvPlayerRoot();
+    if (!player) return false;
+    const shellState = ensureDbsTvPlayerShell(player);
+    if (!shellState || !shellState.shell || !shellState.player) return false;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node || !node.style) return;
+      node.style.setProperty("margin", "0", "important");
+      node.style.setProperty("padding", "0", "important");
+      node.style.setProperty("width", "100vw", "important");
+      node.style.setProperty("height", "100vh", "important");
+      node.style.setProperty("overflow", "hidden", "important");
+      node.style.setProperty("background", "#000", "important");
+    });
+    maybePlayDbsTvVideo(shellState.player);
+    const shellRect = shellState.shell.getBoundingClientRect();
+    const video = shellState.player.querySelector("video");
+    const videoRect = video && video.getBoundingClientRect ? video.getBoundingClientRect() : shellRect;
+    if (!dbsTvSourceFoundLogged) {
+      dbsTvSourceFoundLogged = true;
+      dbsTvLog("content-dbstv-source-found", source, 1, {
+        sourceUrl: shellState.sourceUrl,
+        targetKind: "shell",
+        x: Math.round(videoRect.left),
+        y: Math.round(videoRect.top),
+        width: Math.round(videoRect.width),
+        height: Math.round(videoRect.height),
+        centerX: Math.round(videoRect.left + videoRect.width / 2),
+        centerY: Math.round(videoRect.top + videoRect.height / 2),
+        targetCenterX: Math.round(shellRect.left + shellRect.width / 2),
+        targetCenterY: Math.round(shellRect.top + shellRect.height / 2),
+        hasVideo: !!video,
+        paused: !!(video && video.paused),
+        readyState: video ? Number(video.readyState || 0) : 0
+      });
+    }
+    dbsTvPlayerFirstApplied = true;
+    if (!dbsTvPlayerFirstAppliedLogged) {
+      dbsTvPlayerFirstAppliedLogged = true;
+      dbsTvLog("content-dbstv-player-first-applied", source, 1, {
+        sourceUrl: shellState.sourceUrl,
+        targetKind: "shell",
+        shellApplied: true
+      });
+    }
+    return true;
+  }
+
+  function scheduleDbsTvMinimalHelper() {
+    if (!isDbsTvLivePage()) return false;
+    const apply = (source) => {
+      applyDbsTvPlayerFirstLayout(source);
+    };
+    apply("initial");
+    [250, 750, 1500, 3000, 5000, 8000].forEach((delayMs) => {
+      setTimeout(() => apply(`retry-${delayMs}`), delayMs);
+    });
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => apply("dom-content-loaded"), { once: true });
+    } else {
+      apply("dom-content-loaded");
+    }
+    window.addEventListener("load", () => apply("load"), { once: true });
+    if (dbsTvPlayerFirstObserverAttached) return true;
+    dbsTvPlayerFirstObserverAttached = true;
+    try {
+      const observer = new MutationObserver(() => {
+        apply("mutation");
+        if (dbsTvPlayerFirstApplied) {
+          try { observer.disconnect(); } catch (_) {}
+        }
+      });
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (_) {}
+      }, 12000);
+    } catch (_) {}
+    return true;
+  }
+
+  function isCbnVirginIslandsPlaybackActive() {
+    try {
+      const visibleVideos = Array.from(document.querySelectorAll("video")).filter((node) => isVisible(node));
+      if (visibleVideos.some((node) => !node.paused && !node.ended)) {
+        return true;
+      }
+      if (typeof window.jwplayer === "function") {
+        const jwplayerInstance = window.jwplayer();
+        if (jwplayerInstance && typeof jwplayerInstance.getState === "function") {
+          const state = String(jwplayerInstance.getState() || "").toLowerCase();
+          if (state === "playing") {
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function applyCbnVirginIslandsPlayerFirstLayout() {
+    if (cbnVirginIslandsLayoutApplied || !isCbnVirginIslandsLivePage()) return false;
+    const player = document.getElementById("comp-ke1v14ts");
+    if (!player) return false;
+    try {
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("width", "100vw", "important");
+        document.documentElement.style.setProperty("height", "100vh", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        document.documentElement.style.setProperty("background", "#000", "important");
+      }
+      if (document.body && document.body.style) {
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("width", "100vw", "important");
+        document.body.style.setProperty("height", "100vh", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+        document.body.style.setProperty("background", "#000", "important");
+      }
+      const playerFrame = player.querySelector("iframe");
+      const targets = [player, playerFrame].filter(Boolean);
+      targets.forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("left", "0", "important");
+        node.style.setProperty("top", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "100vw", "important");
+        node.style.setProperty("max-height", "100vh", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("overflow", "hidden", "important");
+        node.style.setProperty("background", "#000", "important");
+        node.style.setProperty("z-index", "2147483647", "important");
+      });
+      try {
+        const quietSelectors = ["#comp-lg70kcxq"];
+        quietSelectors.forEach((selector) => {
+          const node = document.querySelector(selector);
+          if (node && node.style) {
+            node.style.setProperty("display", "none", "important");
+          }
+        });
+      } catch (_) {}
+      cbnVirginIslandsLayoutApplied = true;
+      maybeScheduleCbnVirginIslandsPointerSleep();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function applyCnc3PlayerFirstLayout() {
+    if (cnc3PlayerFirstApplied || !isCnc3LiveStreamPage()) return false;
+    const playerFrame = document.querySelector("iframe[src*='geo.dailymotion.com/player/'][src*='x9vba4u']");
+    const player = playerFrame?.parentElement;
+    if (!player && !playerFrame) return false;
+    try {
+      if (document.documentElement && document.documentElement.style) {
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("width", "100vw", "important");
+        document.documentElement.style.setProperty("height", "100vh", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        document.documentElement.style.setProperty("background", "#000", "important");
+      }
+      if (document.body && document.body.style) {
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("width", "100vw", "important");
+        document.body.style.setProperty("height", "100vh", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+        document.body.style.setProperty("background", "#000", "important");
+      }
+      [player, playerFrame].filter(Boolean).forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("left", "0", "important");
+        node.style.setProperty("top", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "100vw", "important");
+        node.style.setProperty("max-height", "100vh", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("overflow", "hidden", "important");
+        node.style.setProperty("background", "#000", "important");
+        node.style.setProperty("z-index", "2147483647", "important");
+      });
+      cnc3PlayerFirstApplied = true;
+      promptPayload({
+        type: "cnc3-live-state",
+        phase: "content-cnc3-player-first",
+        pageUrl: window.location.href,
+        layoutApplied: true,
+        playbackActive: false
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function maybeScheduleCbnVirginIslandsPointerSleep() {
+    if (cbnVirginIslandsPointerSleepRequested || cbnVirginIslandsPointerSleepTimer || !isCbnVirginIslandsLivePage()) {
+      return false;
+    }
+    if (!cbnVirginIslandsLayoutApplied && !isCbnVirginIslandsPlaybackActive()) {
+      return false;
+    }
+    cbnVirginIslandsPointerSleepTimer = setTimeout(() => {
+      cbnVirginIslandsPointerSleepTimer = null;
+      if (cbnVirginIslandsPointerSleepRequested || !isCbnVirginIslandsLivePage()) return;
+      cbnVirginIslandsPointerSleepRequested = true;
+      promptPayload({
+        type: "cbn-virgin-islands-state",
+        phase: "content-cbn-virgin-islands-pointer-sleep",
+        pageUrl: window.location.href,
+        layoutApplied: !!cbnVirginIslandsLayoutApplied,
+        playbackActive: isCbnVirginIslandsPlaybackActive(),
+        requestPointerSleep: true
+      });
+    }, 1800);
+    return true;
+  }
+
+  function tryCbnVirginIslandsMutedFallback() {
+    if (cbnVirginIslandsMutedFallbackAttempted || !isCbnVirginIslandsEmbedFrame()) return false;
+    let attempted = false;
+    let foundTarget = false;
+    try {
+      const jwplayerInstance = typeof window.jwplayer === "function" ? window.jwplayer() : null;
+      if (jwplayerInstance) {
+        foundTarget = true;
+        attempted = safeMethodCall(jwplayerInstance, "play", [true], null) || attempted;
+        attempted = safeMethodCall(jwplayerInstance, "play", [], null) || attempted;
+      }
+    } catch (_) {}
+    try {
+      const visibleVideos = Array.from(document.querySelectorAll("video")).filter((node) => isVisible(node));
+      const mutedVideo = visibleVideos.find((node) => node.paused || node.ended) || visibleVideos[0] || null;
+      if (mutedVideo) {
+        foundTarget = true;
+        try {
+          mutedVideo.playsInline = true;
+        } catch (_) {}
+        const playResult = mutedVideo.play();
+        attempted = true;
+        if (playResult && typeof playResult.catch === "function") {
+          playResult.catch(() => {});
+        }
+      }
+    } catch (_) {}
+    if (isCbnVirginIslandsPlaybackActive()) {
+      cbnVirginIslandsMutedFallbackAttempted = true;
+      cbnVirginIslandsMutedFallbackRetryCount = 0;
+      maybeScheduleCbnVirginIslandsPointerSleep();
+      return true;
+    }
+    if ((attempted || foundTarget) && !cbnVirginIslandsMutedFallbackRetryTimer && cbnVirginIslandsMutedFallbackRetryCount < 3) {
+      const retryDelayMs = 500 + (cbnVirginIslandsMutedFallbackRetryCount * 700);
+      cbnVirginIslandsMutedFallbackRetryCount += 1;
+      cbnVirginIslandsMutedFallbackRetryTimer = setTimeout(() => {
+        cbnVirginIslandsMutedFallbackRetryTimer = null;
+        if (!isCbnVirginIslandsEmbedFrame() || cbnVirginIslandsMutedFallbackAttempted || isCbnVirginIslandsPlaybackActive()) {
+          return;
+        }
+        tryCbnVirginIslandsMutedFallback();
+      }, retryDelayMs);
+    }
+    return attempted || foundTarget;
+  }
+
+  function maybeKickCbnVirginIslandsPlayer() {
+    if (cbnVirginIslandsAutoplayAttempted || !isCbnVirginIslandsEmbedFrame()) return false;
+    let attempted = false;
+    let foundTarget = false;
+    try {
+      const jwplayerInstance = typeof window.jwplayer === "function" ? window.jwplayer() : null;
+      if (jwplayerInstance) {
+        foundTarget = true;
+        try {
+          if (typeof jwplayerInstance.getState === "function") {
+            const state = String(jwplayerInstance.getState() || "").toLowerCase();
+            if (state === "playing") {
+              cbnVirginIslandsAutoplayAttempted = true;
+              maybeScheduleCbnVirginIslandsPointerSleep();
+              return true;
+            }
+          }
+          attempted = safeMethodCall(jwplayerInstance, "play", [true], null) || attempted;
+          attempted = safeMethodCall(jwplayerInstance, "play", [], null) || attempted;
+        } catch (_) {}
+      }
+      if (!attempted) {
+        try {
+          const visibleVideos = Array.from(document.querySelectorAll("video")).filter((node) => isVisible(node));
+          const activeVideo = visibleVideos.find((node) => node.paused || node.ended) || null;
+          if (activeVideo) {
+            foundTarget = true;
+            try {
+              if (activeVideo.muted) activeVideo.muted = false;
+              if (typeof activeVideo.volume === "number" && activeVideo.volume < 1) activeVideo.volume = 1;
+              activeVideo.playsInline = true;
+            } catch (_) {}
+            const playResult = activeVideo.play();
+            attempted = true;
+            if (playResult && typeof playResult.catch === "function") {
+              playResult.catch(() => {
+                tryCbnVirginIslandsMutedFallback();
+              });
+            }
+          }
+        } catch (_) {}
+      }
+      if (!attempted) {
+        const playButton = Array.from(
+          document.querySelectorAll("button,[role='button'],.jw-icon-playback,.jw-display-icon-container,.jw-icon-play,.jw-big-play-button")
+        ).find((node) => {
+          if (!isVisible(node)) return false;
+          const blob = String(
+            node.innerText || node.textContent || node.getAttribute("aria-label") || node.getAttribute("title") || node.className || ""
+          ).replace(/\s+/g, " ").trim().toLowerCase();
+          if (!blob) return false;
+          if (blob.indexOf("pause") >= 0) return false;
+          return blob.indexOf("play") >= 0 || blob.indexOf("watch") >= 0 || blob.indexOf("live") >= 0;
+        });
+        if (playButton) {
+          foundTarget = true;
+          try {
+            playButton.click();
+            attempted = true;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    if (!foundTarget) {
+      return false;
+    }
+    cbnVirginIslandsAutoplayAttempted = true;
+    if (attempted) {
+      maybeScheduleCbnVirginIslandsPointerSleep();
+    } else {
+      tryCbnVirginIslandsMutedFallback();
+    }
+    return attempted;
+  }
+
   function detectTegoProfileFromPlayerUrl(rawUrl) {
     try {
       const url = new URL(String(rawUrl || ""), window.location.href);
@@ -143,6 +2510,11 @@
   function isCgtvBradmaxFrame() {
     const host = (window.location.hostname || "").toLowerCase();
     return host === "bradm.ax" || host.endsWith(".bradm.ax");
+  }
+
+  function isChtvTopPage() {
+    const host = (window.location.hostname || "").toLowerCase();
+    return host === "caribbeanhottv.com" || host === "www.caribbeanhottv.com";
   }
 
   function isCaribVisionAppPage() {
@@ -224,6 +2596,773 @@
     });
   }
 
+  function isExactCaribVisionLiveHlsUrl(rawUrl) {
+    try {
+      const url = new URL(String(rawUrl || ""), window.location.href);
+      return url.hostname.toLowerCase() === CARIBVISION_OFFICIAL_HLS_HOST &&
+        url.pathname === CARIBVISION_OFFICIAL_HLS_PATH;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isCaribVisionAuthPath() {
+    if (!isCaribVisionAppPage()) return false;
+    const path = (window.location.pathname || "").toLowerCase();
+    return path.indexOf("/login") >= 0 ||
+      path.indexOf("/signin") >= 0 ||
+      path.indexOf("/signup") >= 0 ||
+      path.indexOf("/signup_free") >= 0 ||
+      path.indexOf("/register") >= 0 ||
+      path.indexOf("/account") >= 0;
+  }
+
+  function findVisibleCaribVisionPasswordInput() {
+    if (!isCaribVisionAppPage()) return null;
+    return Array.from(document.querySelectorAll("input")).find((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        const type = String(node.getAttribute("type") || "").toLowerCase();
+        const name = String(node.getAttribute("name") || "").toLowerCase();
+        const autocomplete = String(node.getAttribute("autocomplete") || "").toLowerCase();
+        return type === "password" ||
+          name.indexOf("password") >= 0 ||
+          autocomplete.indexOf("password") >= 0;
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function hasVisibleCaribVisionAuthAction() {
+    if (!isCaribVisionAppPage()) return false;
+    const authTerms = [
+      "sign in",
+      "signin",
+      "login",
+      "log in",
+      "create account",
+      "register",
+      "forgot password"
+    ];
+    return Array.from(document.querySelectorAll("button,[role='button'],a,label,h1,h2,h3,p,span,div")).some((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 12) return false;
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (!text) return false;
+        return authTerms.some((term) => text.indexOf(term) >= 0);
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
+  function findCaribVisionExactSource(root) {
+    const scope = root || document;
+    let nodes = [];
+    try {
+      nodes = Array.from(scope.querySelectorAll('source[type="application/x-mpegURL" i],source[src*=".m3u8" i]'));
+    } catch (_) {
+      nodes = [];
+    }
+    return nodes.find((node) => {
+      try {
+        const sourceUrl = String(node.getAttribute("src") || node.src || "").trim();
+        return isExactCaribVisionLiveHlsUrl(sourceUrl);
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function scoreCaribVisionPlayerCandidate(node) {
+    if (!node) return -1;
+    try {
+      if (!isVisible(node)) return -1;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 160 || rect.height < 90) return -1;
+      const id = String(node.getAttribute && node.getAttribute("id") || "").toLowerCase();
+      const cls = String(node.className || "").toLowerCase();
+      let score = rect.width * rect.height;
+      if (id.indexOf("live-stream-player") >= 0 || cls.indexOf("live-stream-player") >= 0) {
+        score += 2000000;
+      }
+      if (cls.indexOf("video-js") >= 0 || cls.indexOf("vjs") >= 0) {
+        score += 500000;
+      }
+      if (findCaribVisionExactSource(node)) {
+        score += 3000000;
+      }
+      return score;
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  function findCaribVisionPlayerRoot() {
+    if (!isCaribVisionAppPage()) return null;
+    const candidates = [];
+    const pushCandidate = (node) => {
+      if (node && candidates.indexOf(node) < 0) {
+        candidates.push(node);
+      }
+    };
+    pushCandidate(document.querySelector("video#live-stream-player"));
+    pushCandidate(document.querySelector("#live-stream-player_html5_api"));
+    pushCandidate(document.querySelector("#live-stream-player"));
+    const exactSource = findCaribVisionExactSource(document);
+    if (exactSource) {
+      pushCandidate(exactSource.parentElement);
+      pushCandidate(exactSource.closest("video-js,.video-js,[data-vjs-player],.vjs-player,.player"));
+    }
+    try {
+      Array.from(document.querySelectorAll("video-js,.video-js,[data-vjs-player],.vjs-player,video")).forEach(pushCandidate);
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    candidates.forEach((node) => {
+      const score = scoreCaribVisionPlayerCandidate(node);
+      if (score > bestScore) {
+        best = node;
+        bestScore = score;
+      }
+    });
+    return best;
+  }
+
+  function collectCaribVisionVideoState(player) {
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720);
+    const exactSource = findCaribVisionExactSource(player || document);
+    let playerRect = null;
+    try {
+      playerRect = player && player.getBoundingClientRect ? player.getBoundingClientRect() : null;
+    } catch (_) {
+      playerRect = null;
+    }
+    let videos = [];
+    try {
+      videos = Array.from((player && player.querySelectorAll("video")) || document.querySelectorAll("video"));
+    } catch (_) {
+      videos = [];
+    }
+    let bestVideo = null;
+    let bestScore = -1;
+    videos.forEach((video) => {
+      try {
+        if (!isVisible(video)) return;
+        const rect = video.getBoundingClientRect();
+        if (rect.width < 120 || rect.height < 68) return;
+        let score = rect.width * rect.height;
+        const id = String(video.getAttribute("id") || "").toLowerCase();
+        const cls = String(video.className || "").toLowerCase();
+        if (id === "live-stream-player" || id === "live-stream-player_html5_api") score += 3000000;
+        if (cls.indexOf("vjs-tech") >= 0) score += 1000000;
+        if (playerRect && !(rect.right < playerRect.left - 8 || rect.left > playerRect.right + 8 || rect.bottom < playerRect.top - 8 || rect.top > playerRect.bottom + 8)) {
+          score += 200000;
+        }
+        if (score > bestScore) {
+          bestVideo = video;
+          bestScore = score;
+        }
+      } catch (_) {}
+    });
+    let rect = null;
+    try {
+      rect = bestVideo ? bestVideo.getBoundingClientRect() : playerRect;
+    } catch (_) {
+      rect = playerRect;
+    }
+    const centerX = rect ? Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2))) : Math.max(1, Math.floor(viewportWidth / 2));
+    const centerY = rect ? Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2))) : Math.max(1, Math.floor(viewportHeight / 2));
+    const paused = bestVideo ? !!bestVideo.paused : true;
+    const readyState = Number(bestVideo && bestVideo.readyState || 0);
+    const currentTime = Number(bestVideo && typeof bestVideo.currentTime === "number" ? bestVideo.currentTime : 0);
+    const muted = !!(bestVideo && bestVideo.muted);
+    const volume = bestVideo && typeof bestVideo.volume === "number" ? Number(bestVideo.volume) : 1;
+    const videoId = String(bestVideo && bestVideo.getAttribute && bestVideo.getAttribute("id") || "").toLowerCase();
+    const playerId = String(player && player.getAttribute && player.getAttribute("id") || "").toLowerCase();
+    return {
+      video: bestVideo,
+      hasVideo: !!bestVideo,
+      paused,
+      readyState,
+      currentTime,
+      playing: !!bestVideo && !paused && readyState >= 2,
+      videoWidth: bestVideo && bestVideo.videoWidth || 0,
+      videoHeight: bestVideo && bestVideo.videoHeight || 0,
+      muted,
+      volume,
+      centerX,
+      centerY,
+      xRatio: parseFloat((centerX / viewportWidth).toFixed(4)),
+      yRatio: parseFloat((centerY / viewportHeight).toFixed(4)),
+      rectText: rect ? rectAsText(rect) : "",
+      playerRectText: playerRect ? rectAsText(playerRect) : "",
+      playerLeft: playerRect ? Number(playerRect.left) : -1,
+      playerTop: playerRect ? Number(playerRect.top) : -1,
+      playerWidth: playerRect ? Number(playerRect.width) : 0,
+      playerHeight: playerRect ? Number(playerRect.height) : 0,
+      viewportWidth,
+      viewportHeight,
+      hasExactHls: !!exactSource,
+      hasDirectLiveId: videoId === "live-stream-player" || videoId === "live-stream-player_html5_api" || playerId.indexOf("live-stream-player") >= 0
+    };
+  }
+
+  function attemptCaribVisionPlaybackUnmute(state) {
+    const video = state && state.video;
+    const methods = [];
+    const result = {
+      mutedBefore: !!(video && video.muted),
+      mutedAfter: !!(video && video.muted),
+      volumeBefore: video && typeof video.volume === "number" ? Number(video.volume) : Number((state && state.volume) || 1),
+      volumeAfter: video && typeof video.volume === "number" ? Number(video.volume) : Number((state && state.volume) || 1),
+      methods: "",
+      changed: false
+    };
+    if (video) {
+      try {
+        video.defaultMuted = false;
+      } catch (_) {}
+      try {
+        video.muted = false;
+      } catch (_) {}
+      try {
+        if (typeof video.volume === "number" && video.volume < 0.95) {
+          video.volume = 1;
+        }
+      } catch (_) {}
+    }
+    try {
+      readVideoJsPlayers().forEach((player) => {
+        safeMethodCall(player, "muted", [false], methods);
+        safeMethodCall(player, "volume", [1], methods);
+      });
+    } catch (_) {}
+    result.methods = methods.join(",");
+    result.mutedAfter = !!(video && video.muted);
+    result.volumeAfter = video && typeof video.volume === "number" ? Number(video.volume) : result.volumeBefore;
+    result.changed =
+      result.mutedBefore !== result.mutedAfter ||
+      Math.abs(result.volumeAfter - result.volumeBefore) > 0.001 ||
+      methods.length > 0;
+    return result;
+  }
+
+  function detectCaribVisionState() {
+    if (!isCaribVisionAppPage()) {
+      return {
+        playerVisible: false,
+        loginRequired: false
+      };
+    }
+    const player = findCaribVisionPlayerRoot();
+    const videoState = collectCaribVisionVideoState(player);
+    const authPath = isCaribVisionAuthPath();
+    const hasPasswordField = !!findVisibleCaribVisionPasswordInput();
+    const hasAuthAction = hasVisibleCaribVisionAuthAction();
+    const authSignals = authPath || hasPasswordField || hasAuthAction;
+    const playerVisible = !!player && (videoState.hasExactHls || (videoState.hasDirectLiveId && !authSignals));
+    const loginRequired = !playerVisible && authSignals;
+    return {
+      player,
+      videoState,
+      playerVisible,
+      loginRequired,
+      reason: playerVisible ? "player-visible" : (loginRequired ? "login-wall" : "no-clear-signal")
+    };
+  }
+
+  function emitCaribVisionSessionState(reason) {
+    const detected = detectCaribVisionState();
+    if (!detected.playerVisible && !detected.loginRequired) return false;
+    if (detected.loginRequired || !detected.playerVisible) {
+      caribvisionAudioDomClickDone = false;
+      caribvisionFullscreenDomClickDone = false;
+      caribvisionPlayAssistLastKey = "";
+      caribvisionFullscreenAssistLastKey = "";
+    }
+    const key = [
+      detected.playerVisible ? "player" : "not-player",
+      detected.loginRequired ? "login" : "not-login",
+      detected.reason,
+      window.location.href
+    ].join(":");
+    if (key === caribvisionSessionStateLastKey) return true;
+    caribvisionSessionStateLastKey = key;
+    promptPayload({
+      type: "caribvision-session-state",
+      phase: "content-caribvision-session-state",
+      pageUrl: window.location.href,
+      playerVisible: detected.playerVisible,
+      loginRequired: detected.loginRequired,
+      reason: String(reason || detected.reason),
+      stateReason: detected.reason,
+      playerRect: detected.videoState && detected.videoState.playerRectText || "",
+      videoRect: detected.videoState && detected.videoState.rectText || "",
+      hasExactHls: !!(detected.videoState && detected.videoState.hasExactHls),
+      hasDirectLiveId: !!(detected.videoState && detected.videoState.hasDirectLiveId)
+    });
+    return true;
+  }
+
+  function isCaribVisionFullscreenAssistSuppressed() {
+    try {
+      const suppressedUrl = String(window.__kfCaribvisionFullscreenAssistSuppressedUrl || "");
+      return !!suppressedUrl && suppressedUrl === window.location.href;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findCaribVisionPlayControl(player) {
+    if (!player) return null;
+    const selectors = [
+      ".vjs-big-play-button",
+      ".vjs-play-control",
+      ".vjs-play-button",
+      "button",
+      "[role='button']",
+      "a",
+      "div",
+      "span"
+    ];
+    const seen = new Set();
+    let best = null;
+    let bestScore = -1;
+    selectors.forEach((selector) => {
+      let nodes = [];
+      try {
+        nodes = Array.from(player.querySelectorAll(selector));
+      } catch (_) {
+        nodes = [];
+      }
+      nodes.forEach((node) => {
+        if (!node || seen.has(node)) return;
+        seen.add(node);
+        try {
+          if (!isVisible(node)) return;
+          const rect = node.getBoundingClientRect();
+          if (rect.width < 18 || rect.height < 18) return;
+          const cls = String(node.className || "").toLowerCase();
+          const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+          const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+          const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const blob = `${cls} ${aria} ${title} ${text}`;
+          if (blob.indexOf("pause") >= 0) return;
+          if (blob.indexOf("fullscreen") >= 0 || blob.indexOf("full screen") >= 0) return;
+          if (blob.indexOf("volume") >= 0 || blob.indexOf("mute") >= 0 || blob.indexOf("unmute") >= 0) return;
+          if (blob.indexOf("play") < 0 && cls.indexOf("vjs-play") < 0) return;
+          let score = rect.width * rect.height;
+          if (cls.indexOf("vjs-big-play-button") >= 0) score += 2000000;
+          if (cls.indexOf("vjs-play-control") >= 0) score += 1000000;
+          if (score > bestScore) {
+            best = node;
+            bestScore = score;
+          }
+        } catch (_) {}
+      });
+    });
+    return best;
+  }
+
+  function isCaribVisionFullscreenActive(player) {
+    if (!player) return false;
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
+        return true;
+      }
+    } catch (_) {}
+    try {
+      const cls = String(player.className || "").toLowerCase();
+      return cls.indexOf("vjs-fullscreen") >= 0 || cls.indexOf("fullscreen") >= 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findCaribVisionFullscreenControl(player) {
+    if (!player) return null;
+    let playerRect = null;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    const seen = [];
+    const roots = [player, document];
+    roots.forEach((root) => {
+      try {
+        Array.from(root.querySelectorAll(".vjs-fullscreen-control,button,[role='button'],a,div,span")).forEach((node) => {
+          try {
+            if (!node || seen.indexOf(node) >= 0) return;
+            seen.push(node);
+            const cls = String(node.className || "").toLowerCase();
+            const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+            const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+            const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const blob = `${cls} ${aria} ${title} ${text}`;
+            const semantic = blob.indexOf("fullscreen") >= 0 || blob.indexOf("full screen") >= 0 || cls.indexOf("vjs-fullscreen-control") >= 0;
+            if (!semantic) return;
+            if (blob.indexOf("exit fullscreen") >= 0 || blob.indexOf("exit full screen") >= 0) return;
+            const visible = isVisible(node);
+            if (!visible && cls.indexOf("vjs-fullscreen-control") < 0) return;
+            const rect = node.getBoundingClientRect();
+            if (rect.width < 14 || rect.height < 14) return;
+            if (
+              playerRect &&
+              (
+                rect.bottom < playerRect.top - 220 ||
+                rect.top > playerRect.bottom + 220 ||
+                rect.right < playerRect.left - 220 ||
+                rect.left > playerRect.right + 220
+              )
+            ) {
+              return;
+            }
+            let score = rect.width * rect.height;
+            if (cls.indexOf("vjs-fullscreen-control") >= 0) score += 2200000;
+            if (title.indexOf("fullscreen") >= 0 || aria.indexOf("fullscreen") >= 0 || text.indexOf("fullscreen") >= 0 || text.indexOf("full screen") >= 0) {
+              score += 300000;
+            }
+            if (playerRect) {
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              const insidePlayer = centerX >= playerRect.left - 6 && centerX <= playerRect.right + 6 && centerY >= playerRect.top - 6 && centerY <= playerRect.bottom + 6;
+              if (insidePlayer) score += 140000;
+              const nearTopLeft = Math.abs(rect.left - playerRect.left) <= 180 && Math.abs(rect.top - playerRect.top) <= 130;
+              if (nearTopLeft) score += 1200000;
+              const nearBottomRight = Math.abs(rect.right - playerRect.right) <= 180 && Math.abs(rect.bottom - playerRect.bottom) <= 130;
+              if (nearBottomRight) score += 450000;
+            }
+            if (score > bestScore) {
+              best = node;
+              bestScore = score;
+            }
+          } catch (_) {}
+        });
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function findCaribVisionAudioControl(player) {
+    if (!player) return null;
+    let playerRect = null;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    const seen = [];
+    const roots = [player, document];
+    roots.forEach((root) => {
+      try {
+        Array.from(root.querySelectorAll(".vjs-mute-control,.vjs-volume-menu-button,button,[role='button'],a,div,span")).forEach((node) => {
+          try {
+            if (!node || seen.indexOf(node) >= 0) return;
+            seen.push(node);
+            if (!isVisible(node)) return;
+            const rect = node.getBoundingClientRect();
+            if (rect.width < 14 || rect.height < 14) return;
+            if (
+              playerRect &&
+              (
+                rect.bottom < playerRect.top - 220 ||
+                rect.top > playerRect.bottom + 220 ||
+                rect.right < playerRect.left - 220 ||
+                rect.left > playerRect.right + 220
+              )
+            ) {
+              return;
+            }
+            const cls = String(node.className || "").toLowerCase();
+            const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+            const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+            const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const blob = `${cls} ${aria} ${title} ${text}`;
+            const semantic = blob.indexOf("unmute") >= 0 || blob.indexOf("mute") >= 0 || blob.indexOf("volume") >= 0 || cls.indexOf("vjs-mute-control") >= 0 || cls.indexOf("vjs-volume-menu-button") >= 0;
+            if (!semantic) return;
+            let score = rect.width * rect.height;
+            if (blob.indexOf("unmute") >= 0) score += 1800000;
+            if (cls.indexOf("vjs-mute-control") >= 0) score += 1400000;
+            if (cls.indexOf("vjs-volume-menu-button") >= 0) score += 900000;
+            if (blob.indexOf("mute") >= 0 || blob.indexOf("volume") >= 0) score += 200000;
+            if (playerRect) {
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              const insidePlayer = centerX >= playerRect.left - 6 && centerX <= playerRect.right + 6 && centerY >= playerRect.top - 6 && centerY <= playerRect.bottom + 6;
+              if (insidePlayer) score += 140000;
+              const nearBottom = Math.abs(rect.bottom - playerRect.bottom) <= 140;
+              if (nearBottom) score += 300000;
+            }
+            if (score > bestScore) {
+              best = node;
+              bestScore = score;
+            }
+          } catch (_) {}
+        });
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function clickCaribVisionControlNode(node) {
+    if (!node) return false;
+    try {
+      node.click();
+      return true;
+    } catch (_) {}
+    try {
+      const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+      return !!node.dispatchEvent(ev);
+    } catch (_) {}
+    return false;
+  }
+
+  function emitCaribVisionPlayAssist(reason, attemptAtMs) {
+    const detected = detectCaribVisionState();
+    if (!detected.playerVisible || !detected.player) return false;
+    let state = detected.videoState;
+    const unmute = attemptCaribVisionPlaybackUnmute(state);
+    state = collectCaribVisionVideoState(detected.player);
+    let target = findCaribVisionPlayControl(detected.player);
+    let targetKind = "caribvision-play-control";
+    if (!target && state.video) {
+      target = state.video;
+      targetKind = "caribvision-video";
+    }
+    if (!target) {
+      target = detected.player;
+      targetKind = "caribvision-player";
+    }
+    let rect;
+    try {
+      rect = target.getBoundingClientRect();
+    } catch (_) {
+      return false;
+    }
+    const centerX = Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2)));
+    const centerY = Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2)));
+    const active = !state.playing;
+    const reasonText = active
+      ? (targetKind === "caribvision-play-control" ? "player-paused-play-control" : "player-paused")
+      : "playing";
+    const key = [
+      active ? "active" : "idle",
+      reasonText,
+      targetKind,
+      centerX,
+      centerY,
+      detected.videoState.playerRectText
+    ].join(":");
+    if (key === caribvisionPlayAssistLastKey) return true;
+    caribvisionPlayAssistLastKey = key;
+    promptPayload({
+      type: "caribvision-play-assist",
+      phase: "content-caribvision-play-assist",
+      pageUrl: window.location.href,
+      active,
+      requiresUserAction: active,
+      reason: String(reason || reasonText),
+      assistReason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      xRatio: centerX / detected.videoState.viewportWidth,
+      yRatio: centerY / detected.videoState.viewportHeight,
+      rect: rectAsText(rect),
+      playerRect: detected.videoState.playerRectText,
+      targetKind,
+      targetLabel: summarizeNode(target),
+      viewportWidth: detected.videoState.viewportWidth,
+      viewportHeight: detected.videoState.viewportHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      hasVideo: state.hasVideo,
+      paused: state.paused,
+      playing: state.playing,
+      muted: !!state.muted,
+      volume: Number(state.volume || 1),
+      mutedBefore: !!unmute.mutedBefore,
+      mutedAfter: !!unmute.mutedAfter,
+      volumeBefore: Number(unmute.volumeBefore || 1),
+      volumeAfter: Number(unmute.volumeAfter || 1),
+      unmuteMethods: unmute.methods,
+      readyState: state.readyState,
+      currentTime: state.currentTime,
+      videoWidth: state.videoWidth,
+      videoHeight: state.videoHeight
+    });
+    return true;
+  }
+
+  function emitCaribVisionFullscreenAssist(reason, attemptAtMs) {
+    const detected = detectCaribVisionState();
+    if (!detected.playerVisible || !detected.player) return false;
+    let state = detected.videoState;
+    attemptCaribVisionPlaybackUnmute(state);
+    state = collectCaribVisionVideoState(detected.player);
+    const suppressedAfterBack = isCaribVisionFullscreenAssistSuppressed();
+    const fullscreenActive = isCaribVisionFullscreenActive(detected.player);
+    const control = findCaribVisionFullscreenControl(detected.player);
+    const audioControl = findCaribVisionAudioControl(detected.player);
+    let audioDomClicked = false;
+    let fullscreenDomClicked = false;
+    let rect = null;
+    let targetKind = "none";
+    let targetLabel = "none";
+    let audioRect = null;
+    let audioTargetKind = "none";
+    let audioTargetLabel = "none";
+    if (control) {
+      try {
+        rect = control.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+      targetKind = "caribvision-fullscreen-control";
+      targetLabel = summarizeNode(control);
+    }
+    if (audioControl) {
+      try {
+        audioRect = audioControl.getBoundingClientRect();
+      } catch (_) {
+        audioRect = null;
+      }
+      audioTargetKind = "caribvision-audio-control";
+      audioTargetLabel = summarizeNode(audioControl);
+      if (!caribvisionAudioDomClickDone) {
+        audioDomClicked = clickCaribVisionControlNode(audioControl);
+        if (audioDomClicked) caribvisionAudioDomClickDone = true;
+      }
+    }
+    if (!audioRect && state.playerWidth >= 220 && state.playerHeight >= 120) {
+      const width = Math.max(34, Math.min(56, Math.round(state.playerWidth * 0.043)));
+      const height = Math.max(26, Math.min(44, Math.round(state.playerHeight * 0.08)));
+      const insetLeft = Math.max(30, Math.min(58, Math.round(state.playerWidth * 0.03)));
+      const insetBottom = Math.max(6, Math.min(18, Math.round(state.playerHeight * 0.015)));
+      const left = state.playerLeft + insetLeft;
+      const top = state.playerTop + state.playerHeight - insetBottom - height;
+      audioRect = {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height
+      };
+      audioTargetKind = "caribvision-audio-fallback";
+      audioTargetLabel = "player-bottom-left-audio-fallback";
+    }
+    if (!rect && state.playerWidth >= 220 && state.playerHeight >= 120) {
+      const width = Math.max(34, Math.min(56, Math.round(state.playerWidth * 0.043)));
+      const height = Math.max(26, Math.min(44, Math.round(state.playerHeight * 0.08)));
+      const insetRight = Math.max(8, Math.min(22, Math.round(state.playerWidth * 0.012)));
+      const insetBottom = Math.max(6, Math.min(18, Math.round(state.playerHeight * 0.015)));
+      const left = state.playerLeft + state.playerWidth - insetRight - width;
+      const top = state.playerTop + state.playerHeight - insetBottom - height;
+      rect = {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height
+      };
+      targetKind = "caribvision-fullscreen-fallback";
+      targetLabel = "player-bottom-right-fallback";
+    }
+    if (!suppressedAfterBack && control && !caribvisionFullscreenDomClickDone) {
+      fullscreenDomClicked = clickCaribVisionControlNode(control);
+      if (fullscreenDomClicked) caribvisionFullscreenDomClickDone = true;
+    }
+    const centerX = rect ? Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2))) : -1;
+    const centerY = rect ? Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2))) : -1;
+    const audioCenterX = audioRect ? Math.round(audioRect.left + Math.max(1, Math.floor(audioRect.width / 2))) : -1;
+    const audioCenterY = audioRect ? Math.round(audioRect.top + Math.max(1, Math.floor(audioRect.height / 2))) : -1;
+    const hasTarget = !!rect;
+    const playbackPrimed = !!(state.playing || state.currentTime > 0.2 || (!state.paused && state.readyState >= 1));
+    const audioPrimed = !!(!state.muted && Number(state.volume || 0) > 0.01);
+    const active = !!(!suppressedAfterBack && !fullscreenActive && hasTarget && !fullscreenDomClicked);
+    const reasonText = suppressedAfterBack
+      ? "suppressed-after-back"
+      : fullscreenActive
+      ? "already-fullscreen"
+      : control
+        ? (state.playing ? "fullscreen-ready" : "fullscreen-control-visible")
+        : hasTarget
+          ? "fullscreen-fallback"
+        : "fullscreen-control-missing";
+    const key = [
+      active ? "active" : "idle",
+      reasonText,
+      centerX,
+      centerY,
+      detected.videoState.playerRectText
+    ].join(":");
+    if (key === caribvisionFullscreenAssistLastKey) return true;
+    caribvisionFullscreenAssistLastKey = key;
+    promptPayload({
+      type: "caribvision-fullscreen-assist",
+      phase: "content-caribvision-fullscreen-assist",
+      pageUrl: window.location.href,
+      active,
+      requestNativeTap: !!active,
+      reason: String(reason || reasonText),
+      assistReason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      xRatio: centerX >= 0 ? centerX / detected.videoState.viewportWidth : -1,
+      yRatio: centerY >= 0 ? centerY / detected.videoState.viewportHeight : -1,
+      audioCenterX,
+      audioCenterY,
+      audioXRatio: audioCenterX >= 0 ? audioCenterX / detected.videoState.viewportWidth : -1,
+      audioYRatio: audioCenterY >= 0 ? audioCenterY / detected.videoState.viewportHeight : -1,
+      rect: rect ? rectAsText(rect) : "none",
+      audioRect: audioRect ? rectAsText(audioRect) : "none",
+      playerRect: detected.videoState.playerRectText,
+      targetKind,
+      targetLabel,
+      audioTargetKind,
+      audioTargetLabel,
+      audioDomClicked,
+      fullscreenDomClicked,
+      suppressedAfterBack,
+      viewportWidth: detected.videoState.viewportWidth,
+      viewportHeight: detected.videoState.viewportHeight,
+      fullscreenActive,
+      playing: state.playing,
+      paused: state.paused,
+      muted: !!state.muted,
+      volume: Number(state.volume || 1),
+      playbackPrimed,
+      audioPrimed,
+      readyState: state.readyState,
+      currentTime: state.currentTime
+    });
+    return true;
+  }
+
+  function scheduleCaribVisionPlayAssist() {
+    if (caribvisionPlayAssistScheduled || !isCaribVisionAppPage()) return;
+    caribvisionPlayAssistScheduled = true;
+    CARIBVISION_PLAY_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => emitCaribVisionPlayAssist("scheduled-" + delayMs, delayMs), delayMs);
+    });
+  }
+
+  function scheduleCaribVisionFullscreenAssist() {
+    if (caribvisionFullscreenAssistScheduled || !isCaribVisionAppPage()) return;
+    caribvisionFullscreenAssistScheduled = true;
+    CARIBVISION_FULLSCREEN_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => emitCaribVisionFullscreenAssist("scheduled-" + delayMs, delayMs), delayMs);
+    });
+  }
+
   function findCgtvBradmaxIframe() {
     if (!isCgtvWatchTopPage()) return null;
     const frames = Array.from(document.querySelectorAll("iframe[src]"));
@@ -246,7 +3385,370 @@
     return best;
   }
 
+  function parseChtvDataItem(player) {
+    if (!player || !player.getAttribute) return null;
+    try {
+      const raw = String(player.getAttribute("data-item") || "").trim();
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isChtvLiveFlowplayer(player) {
+    if (!player) return false;
+    try {
+      const cls = String(player.className || "").toLowerCase();
+      if (cls.indexOf("flowplayer") < 0) return false;
+      if (cls.indexOf("is-youtube") >= 0) return false;
+      const liveAttr = String(player.getAttribute && player.getAttribute("data-live") || "").toLowerCase();
+      if (liveAttr === "true" || liveAttr === "1") return true;
+      const dataItem = parseChtvDataItem(player);
+      const sources = Array.isArray(dataItem && dataItem.sources) ? dataItem.sources : [];
+      return sources.some((source) => {
+        const src = String(source && source.src || "").toLowerCase();
+        const type = String(source && source.type || "").toLowerCase();
+        return src.indexOf(".m3u8") >= 0 || type.indexOf("mpegurl") >= 0;
+      });
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isChtvFullscreenAssistSuppressed() {
+    try {
+      const suppressedUrl = String(window.__kfChtvFullscreenAssistSuppressedUrl || "");
+      return !!suppressedUrl && suppressedUrl === window.location.href;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findChtvLiveFlowplayer() {
+    if (!isChtvTopPage()) return null;
+    const players = Array.from(document.querySelectorAll(".flowplayer"));
+    let best = null;
+    let bestScore = -1;
+    players.forEach((player) => {
+      try {
+        if (!isChtvLiveFlowplayer(player)) return;
+        if (!isVisible(player)) return;
+        const rect = player.getBoundingClientRect();
+        if (rect.width < 160 || rect.height < 100) return;
+        const score = rect.width * rect.height;
+        if (score > bestScore) {
+          best = player;
+          bestScore = score;
+        }
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function collectChtvVideoState(player) {
+    const videos = Array.from((player && player.querySelectorAll("video")) || []);
+    const video = videos.find((node) => {
+      try {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 32 && rect.height > 32;
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+    const readyState = Number(video && video.readyState || 0);
+    const paused = video ? !!video.paused : true;
+    const currentTime = Number(video && typeof video.currentTime === "number" ? video.currentTime : 0);
+    const playing = !!video && !paused && readyState >= 2;
+    return {
+      video,
+      hasVideo: !!video,
+      readyState,
+      paused,
+      currentTime,
+      playing
+    };
+  }
+
+  function findChtvPlayControl(player) {
+    if (!player) return null;
+    const direct = Array.from(player.querySelectorAll(".fp-play.fp-visible,.fp-play,.fp-ui .fp-play")).find((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 20 && rect.height >= 20;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (direct) return direct;
+    return Array.from(player.querySelectorAll("button,[role='button'],a,div")).find((node) => {
+      try {
+        if (!isVisible(node)) return false;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 20) return false;
+        const cls = String(node.className || "").toLowerCase();
+        const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+        const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const blob = `${cls} ${aria} ${title} ${text}`;
+        if (blob.indexOf("pause") >= 0) return false;
+        if (blob.indexOf("fullscreen") >= 0 || blob.indexOf("full screen") >= 0) return false;
+        if (blob.indexOf("volume") >= 0 || blob.indexOf("mute") >= 0) return false;
+        if (blob.indexOf("youtube") >= 0) return false;
+        return blob.indexOf("play") >= 0 || cls.indexOf("fp-play") >= 0;
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function isChtvFullscreenActive(player) {
+    if (!player) return false;
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
+        return true;
+      }
+    } catch (_) {}
+    try {
+      const cls = String(player.className || "").toLowerCase();
+      return cls.indexOf("is-fullscreen") >= 0 || cls.indexOf("fake-fullscreen") >= 0 || cls.indexOf("forced-fullscreen") >= 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findChtvFullscreenControl(player) {
+    if (!player) return null;
+    let playerRect = null;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {}
+    let best = null;
+    let bestScore = -1;
+    Array.from(player.querySelectorAll(".fp-fullscreen,.fp-header .fp-fullscreen,button,[role='button'],a,div,span")).forEach((node) => {
+      try {
+        if (!isVisible(node)) return;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 18 || rect.height < 18) return;
+        if (playerRect && (rect.bottom < playerRect.top - 8 || rect.top > playerRect.bottom + 8 || rect.right < playerRect.left - 8 || rect.left > playerRect.right + 8)) {
+          return;
+        }
+        const cls = String(node.className || "").toLowerCase();
+        const aria = String(node.getAttribute && node.getAttribute("aria-label") || "").toLowerCase();
+        const title = String(node.getAttribute && node.getAttribute("title") || "").toLowerCase();
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const blob = `${cls} ${aria} ${title} ${text}`;
+        if (blob.indexOf("fullscreen") < 0 && blob.indexOf("full screen") < 0 && cls.indexOf("fp-fullscreen") < 0) return;
+        if (blob.indexOf("exit fullscreen") >= 0 || blob.indexOf("exit full screen") >= 0) return;
+        const exact = cls.indexOf("fp-fullscreen") >= 0 ? 500 : 0;
+        const topBias = playerRect ? Math.max(0, Math.round(playerRect.bottom - rect.bottom)) : 0;
+        const score = exact + topBias + Math.round(rect.width + rect.height);
+        if (score > bestScore) {
+          best = node;
+          bestScore = score;
+        }
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function emitChtvFullscreenAssist(reason, attemptAtMs) {
+    if (!isChtvTopPage()) return false;
+    const player = findChtvLiveFlowplayer();
+    if (!player) return false;
+    const state = collectChtvVideoState(player);
+    const fullscreenActiveBefore = isChtvFullscreenActive(player);
+    const suppressedAfterBack = isChtvFullscreenAssistSuppressed();
+    let playerRect;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {
+      return false;
+    }
+    const methods = [];
+    if (state.playing && !fullscreenActiveBefore) {
+      dispatchMousePointerSequence(player, playerRect, methods);
+    }
+    const control = findChtvFullscreenControl(player);
+    let rect = null;
+    if (control) {
+      try {
+        rect = control.getBoundingClientRect();
+      } catch (_) {
+        rect = null;
+      }
+    }
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720);
+    const centerX = rect ? Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2))) : -1;
+    const centerY = rect ? Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2))) : -1;
+    const active = !!(state.playing && !fullscreenActiveBefore && control && !suppressedAfterBack);
+    let clicked = false;
+    if (active && chtvFullscreenAssistClickCount < 2) {
+      clicked = clickNodeIfPossible(control);
+      if (!clicked && rect) {
+        clicked = dispatchMousePointerSequence(control, rect, methods);
+      }
+      if (clicked) {
+        chtvFullscreenAssistClickCount += 1;
+      }
+    }
+    const fullscreenActiveAfter = isChtvFullscreenActive(player);
+    const reasonText =
+      fullscreenActiveAfter ? "already-fullscreen" :
+      suppressedAfterBack ? "suppressed-after-back" :
+      !state.playing ? "not-playing" :
+      control ? (clicked ? "playing-fullscreen-clicked" : "playing-fullscreen-ready") :
+      "fullscreen-control-missing";
+    const key = [
+      active ? "active" : "idle",
+      reasonText,
+      clicked ? "clicked" : "not-clicked",
+      fullscreenActiveBefore ? "before-fs" : "before-windowed",
+      fullscreenActiveAfter ? "after-fs" : "after-windowed",
+      Math.round(centerX),
+      Math.round(centerY),
+      Math.round(playerRect.top),
+      Math.round(playerRect.width),
+      Math.round(playerRect.height)
+    ].join(":");
+    if (key === chtvFullscreenAssistLastKey) return true;
+    chtvFullscreenAssistLastKey = key;
+    promptPayload({
+      type: "chtv-fullscreen-assist",
+      phase: "content-chtv-fullscreen-assist",
+      pageUrl: window.location.href,
+      active,
+      clicked,
+      requestNativeFallback: !!(active && !clicked && control),
+      reason: String(reason || reasonText),
+      assistReason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      xRatio: centerX >= 0 ? centerX / viewportWidth : -1,
+      yRatio: centerY >= 0 ? centerY / viewportHeight : -1,
+      rect: rect ? `${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)}` : "none",
+      playerRect: `${Math.round(playerRect.left)},${Math.round(playerRect.top)} ${Math.round(playerRect.width)}x${Math.round(playerRect.height)}`,
+      targetKind: control ? "flowplayer-fullscreen-control" : "none",
+      targetSummary: control ? summarizeNode(control) : "none",
+      viewportWidth,
+      viewportHeight,
+      fullscreenActiveBefore,
+      fullscreenActiveAfter,
+      methods: methods.join(","),
+      playing: state.playing,
+      paused: state.paused,
+      readyState: state.readyState,
+      currentTime: state.currentTime
+    });
+    return true;
+  }
+
+  function emitChtvPlayAssist(reason, attemptAtMs) {
+    if (!isChtvTopPage()) return false;
+    const player = findChtvLiveFlowplayer();
+    if (!player) return false;
+    try {
+      const initialRect = player.getBoundingClientRect();
+      const currentScrollY = window.scrollY || window.pageYOffset || 0;
+      if (Math.abs(initialRect.top) > 6) {
+        const targetScrollY = Math.max(0, Math.round(currentScrollY + initialRect.top));
+        window.scrollTo(0, targetScrollY);
+      }
+    } catch (_) {}
+    let playerRect;
+    try {
+      playerRect = player.getBoundingClientRect();
+    } catch (_) {
+      return false;
+    }
+    const state = collectChtvVideoState(player);
+    let target = findChtvPlayControl(player);
+    let targetKind = "flowplayer-play-control";
+    if (!target && state.video) {
+      target = state.video;
+      targetKind = "flowplayer-video";
+    }
+    if (!target) {
+      target = player;
+      targetKind = "flowplayer-container";
+    }
+    let rect;
+    try {
+      rect = target.getBoundingClientRect();
+    } catch (_) {
+      return false;
+    }
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720);
+    const centerX = Math.round(rect.left + Math.max(1, Math.floor(rect.width / 2)));
+    const centerY = Math.round(rect.top + Math.max(1, Math.floor(rect.height / 2)));
+    const active = !state.playing;
+    const reasonText = active
+      ? (targetKind === "flowplayer-play-control" ? "flowplayer-live-play" : "flowplayer-live-paused")
+      : "playing";
+    const key = [
+      active ? "active" : "idle",
+      reasonText,
+      targetKind,
+      Math.round(centerX),
+      Math.round(centerY),
+      Math.round(playerRect.top),
+      Math.round(playerRect.width),
+      Math.round(playerRect.height)
+    ].join(":");
+    if (key === chtvPlayAssistLastKey) return true;
+    chtvPlayAssistLastKey = key;
+    promptPayload({
+      type: "chtv-play-assist",
+      phase: "content-chtv-play-assist",
+      pageUrl: window.location.href,
+      active,
+      requiresUserAction: active,
+      reason: String(reason || reasonText),
+      assistReason: reasonText,
+      attemptAtMs: numberOrZero(attemptAtMs),
+      centerX,
+      centerY,
+      xRatio: centerX / viewportWidth,
+      yRatio: centerY / viewportHeight,
+      rect: `${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)}`,
+      playerRect: `${Math.round(playerRect.left)},${Math.round(playerRect.top)} ${Math.round(playerRect.width)}x${Math.round(playerRect.height)}`,
+      targetKind,
+      targetSummary: summarizeNode(target),
+      viewportWidth,
+      viewportHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      hasVideo: state.hasVideo,
+      paused: state.paused,
+      playing: state.playing,
+      readyState: state.readyState,
+      currentTime: state.currentTime
+    });
+    return true;
+  }
+
+  function scheduleChtvPlayAssist() {
+    if (chtvPlayAssistScheduled || !isChtvTopPage()) return;
+    chtvPlayAssistScheduled = true;
+    CHTV_PLAY_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => emitChtvPlayAssist("scheduled-" + delayMs, delayMs), delayMs);
+    });
+  }
+
+  function scheduleChtvFullscreenAssist() {
+    if (chtvFullscreenAssistScheduled || !isChtvTopPage()) return;
+    chtvFullscreenAssistScheduled = true;
+    CHTV_FULLSCREEN_ASSIST_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => emitChtvFullscreenAssist("scheduled-" + delayMs, delayMs), delayMs);
+    });
+  }
+
   function collectCgtvBradmaxVideoState() {
+    const vw = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 0);
+    const vh = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 0);
     const videos = Array.from(document.querySelectorAll("video"));
     let best = null;
     let bestScore = -1;
@@ -267,12 +3769,18 @@
         paused: true,
         readyState: 0,
         currentTime: 0,
+        centerX: Math.max(1, Math.floor(vw / 2)),
+        centerY: Math.max(1, Math.floor(vh / 2)),
+        xRatio: 0.5,
+        yRatio: 0.5,
         videoWidth: 0,
         videoHeight: 0,
         rectText: ""
       };
     }
     const rect = best.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
     const paused = !!best.paused;
     const currentTime = typeof best.currentTime === "number" ? best.currentTime : 0;
     return {
@@ -281,6 +3789,10 @@
       paused,
       readyState: best.readyState || 0,
       currentTime,
+      centerX: Math.round(centerX),
+      centerY: Math.round(centerY),
+      xRatio: parseFloat((vw > 0 ? centerX / vw : 0.5).toFixed(4)),
+      yRatio: parseFloat((vh > 0 ? centerY / vh : 0.5).toFixed(4)),
       videoWidth: best.videoWidth || 0,
       videoHeight: best.videoHeight || 0,
       rectText: rectAsText(rect)
@@ -700,10 +4212,12 @@
         requiresUserAction: !!state.hasVideo && !state.playing,
         reason: state.playing ? "playing" : "bradmax-video-state",
         attemptAtMs: numberOrZero(attemptAtMs),
-        centerX: Math.max(1, Math.floor(window.innerWidth / 2)),
-        centerY: Math.max(1, Math.floor(window.innerHeight / 2)),
+        centerX: state.centerX,
+        centerY: state.centerY,
         viewportWidth: numberOrZero(window.innerWidth || 0),
         viewportHeight: numberOrZero(window.innerHeight || 0),
+        xRatio: state.xRatio,
+        yRatio: state.yRatio,
         devicePixelRatio: numberOrZero(window.devicePixelRatio || 0),
         rect: state.rectText,
         targetKind: "bradmax-video",
@@ -763,7 +4277,7 @@
       }
       const beforeTop = iframe.getBoundingClientRect().top;
       const currentScrollY = window.scrollY || window.pageYOffset || 0;
-      const targetScrollY = Math.max(0, currentScrollY + beforeTop);
+      const targetScrollY = Math.max(0, currentScrollY + beforeTop - CGTV_TOP_OFFSET_PX);
       if (Math.abs(beforeTop) > 2) {
         window.scrollTo({ top: targetScrollY, left: 0, behavior: "auto" });
       }
@@ -815,6 +4329,202 @@
             iframeRect: (payload && payload.iframeRect) || "none",
             iframeSummary: (payload && payload.iframeSummary) || "none"
           });
+        }
+      }, delayMs);
+    });
+  }
+
+
+  function radiantTvRouteKind() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host === "telemicro.com.do") {
+      if (path.indexOf("/telemicro-en-vivo") === 0) return "telemicro-top";
+      if (path.indexOf("/digital-15-en-vivo") === 0) return "digital15-top";
+      if (path.indexOf("/players/5tv/") === 0) return "telemicro-player";
+      if (path.indexOf("/players/15tv/") === 0) return "digital15-player";
+    }
+    if (host === "telecentro.com.do") {
+      if (path.indexOf("/telecentro-en-vivo") === 0) return "telecentro-top";
+      if (path.indexOf("/players/13bot/") === 0) return "telecentro-player";
+    }
+    return "";
+  }
+
+  function isRadiantTvTopPage() {
+    const kind = radiantTvRouteKind();
+    return kind === "telemicro-top" || kind === "digital15-top" || kind === "telecentro-top";
+  }
+
+  function isRadiantTvPlayerFrame() {
+    const kind = radiantTvRouteKind();
+    return kind === "telemicro-player" || kind === "digital15-player" || kind === "telecentro-player";
+  }
+
+  function findRadiantTvIframe() {
+    if (!isRadiantTvTopPage()) return null;
+    const kind = radiantTvRouteKind();
+    const wanted = kind === "telemicro-top" ? "/players/5tv/" :
+      kind === "digital15-top" ? "/players/15tv/" : "/players/13bot/";
+    return Array.from(document.querySelectorAll("iframe")).find((frame) => {
+      try {
+        const src = String(frame.getAttribute("src") || frame.src || "").toLowerCase();
+        return src.indexOf(wanted) >= 0;
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function applyRadiantTvPlayerFirst() {
+    if (!isRadiantTvTopPage()) return false;
+    const frame = findRadiantTvIframe();
+    if (!frame) return false;
+    try {
+      const framePath = new Set();
+      let node = frame;
+      while (node && node !== document.body) {
+        framePath.add(node);
+        node = node.parentElement;
+      }
+      Array.from(document.body.children).forEach((child) => {
+        if (!framePath.has(child) && child !== frame) {
+          child.style.setProperty("display", "none", "important");
+        }
+      });
+      let current = frame;
+      while (current && current !== document.body) {
+        current.style.setProperty("position", "fixed", "important");
+        current.style.setProperty("inset", "0", "important");
+        current.style.setProperty("width", "100vw", "important");
+        current.style.setProperty("height", "100vh", "important");
+        current.style.setProperty("max-width", "none", "important");
+        current.style.setProperty("max-height", "none", "important");
+        current.style.setProperty("margin", "0", "important");
+        current.style.setProperty("padding", "0", "important");
+        current.style.setProperty("border", "0", "important");
+        current.style.setProperty("z-index", "2147483000", "important");
+        current = current.parentElement;
+      }
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      if (!radiantTvPlayerFirstApplied) {
+        radiantTvPlayerFirstApplied = true;
+        promptPayload({
+          type: "radiant-tv-state",
+          phase: "content-radiant-player-first",
+          pageUrl: window.location.href,
+          routeKind: radiantTvRouteKind(),
+          iframeRect: rectSummary(frame)
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findRadiantTvVideo() {
+    if (!isRadiantTvPlayerFrame()) return null;
+    const videos = Array.from(document.querySelectorAll("video"));
+    let best = null;
+    let bestArea = -1;
+    videos.forEach((video) => {
+      try {
+        const rect = video.getBoundingClientRect();
+        const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+        if (area > bestArea) {
+          bestArea = area;
+          best = video;
+        }
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function radiantTvPlaybackProgressed(video) {
+    if (!video) return false;
+    return !video.paused && Number(video.currentTime || 0) > 0.1;
+  }
+
+  function attemptRadiantTvPlayback(attemptAtMs) {
+    if (!isRadiantTvPlayerFrame()) return false;
+    const video = findRadiantTvVideo();
+    if (!video) return false;
+    try {
+      video.muted = false;
+      if (typeof video.volume === "number") video.volume = 1;
+    } catch (_) {}
+
+    let playAttempted = false;
+    let overlayClicked = false;
+    if (!radiantTvPlaybackProgressed(video) && !radiantTvPlayAttempted) {
+      radiantTvPlayAttempted = true;
+      try {
+        const result = video.play();
+        playAttempted = true;
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      } catch (_) {}
+      const overlay = Array.from(document.querySelectorAll(".rmp-overlay-button,.rmp-play-button,[aria-label*='play' i]"))
+        .find((node) => isVisible(node));
+      if (overlay) {
+        try {
+          overlay.click();
+          overlayClicked = true;
+        } catch (_) {}
+      }
+    }
+
+    setTimeout(() => {
+      const currentVideo = findRadiantTvVideo();
+      if (!currentVideo) return;
+      try {
+        currentVideo.muted = false;
+        if (typeof currentVideo.volume === "number") currentVideo.volume = 1;
+      } catch (_) {}
+      const playing = radiantTvPlaybackProgressed(currentVideo);
+      if (playing && !radiantTvFullscreenAttempted) {
+        radiantTvFullscreenAttempted = true;
+        const fullscreenControl = Array.from(document.querySelectorAll(
+          ".rmp-fullscreen,.rmp-fullscreen-button,[class*='rmp-fullscreen' i],[aria-label*='full screen' i],[aria-label*='fullscreen' i]"
+        )).find((node) => isVisible(node));
+        if (fullscreenControl) {
+          try { fullscreenControl.click(); } catch (_) {}
+        }
+      }
+      promptPayload({
+        type: "radiant-tv-state",
+        phase: "content-radiant-playback-check",
+        pageUrl: window.location.href,
+        routeKind: radiantTvRouteKind(),
+        attemptAtMs: Number(attemptAtMs || 0),
+        playAttempted,
+        overlayClicked,
+        playing,
+        paused: !!currentVideo.paused,
+        muted: !!currentVideo.muted,
+        volume: Number(typeof currentVideo.volume === "number" ? currentVideo.volume : 1),
+        currentTime: Number(currentVideo.currentTime || 0),
+        videoWidth: Number(currentVideo.videoWidth || 0),
+        videoHeight: Number(currentVideo.videoHeight || 0)
+      });
+    }, 700);
+    return true;
+  }
+
+  function scheduleRadiantTvHelper() {
+    if (radiantTvHelperScheduled || (!isRadiantTvTopPage() && !isRadiantTvPlayerFrame())) return;
+    radiantTvHelperScheduled = true;
+    RADIANT_TV_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        if (isRadiantTvTopPage()) {
+          applyRadiantTvPlayerFirst();
+          return;
+        }
+        if (isRadiantTvPlayerFrame()) {
+          attemptRadiantTvPlayback(delayMs);
         }
       }, delayMs);
     });
@@ -2122,6 +5832,88 @@
     }, 600);
   }
 
+  function emitTttTegoTransportReveal(reason, handled, controlBarVisibleBefore, controlBarVisibleAfter, target, rect, container) {
+    promptPayload({
+      type: "ttt-tego-transport-reveal",
+      phase: "content-ttt-tego-transport-reveal",
+      pageUrl: window.location.href,
+      reason: String(reason || ""),
+      handled: !!handled,
+      controlBarVisibleBefore: !!controlBarVisibleBefore,
+      controlBarVisibleAfter: !!controlBarVisibleAfter,
+      target: summarizeNode(target),
+      rect: rectAsText(rect || { left: 0, top: 0, width: 0, height: 0 }),
+      containerClassList: shortText(container && container.className ? String(container.className) : "", 220),
+      hiddenState: !!absTegoChromeHidden
+    });
+  }
+
+  function revealTttTegoTransport(reason) {
+    if (!isSupportedTegoFrame()) return false;
+    const container = document.querySelector(".rmp-container,#rmpPlayer,#rmp");
+    const controlBar = document.querySelector(".rmp-control-bar,.rmp-controls");
+    const target = controlBar || container || document.body;
+    const controlBarVisibleBefore = !!(controlBar && isVisible(controlBar));
+    setAbsTegoChromeHidden(false, reason || "external-reveal");
+    let handled = false;
+    const rect = controlRect(target);
+    const clientX = Math.round(rect.left + Math.max(1, rect.width) * 0.5);
+    const clientY = Math.round(rect.top + Math.max(1, rect.height) * (target === controlBar ? 0.5 : 0.84));
+    const mouseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      clientY,
+      screenX: clientX,
+      screenY: clientY,
+      buttons: 0,
+      button: 0,
+      relatedTarget: null,
+      view: window
+    };
+    ["mouseover", "mouseenter", "mousemove"].forEach((eventName) => {
+      try {
+        target.dispatchEvent(new MouseEvent(eventName, mouseEventInit));
+        handled = true;
+      } catch (_) {}
+    });
+    if (typeof window.PointerEvent === "function") {
+      ["pointerover", "pointerenter", "pointermove"].forEach((eventName) => {
+        try {
+          target.dispatchEvent(new PointerEvent(eventName, Object.assign({ pointerType: "mouse", isPrimary: true }, mouseEventInit)));
+          handled = true;
+        } catch (_) {}
+      });
+    }
+    try {
+      document.dispatchEvent(new MouseEvent("mousemove", mouseEventInit));
+      handled = true;
+    } catch (_) {}
+    scheduleAbsTegoChromeHide("interaction-idle");
+    const controlBarVisibleAfter = !!(controlBar && isVisible(controlBar));
+    emitTttTegoTransportReveal(
+      reason,
+      handled || controlBarVisibleAfter,
+      controlBarVisibleBefore,
+      controlBarVisibleAfter,
+      target,
+      rect,
+      container
+    );
+    return handled || controlBarVisibleAfter;
+  }
+
+  function setupTttTegoTransportRevealBridge() {
+    if (window.__kfTttTegoTransportRevealBridgeInstalled) return;
+    window.__kfTttTegoTransportRevealBridgeInstalled = true;
+    window.addEventListener("message", (event) => {
+      const data = event && event.data;
+      if (!data || data.type !== "kf-tego-transport-reveal") return;
+      if (!isSupportedTegoFrame()) return;
+      revealTttTegoTransport(String(data.reason || "bridge"));
+    });
+  }
+
   function scheduleAbsTegoPageFullscreenLike() {
     if (!ENABLE_ABS_TEGO_PAGE_FULLSCREEN_LIKE) return;
     if (absTegoPageFullscreenLikeStarted || !activeTegoTopProfile()) return;
@@ -3364,6 +7156,45 @@
     }
   }
 
+  function maybePostTttTegoLoadingNativePlayRequest(snapshot, attemptAtMs, reason, allowRetry) {
+    if (!isTttTegoFrame() || window.parent === window) return false;
+    if (tttTegoStartupNativePlayRequestPosted && !allowRetry) return false;
+    if (!snapshot) return false;
+    if (snapshotHasPlayingVideo(snapshot) || snapshot.playbackProgressed || snapshot.playable) return false;
+    if (!snapshot.missingHlsLevels && !snapshot.readyZeroPaused) return false;
+    let target = null;
+    let targetRect = null;
+    try {
+      target = Array.from(document.querySelectorAll("video")).find((node) => {
+        if (!node || !isVisible(node)) return false;
+        const rect = node.getBoundingClientRect();
+        return !!rect && rect.width >= 160 && rect.height >= 90;
+      }) || null;
+      if (!target) {
+        target = document.querySelector(".rmp-container,#rmpPlayer,#rmp");
+      }
+      if (!target || !isVisible(target)) return false;
+      targetRect = target.getBoundingClientRect();
+      if (!targetRect || targetRect.width < 80 || targetRect.height < 60) return false;
+    } catch (_) {
+      target = null;
+      targetRect = null;
+    }
+    if (!target || !targetRect) return false;
+    const centerX = targetRect.left + Math.max(1, Math.floor(targetRect.width / 2));
+    const centerY = targetRect.top + Math.max(1, Math.floor(targetRect.height / 2));
+    const rectText = `${Math.round(targetRect.left)},${Math.round(targetRect.top)} ${Math.round(targetRect.width)}x${Math.round(targetRect.height)}`;
+    return postTttTegoStartupNativePlayRequest(
+      attemptAtMs,
+      summarizeNode(target),
+      rectText,
+      centerX,
+      centerY,
+      String(reason || "ttt-loading-center"),
+      !!allowRetry
+    );
+  }
+
   function emitTttTegoPlayAssist(active, reason, attemptAtMs) {
     if (!isTttTegoFrame()) return;
     const reasonText = String(reason || (active ? "paused-ready" : "playing"));
@@ -3863,6 +7694,14 @@
             attemptAbsTegoStartupWake(delayMs);
             if (tttFrame) {
               emitTttStartupState(snapshot, delayMs, "content-ttt-tego-startup-base", true, "");
+              if (delayMs >= TTT_TEGO_STARTUP_WAKE_MAX_DELAY_MS) {
+                maybePostTttTegoLoadingNativePlayRequest(
+                  snapshot,
+                  delayMs + 350,
+                  "ttt-loading-hls-levels-center",
+                  false
+                );
+              }
             }
           } else if (tttFrame) {
             emitTttStartupState(snapshot, delayMs, "content-ttt-tego-startup-base", false, "wake-capped");
@@ -3900,6 +7739,15 @@
               ? "loading-hls-levels"
               : "loading-video-readiness";
           emitTttTegoPlayAssist(true, reason, delayMs);
+        }
+        if (!tttTegoStartupNativePlayRetryPosted && delayMs >= TTT_TEGO_STARTUP_EXTRA_REPROBE_DELAYS_MS[0]) {
+          const posted = maybePostTttTegoLoadingNativePlayRequest(
+            snapshot,
+            delayMs + 500,
+            "ttt-loading-hls-levels-retry",
+            true
+          );
+          if (posted) tttTegoStartupNativePlayRetryPosted = true;
         }
         if (ENABLE_TTT_TEGO_AUTOSTART_HACKS && !tttTegoStartupNativePlayRetryPosted) {
           setTimeout(() => {
@@ -3947,49 +7795,90 @@
   }
 
   function collect() {
+    const descriptor = globalThis.KfMediaCandidateDescriptor;
     const mediaElements = Array.from(document.querySelectorAll("video, audio"));
     const directCandidates = [];
+    const frameRole = window.top === window ? "top-level" : "child-frame";
+    const frameId = frameRole === "top-level" ? "top-frame" : "child-frame";
 
-    mediaElements.forEach((element) => {
+    mediaElements.forEach((element, mediaIndex) => {
       const currentSrc = element.currentSrc || element.src || "";
-      const sourceChildren = Array.from(element.querySelectorAll("source[src]")).map((source) => source.src || "");
-      const allSources = [currentSrc, ...sourceChildren].filter(Boolean);
-      allSources.forEach((src) => {
-        directCandidates.push({
-          src,
-          tagName: element.tagName.toLowerCase(),
-          visible: isVisible(element),
-          mimeType: element.getAttribute("type") || "",
-          videoWidth: element.videoWidth || 0,
-          videoHeight: element.videoHeight || 0,
-          readyState: element.readyState || 0,
-          networkState: element.networkState || 0,
-          currentTime: typeof element.currentTime === "number" ? element.currentTime : 0,
-          duration: typeof element.duration === "number" ? element.duration : 0
-        });
+      const sourceChildren = Array.from(element.querySelectorAll("source[src]")).map((source) => ({
+        src: source.src || "",
+        mimeType: source.getAttribute("type") || ""
+      }));
+      const allSources = [{ src: currentSrc, mimeType: element.getAttribute("type") || "" }, ...sourceChildren];
+      if (!allSources.some((entry) => entry.src)) {
+        allSources.splice(0, allSources.length, { src: "", mimeType: element.getAttribute("type") || "" });
+      }
+      allSources.forEach((entry, sourceIndex) => {
+        if (!descriptor || typeof descriptor.describeCandidate !== "function") return;
+        directCandidates.push(descriptor.describeCandidate(element, entry.src, {
+          frameId,
+          frameRole,
+          mediaOrder: mediaIndex + 1,
+          sourceOrder: sourceIndex + 1,
+          mimeType: entry.mimeType
+        }));
       });
     });
+    const candidateSignature = JSON.stringify(directCandidates);
+    mediaCandidateSettlement = descriptor.nextSettlement(mediaCandidateSettlement, candidateSignature);
+    let safePageUrl = "";
+    try {
+      const parsedPageUrl = new URL(window.location.href);
+      parsedPageUrl.username = "";
+      parsedPageUrl.password = "";
+      parsedPageUrl.search = "";
+      parsedPageUrl.hash = "";
+      safePageUrl = parsedPageUrl.toString();
+    } catch (_) {}
 
     return {
       type: "media-evidence",
       phase: "content-collect",
-      pageUrl: window.location.href,
-      title: document.title || "",
+      pageUrl: safePageUrl,
+      title: "",
+      frameId,
+      frameRole,
+      stableObservationCount: mediaCandidateSettlement.stableObservationCount,
+      settlementRequiredObservations: descriptor.REQUIRED_STABLE_OBSERVATIONS,
       candidateCount: directCandidates.length,
       directCandidates
     };
   }
 
   function publish() {
+    if (!mediaCollectionActive) return;
     const payload = collect();
+    applyGbnDailymotionEmbedPlayerFirstLayout("publish");
+    applyCvc9DailymotionPlayerFirstLayout("publish");
+    applyCvmVimeoPlayerFirstLayout();
+    maybePreferCvmVimeo1080p();
+    installMatchedPlayerHelperCapabilities();
+    applyIslandTvPlayerFirstLayout("publish");
+    applyDbsTvPlayerFirstLayout("publish");
+    applyCbnVirginIslandsPlayerFirstLayout();
+    maybeKickCbnVirginIslandsPlayer();
+    applyCnc3PlayerFirstLayout();
     const signature = JSON.stringify(payload);
     if (signature === lastSignature) {
+      emitCaribVisionSessionState("publish-no-change");
+      emitCaribVisionPlayAssist("publish-no-change");
+      emitCaribVisionFullscreenAssist("publish-no-change");
+      emitChtvPlayAssist("publish-no-change");
+      emitChtvFullscreenAssist("publish-no-change");
       emitCbcLiveHlsReady("publish-no-change");
       emitCaribVisionLiveHlsReady("publish-no-change");
       return;
     }
     lastSignature = signature;
     promptPayload(payload);
+    emitCaribVisionSessionState("publish");
+    emitCaribVisionPlayAssist("publish");
+    emitCaribVisionFullscreenAssist("publish");
+    emitChtvPlayAssist("publish");
+    emitChtvFullscreenAssist("publish");
     emitCbcLiveHlsReady("publish");
     emitCaribVisionLiveHlsReady("publish");
   }
@@ -3998,16 +7887,29 @@
   if (absTegoUrlRedirected) {
     return;
   }
+  scheduleCompassMinimalHelper();
+  scheduleIslandTvMinimalHelper();
+  scheduleDbsTvMinimalHelper();
+  scheduleRadiantTvHelper();
+  scheduleGbnDailymotionPlayerFirstLayout();
+  scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
+  ensureGbnConsentFrameDetector();
+  ensureCvc9ConsentFrameDetector();
   applyTegoQualityPolicy();
   scheduleAbsTegoStartupReprobe();
   scheduleAbsTegoPageFullscreenLike();
   scheduleNovusTelearubaFlow();
   scheduleCgtvPageFullscreenLike();
   scheduleCgtvPlayAssist();
+  scheduleCaribVisionPlayAssist();
+  scheduleCaribVisionFullscreenAssist();
+  scheduleChtvPlayAssist();
+  scheduleChtvFullscreenAssist();
   scheduleCbcLiveHlsReady();
   scheduleCaribVisionLiveHlsReady();
   maybeAttachAbsTegoTopPlaybackListener();
+  setupTttTegoTransportRevealBridge();
   setupAbsTegoFullscreenNativeBridge();
   window.addEventListener("load", publish, { once: true });
   window.addEventListener("load", applyTegoQualityPolicy, { once: true });
@@ -4016,11 +7918,26 @@
   window.addEventListener("load", scheduleNovusTelearubaFlow, { once: true });
   window.addEventListener("load", scheduleCgtvPageFullscreenLike, { once: true });
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
+  window.addEventListener("load", scheduleCaribVisionPlayAssist, { once: true });
+  window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
+  window.addEventListener("load", scheduleRadiantTvHelper, { once: true });
+  window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
+  window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
   window.addEventListener("load", scheduleCaribVisionLiveHlsReady, { once: true });
   window.addEventListener("load", maybeAttachAbsTegoTopPlaybackListener, { once: true });
+  window.addEventListener("load", setupTttTegoTransportRevealBridge, { once: true });
   document.addEventListener("visibilitychange", publish);
   document.addEventListener("visibilitychange", applyTegoQualityPolicy);
-  setInterval(publish, 2000);
+  mediaPublishTimer = setInterval(publish, 2000);
   setInterval(applyTegoQualityPolicy, 1200);
+  window.addEventListener("pagehide", () => {
+    mediaCollectionActive = false;
+    mediaCandidateSettlement = { signature: "", stableObservationCount: 0 };
+    lastSignature = "";
+    if (mediaPublishTimer !== null) {
+      clearInterval(mediaPublishTimer);
+      mediaPublishTimer = null;
+    }
+  }, { once: true });
 })();
