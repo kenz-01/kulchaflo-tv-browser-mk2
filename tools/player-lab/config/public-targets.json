@@ -514,6 +514,24 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "svg-tv-cloudflare-player": {
+      "providerId": "svg-tv-cloudflare-player",
+      "initialUrl": "https://customer-1drvoydzrkhpnbh4.cloudflarestream.com/64f76b07446d5d8801c4b9f6192ac79b/iframe",
+      "allowedMainFrameHosts": [
+        "customer-1drvoydzrkhpnbh4.cloudflarestream.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "mtv-guyana-player": {
+      "providerId": "mtv-guyana-player",
+      "initialUrl": "https://stream.mtvgy.com/mtvlive/embed.html",
+      "allowedMainFrameHosts": [
+        "stream.mtvgy.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
