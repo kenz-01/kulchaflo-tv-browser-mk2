@@ -19,6 +19,7 @@ const cases = [
   ['pro-fhi', { iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'] }],
   ['streamhoster', { iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'] }],
   ['telemicro', { iframeUrls: ['https://telemicro.com.do/players/5tv/index.php'] }],
+  ['radiant', { scriptUrls: ['https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js'], domSignals: ['rmp-container rmp-overlay-button'] }],
   ['native-html5', { mediaElementCount: 1 }],
 ];
 
@@ -182,4 +183,17 @@ test('ordinary category scripts do not false-positive as Tego', () => {
   });
   assert.notEqual(result.primaryFamily, 'tego');
   assert.equal(result.secondaryFamilies.includes('tego'), false);
+});
+
+
+test('Radiant Media Player outranks Telemicro wrapper evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://telemicro.com.do/players/15tv/index.php'],
+    scriptUrls: ['https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js'],
+    domSignals: ['rmp-container rmp-overlay-button rmp-play-pause'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'radiant');
+  assert.ok(result.secondaryFamilies.includes('telemicro'));
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
 });
