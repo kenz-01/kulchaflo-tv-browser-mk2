@@ -301,6 +301,46 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-897-zns-tv": {
+      "providerId": "zns-tv",
+      "initialUrl": "https://znsbahamas.com/",
+      "allowedMainFrameHosts": [
+        "znsbahamas.com",
+        "www.znsbahamas.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-896-xfm-aruba": {
+      "providerId": "xfm-aruba",
+      "initialUrl": "https://www.xfmaruba.com/",
+      "allowedMainFrameHosts": [
+        "xfmaruba.com",
+        "www.xfmaruba.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-895-vip-radio-live-tv": {
+      "providerId": "vip-radio-aruba-tv",
+      "initialUrl": "https://www.viponlineradio.com/vip-tv/",
+      "allowedMainFrameHosts": [
+        "viponlineradio.com",
+        "www.viponlineradio.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-894-balchi-tv": {
+      "providerId": "balchi-tv",
+      "initialUrl": "https://www.balchitv.com/",
+      "allowedMainFrameHosts": [
+        "balchitv.com",
+        "www.balchitv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
