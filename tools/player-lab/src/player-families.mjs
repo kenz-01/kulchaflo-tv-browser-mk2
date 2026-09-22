@@ -12,6 +12,7 @@ export const PLAYER_FAMILIES = Object.freeze([
   'novus',
   'infomaniak',
   'pro-fhi',
+  'streamhoster',
   'native-html5',
   'unknown',
 ]);
