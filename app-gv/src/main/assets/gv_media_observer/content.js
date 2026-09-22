@@ -168,6 +168,8 @@
   let radiantTvFullscreenAttempted = false;
   let svgTvCloudflareScheduled = false;
   let svgTvCloudflarePlayerFirstApplied = false;
+  let embeddedLiveVideoJsScheduled = false;
+  let embeddedLiveVideoJsApplied = false;
   const RADIANT_TV_RETRY_DELAYS_MS = [250, 750, 1600, 3200, 6000, 10000];
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
@@ -4338,6 +4340,141 @@
 
 
 
+
+  function embeddedLiveVideoJsTopKind() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host === "biztv.com" && path.indexOf("/watch-biztv") === 0) return "biz";
+    if (host === "rhtguadeloupe.fr" && path.indexOf("/live-video") === 0) return "rht";
+    return "";
+  }
+
+  function embeddedLiveVideoJsFrameKind() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const referrer = String(document.referrer || "").toLowerCase();
+    if (host === "c.streamhoster.com" && referrer.indexOf("biztv.com/watch-biztv") >= 0) return "biz";
+    if (host === "player.infomaniak.com" && referrer.indexOf("rhtguadeloupe.fr/live-video") >= 0) return "rht";
+    return "";
+  }
+
+  function findEmbeddedLiveVideoJsIframe() {
+    const kind = embeddedLiveVideoJsTopKind();
+    if (!kind) return null;
+    return Array.from(document.querySelectorAll("iframe")).find((frame) => {
+      try {
+        const src = new URL(String(frame.getAttribute("src") || frame.src || ""), window.location.href);
+        const host = src.hostname.toLowerCase().replace(/^www\./, "");
+        return kind === "biz" ? host === "c.streamhoster.com" : host === "player.infomaniak.com";
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function applyEmbeddedLiveVideoJsPlayerFirst() {
+    const kind = embeddedLiveVideoJsTopKind();
+    if (!kind) return false;
+    const frame = findEmbeddedLiveVideoJsIframe();
+    if (!frame) return false;
+    try {
+      const keep = new Set();
+      let node = frame;
+      while (node && node !== document.body) {
+        keep.add(node);
+        node = node.parentElement;
+      }
+      Array.from(document.body.children).forEach((child) => {
+        if (!keep.has(child) && child !== frame) child.style.setProperty("display", "none", "important");
+      });
+      node = frame;
+      while (node && node !== document.body) {
+        node.style.setProperty("position", "fixed", "important");
+        node.style.setProperty("inset", "0", "important");
+        node.style.setProperty("width", "100vw", "important");
+        node.style.setProperty("height", "100vh", "important");
+        node.style.setProperty("max-width", "none", "important");
+        node.style.setProperty("max-height", "none", "important");
+        node.style.setProperty("margin", "0", "important");
+        node.style.setProperty("padding", "0", "important");
+        node.style.setProperty("border", "0", "important");
+        node.style.setProperty("z-index", "2147483000", "important");
+        node = node.parentElement;
+      }
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      if (!embeddedLiveVideoJsApplied) {
+        embeddedLiveVideoJsApplied = true;
+        promptPayload({
+          type: "embedded-live-videojs-state",
+          phase: "content-embedded-live-videojs-player-first",
+          pageUrl: window.location.href,
+          provider: kind,
+          iframeRect: rectSummary(frame)
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function attemptEmbeddedLiveVideoJsPlayback(attemptAtMs) {
+    const kind = embeddedLiveVideoJsFrameKind();
+    if (!kind) return false;
+    const video = Array.from(document.querySelectorAll("video")).find((node) => isVisible(node)) ||
+      document.querySelector("video");
+    if (!video) return false;
+    let playAttempted = false;
+    try {
+      video.muted = false;
+      if (typeof video.volume === "number") video.volume = 1;
+      if (video.paused) {
+        const playResult = video.play();
+        playAttempted = true;
+        if (playResult && typeof playResult.catch === "function") playResult.catch(() => {});
+      }
+    } catch (_) {}
+    setTimeout(() => {
+      try {
+        video.muted = false;
+        if (typeof video.volume === "number") video.volume = 1;
+      } catch (_) {}
+      promptPayload({
+        type: "embedded-live-videojs-state",
+        phase: "content-embedded-live-videojs-playback-check",
+        pageUrl: window.location.href,
+        provider: kind,
+        attemptAtMs: Number(attemptAtMs || 0),
+        playAttempted,
+        playing: !video.paused && Number(video.currentTime || 0) > 0.1,
+        paused: !!video.paused,
+        muted: !!video.muted,
+        volume: Number(typeof video.volume === "number" ? video.volume : 1),
+        currentTime: Number(video.currentTime || 0),
+        videoWidth: Number(video.videoWidth || 0),
+        videoHeight: Number(video.videoHeight || 0)
+      });
+    }, 600);
+    return true;
+  }
+
+  function scheduleEmbeddedLiveVideoJsHelper() {
+    if (embeddedLiveVideoJsScheduled ||
+        (!embeddedLiveVideoJsTopKind() && !embeddedLiveVideoJsFrameKind())) return;
+    embeddedLiveVideoJsScheduled = true;
+    [200, 700, 1600, 3200, 6000, 10000].forEach((delayMs) => {
+      setTimeout(() => {
+        if (embeddedLiveVideoJsTopKind()) {
+          applyEmbeddedLiveVideoJsPlayerFirst();
+          return;
+        }
+        if (embeddedLiveVideoJsFrameKind()) attemptEmbeddedLiveVideoJsPlayback(delayMs);
+      }, delayMs);
+    });
+  }
+
   function isSvgTvTopPage() {
     const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
     const path = String(window.location.pathname || "").toLowerCase();
@@ -7992,6 +8129,7 @@
   scheduleDbsTvMinimalHelper();
   scheduleRadiantTvHelper();
   scheduleSvgTvCloudflareHelper();
+  scheduleEmbeddedLiveVideoJsHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
@@ -8023,6 +8161,7 @@
   window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleRadiantTvHelper, { once: true });
   window.addEventListener("load", scheduleSvgTvCloudflareHelper, { once: true });
+  window.addEventListener("load", scheduleEmbeddedLiveVideoJsHelper, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
