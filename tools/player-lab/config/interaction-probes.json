@@ -63,6 +63,31 @@
       "selector": "video",
       "family": "hlsjs",
       "activation": "media-play"
+    },
+    "kf-post-746-wapa-tv": {
+      "frameHost": "wapa.tv",
+      "selector": ".fp-playbutton",
+      "family": "flowplayer",
+      "activation": "dom-click"
+    },
+    "kf-post-745-wipr": {
+      "frameHost": "wipr.pr",
+      "selector": ".vjs-big-play-button",
+      "family": "videojs",
+      "activation": "dom-click"
+    },
+    "kf-post-737-ziz-tv": {
+      "frameHost": "zizonline.com",
+      "selector": "#tvPlay",
+      "family": "hlsjs",
+      "activation": "dom-click"
+    },
+    "kf-post-192-tv6": {
+      "frameHost": "geo.dailymotion.com",
+      "selector": ".playback_button",
+      "family": "dailymotion",
+      "activation": "dom-click",
+      "frameWaitMs": 12000
     }
   }
 }
