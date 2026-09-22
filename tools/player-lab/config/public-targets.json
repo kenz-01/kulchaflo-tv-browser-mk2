@@ -372,6 +372,28 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-902-tv-direct-13": {
+      "providerId": "tv-direct-13-curacao",
+      "initialUrl": "https://tvdirect13.com/",
+      "allowedMainFrameHosts": [
+        "tvdirect13.com",
+        "www.tvdirect13.com",
+        "directmediacuracao.com",
+        "www.directmediacuracao.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-893-pointe-tv": {
+      "providerId": "pointe-tv-antigua",
+      "initialUrl": "https://pointville.ag/live-stream/",
+      "allowedMainFrameHosts": [
+        "pointville.ag",
+        "www.pointville.ag"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
