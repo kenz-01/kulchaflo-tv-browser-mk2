@@ -414,6 +414,16 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "kf-post-928-svg-tv": {
+      "providerId": "svg-tv",
+      "initialUrl": "https://watchsvgtv.com/",
+      "allowedMainFrameHosts": [
+        "watchsvgtv.com",
+        "www.watchsvgtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
