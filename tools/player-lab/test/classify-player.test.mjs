@@ -1,0 +1,225 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { classifyPlayer, PLAYER_FAMILIES } from '../src/classify-player.mjs';
+import { loadPlayerSignatures } from '../src/load-player-signatures.mjs';
+
+const cases = [
+  ['youtube', { iframeUrls: ['https://www.youtube.com/embed/abc'], scriptUrls: ['https://www.youtube.com/s/player/base.js'] }],
+  ['vimeo', { iframeUrls: ['https://player.vimeo.com/video/123'], scriptUrls: ['https://player.vimeo.com/api/player.js'] }],
+  ['dailymotion', { iframeUrls: ['https://geo.dailymotion.com/player.html?video=x1'], scriptUrls: ['https://static1.dmcdn.net/player.js'] }],
+  ['jwplayer', { scriptUrls: ['https://cdn.jwplayer.com/players/HRQZA1oT-SkbOASt9.js'], domSignals: ['jw-player-container'] }],
+  ['videojs', { scriptUrls: ['https://vjs.zencdn.net/8.0/video.min.js'], domSignals: ['video-js vjs-default-skin'] }],
+  ['hlsjs', { scriptUrls: ['https://cdn.example.test/hls.min.js'], globals: ['Hls'] }],
+  ['shaka', { scriptUrls: ['https://cdn.example.test/shaka-player.compiled.js'], globals: ['shaka'] }],
+  ['flowplayer', { scriptUrls: ['https://cdn.example.test/flowplayer.min.js'], domSignals: ['flowplayer fp-player'] }],
+  ['bradmax', { iframeUrls: ['https://bradm.ax/player/live'], domSignals: ['bradmax-player'] }],
+  ['tego', { iframeUrls: ['https://player.tegotv.com/player.php?channel=1'], domSignals: ['tegotv-player'] }],
+  ['novus', { scriptUrls: ['https://novus.telearuba.aw/assets/novus.js'], domSignals: ['novus-channel'] }],
+  ['infomaniak', { iframeUrls: ['https://player.infomaniak.com/?channel=71605&player=11390'] }],
+  ['pro-fhi', { iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'] }],
+  ['streamhoster', { iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'] }],
+  ['telemicro', { iframeUrls: ['https://telemicro.com.do/players/5tv/index.php'] }],
+  ['radiant', { scriptUrls: ['https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js'], domSignals: ['rmp-container rmp-overlay-button'] }],
+  ['native-html5', { mediaElementCount: 1 }],
+];
+
+for (const [family, evidence] of cases) {
+  test(`classifies ${family}`, () => {
+    const result = classifyPlayer(evidence);
+    assert.equal(result.primaryFamily, family);
+    assert.notEqual(result.confidence, 'low');
+    assert.ok(result.supportingEvidence.length > 0);
+  });
+}
+
+test('hosted player outranks manifest evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://player.vimeo.com/video/123'],
+    mediaUrls: ['https://cdn.example.test/live/playlist.m3u8?token=secret'],
+  });
+  assert.equal(result.primaryFamily, 'vimeo');
+  assert.equal(result.secondaryFamilies.includes('hlsjs'), false);
+});
+
+test('arbitrary iframe does not classify as hosted player by generic path', () => {
+  const result = classifyPlayer({ iframeUrls: ['https://ads.example.test/player/frame'] });
+  assert.equal(result.primaryFamily, 'unknown');
+  assert.equal(result.secondaryFamilies.length, 0);
+});
+
+test('real Novus hostname classifies as Novus', () => {
+  const result = classifyPlayer({ iframeUrls: ['https://novus.telearuba.aw/live/channel-13'] });
+  assert.equal(result.primaryFamily, 'novus');
+});
+
+test('generic player path without Bradmax host does not classify as Bradmax', () => {
+  const result = classifyPlayer({ iframeUrls: ['https://video.example.test/player/live'] });
+  assert.equal(result.primaryFamily, 'unknown');
+  assert.equal(result.secondaryFamilies.includes('bradmax'), false);
+});
+
+test('known hosted-player hostname outranks generic HTML5 evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://player.vimeo.com/video/123'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'vimeo');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
+
+test('primary versus secondary ordering is deterministic for competing signatures', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://geo.dailymotion.com/player.html?video=x1'],
+    scriptUrls: ['https://cdn.jwplayer.com/players/example.js'],
+    domSignals: ['jw-player'],
+  });
+  assert.equal(result.primaryFamily, 'jwplayer');
+  assert.ok(result.secondaryFamilies.includes('dailymotion'));
+});
+
+test('confidence calculation returns high, medium and low', () => {
+  assert.equal(classifyPlayer({
+    iframeUrls: ['https://www.youtube.com/embed/abc'],
+    scriptUrls: ['https://www.youtube.com/s/player/base.js'],
+  }).confidence, 'high');
+
+  assert.equal(classifyPlayer({
+    scriptUrls: ['https://vjs.zencdn.net/8.0/video.min.js'],
+  }).confidence, 'medium');
+
+  assert.equal(classifyPlayer({
+    mediaUrls: ['https://cdn.example.test/live/index.m3u8'],
+  }).confidence, 'low');
+});
+
+test('manifest URLs alone are not Hls.js or Shaka Player library proof', () => {
+  assert.equal(classifyPlayer({
+    mediaUrls: ['https://cdn.example.test/live/index.m3u8'],
+  }).primaryFamily, 'unknown');
+  assert.equal(classifyPlayer({
+    mediaUrls: ['https://cdn.example.test/live/index.mpd'],
+  }).primaryFamily, 'unknown');
+});
+
+test('Hls.js script or global classifies as hlsjs', () => {
+  assert.equal(classifyPlayer({ scriptUrls: ['https://cdn.example.test/hls.min.js'] }).primaryFamily, 'hlsjs');
+  assert.equal(classifyPlayer({ globals: ['Hls'] }).primaryFamily, 'hlsjs');
+});
+
+test('Shaka script or global classifies as shaka', () => {
+  assert.equal(classifyPlayer({ scriptUrls: ['https://cdn.example.test/shaka-player.compiled.js'] }).primaryFamily, 'shaka');
+  assert.equal(classifyPlayer({ globals: ['shaka'] }).primaryFamily, 'shaka');
+});
+
+test('JWPlayer plus manifest remains JWPlayer primary', () => {
+  const result = classifyPlayer({
+    scriptUrls: ['https://cdn.jwplayer.com/players/example.js'],
+    mediaUrls: ['https://cdn.example.test/live/index.m3u8'],
+  });
+  assert.equal(result.primaryFamily, 'jwplayer');
+  assert.equal(result.secondaryFamilies.includes('hlsjs'), false);
+});
+
+test('unknown fallback has low confidence and uncertainty', () => {
+  const result = classifyPlayer({ scriptUrls: ['https://cdn.example.test/app.js'] });
+  assert.equal(result.primaryFamily, 'unknown');
+  assert.equal(result.confidence, 'low');
+  assert.ok(result.uncertainty.length > 0);
+});
+
+test('configured families match supported player families except unknown', () => {
+  const configured = Object.keys(loadPlayerSignatures().families).sort();
+  const supported = PLAYER_FAMILIES.filter((family) => family !== 'unknown').sort();
+  assert.deepEqual(configured, supported);
+});
+
+
+test('new live hosted-player families outrank generic HTML5 evidence', () => {
+  const infomaniak = classifyPlayer({
+    iframeUrls: ['https://player.infomaniak.com/?channel=example&player=example'],
+    mediaElementCount: 1,
+  });
+  assert.equal(infomaniak.primaryFamily, 'infomaniak');
+  assert.ok(infomaniak.secondaryFamilies.includes('native-html5'));
+
+  const proFhi = classifyPlayer({
+    iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'],
+    domSignals: ['fluid-player'],
+    mediaElementCount: 1,
+  });
+  assert.equal(proFhi.primaryFamily, 'pro-fhi');
+  assert.ok(proFhi.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('BizTV Streamhoster iframe remains hosted-player primary', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'streamhoster');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('Telemicro shared player routes classify as one hosted family', () => {
+  for (const path of ['5tv', '15tv', '13tv']) {
+    const result = classifyPlayer({
+      iframeUrls: [`https://telemicro.com.do/players/${path}/index.php`],
+      mediaElementCount: 1,
+    });
+    assert.equal(result.primaryFamily, 'telemicro');
+    assert.ok(result.secondaryFamilies.includes('native-html5'));
+  }
+});
+
+
+test('ordinary category scripts do not false-positive as Tego', () => {
+  const result = classifyPlayer({
+    scriptUrls: [
+      'https://example.test/wp-content/plugins/post-category-image/assets/category-public.js',
+      'https://example.test/assets/category-slider.js',
+    ],
+  });
+  assert.notEqual(result.primaryFamily, 'tego');
+  assert.equal(result.secondaryFamilies.includes('tego'), false);
+});
+
+
+test('Radiant Media Player outranks Telemicro wrapper evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://telemicro.com.do/players/15tv/index.php'],
+    scriptUrls: ['https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js'],
+    domSignals: ['rmp-container rmp-overlay-button rmp-play-pause'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'radiant');
+  assert.ok(result.secondaryFamilies.includes('telemicro'));
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('same-origin site scripts do not count as hosted-player script evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://telemicro.com.do/players/15tv/index.php'],
+    scriptUrls: [
+      'https://telemicro.com.do/wp-content/themes/site/app.js',
+      'https://telemicro.com.do/wp-includes/js/react.min.js',
+      'https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js',
+    ],
+    domSignals: ['rmp-container rmp-overlay-button'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'radiant');
+  assert.ok(result.secondaryFamilies.includes('telemicro'));
+});
+
+
+test('Cloudflare Stream customer iframe classifies as hosted player', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://customer-example.cloudflarestream.com/example/iframe'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'cloudflare-stream');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});

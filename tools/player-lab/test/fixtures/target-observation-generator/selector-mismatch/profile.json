@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "authority": "structured-profile-target-evidence",
+  "providerId": "selector-vimeo",
+  "targetId": "selector-vimeo",
+  "playerFamily": "vimeo",
+  "analysisSha256": "fba57f2acfeda9dce96def2be43aab2c010b84bd8dd4a52e967666a565b9e46b",
+  "transportAutohide": { "enabled": true, "selectors": [".observed-safe-controls"] }
+}

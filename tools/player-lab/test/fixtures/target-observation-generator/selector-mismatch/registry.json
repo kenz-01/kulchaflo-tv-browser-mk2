@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "selector-vimeo": {
+      "providerId": "selector-vimeo",
+      "targetId": "selector-vimeo",
+      "playerFamily": "vimeo",
+      "trustedMatchingEvidence": {
+        "frameHost": "vimeo.com",
+        "allowFrameSubdomains": false,
+        "pathPrefix": "/event/",
+        "pathSuffix": "/embed",
+        "referrerHosts": ["selector-vimeo.test"]
+      },
+      "transportAutohide": {
+        "enabled": true,
+        "idleMs": 3200,
+        "selectors": [".vp-controls", ".vp-sidedock", ".vp-title"]
+      },
+      "unsupportedRequirements": []
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "sample-cvm",
+  "targetId": "sample-cvm",
+  "playerFamily": "vimeo",
+  "analysisSha256": "5ed63d2e75a794c386b42c765f0aca8e029209504bfe0ed6fe1006c99fc0c73d",
+  "trustedMatchingEvidence": { "frameHost": "vimeo.com", "pathPrefix": "/event/", "pathSuffix": "/embed", "referrerHosts": ["sample-cvm.test"] },
+  "transportAutohide": { "enabled": true, "idleMs": 3200, "selectors": [".vp-controls"] },
+  "sourceEvidenceReferences": ["selector-mismatch-observed"]
+}

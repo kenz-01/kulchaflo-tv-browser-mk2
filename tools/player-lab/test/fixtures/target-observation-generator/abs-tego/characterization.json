@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "adapterVersion": "0.1.0-checkpoint4g",
+  "authority": "bounded-existing-characterization-adapter",
+  "characterizationKind": "abs-tego",
+  "basisArtifact": "tools/player-lab/test/fixtures/helper-evidence-bridge/abs-tego/helper-capability-observations.json",
+  "basisSha256": "36d51dc995a397edd0c7e029f0a904a2f4ffedbdcc87de70e29a757dd18faab9",
+  "providerId": "abs-channel-10",
+  "playerFamily": "tego",
+  "analysisSha256": "0c4b2bbc79df0065f1d74f96112360a49982c693918b304ceaabd06747c80d5f",
+  "trustedMatchingEvidence": {
+    "frameHost": "player.tegotv.com",
+    "allowFrameSubdomains": false,
+    "pathPrefix": "/player.php",
+    "pathSuffix": "/player.php",
+    "referrerHosts": ["abs.example.test"]
+  },
+  "transportAutohide": {
+    "enabled": true,
+    "idleMs": 1800,
+    "selectors": [".rmp-control-bar", ".rmp-controls", ".rmp-module"]
+  },
+  "unsupportedRequirements": ["readiness-predicate", "initial-settle-delay", "retry-delay-and-limit", "interaction-throttle", "inline-style-visibility", "external-reveal-bridge", "shared-provider-state"],
+  "providerSpecificBehavior": false,
+  "conflictingEvidence": false,
+  "behaviorEvidence": ["checkpoint-4c-advanced-helper-characterization"]
+}
