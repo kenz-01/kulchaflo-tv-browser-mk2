@@ -50,3 +50,34 @@
 - This repository was initialized so future sessions can recover context with `git log`, `git status`, and this file.
 - Keep generated directories, local SDK config, APK outputs, and large reference archives out of Git.
 - Commit coherent checkpoints after meaningful fixes or test-confirmed state changes.
+
+
+## AI-assisted development lane
+
+These rules extend the historical TV context above; they do not replace it.
+
+- GitHub is the durable task and review handoff.
+- Keep TV development independent from the Carnival/Events worker and its allowance.
+- Prefer GitHub-hosted deterministic CI. Do not require or repurpose the Events repository's self-hosted runner.
+- AI implementation is bounded to an explicit issue/task acceptance contract; do not run an automatic all-push AI loop.
+- Deterministic GitHub/Gradle work is the doorbell and gate. A model is a coder/reviewer, never the scheduler, poller, watchdog, or status loop.
+- Keep implementation and independent review distinct. Generated code is not accepted merely because its build is green.
+- Physical Bravia/TCL validation remains a separate evidence boundary whenever behaviour depends on real TV hardware.
+- Never mutate the legacy/dirty local TV checkout from GitHub automation.
+- Do not silently fall back to a paid model/provider when a bounded worker is unavailable or rate-limited.
+
+### Architecture invariants
+
+- Mainline runtime is GeckoView under `app-gv`; WebView is historical unless a task explicitly concerns it.
+- Browser navigation remains authoritative.
+- Only `EXTRACTED_STREAM` may be promoted to native Media3. `PAGE_VIDEO` remains a candidate, not automatic native promotion.
+- Keep provider/player helpers bounded and source-aware; no wrapper-wide fullscreen/autoplay hacks.
+- Preserve the generic runtime/player + adapter architecture and documented stable provider flows.
+
+### Implementation acceptance
+
+Every implementation PR must state its task/acceptance contract, run deterministic CI on the exact head, distinguish CI/emulator proof from physical-TV proof, document any remaining hardware boundary, and avoid unrelated refactors.
+
+The TV lane deliberately does **not** reproduce the former Events READY/review/repair state machine, orphan-head ownership machinery, transition leases, or a second watchdog. Add orchestration only when a demonstrated TV failure requires it, and extend one deterministic path rather than creating a parallel controller.
+
+Production/store release, credentials, destructive/irreversible external actions, or genuine product decisions require explicit human approval.
