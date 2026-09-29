@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "partial-vimeo",
+  "playerFamily": "vimeo",
+  "analysisSha256": "5c691a08829a89aac25a2c0239ff3c52b70aee277f3e8dbdc7951269ea1e319b",
+  "trustedMatchingEvidence": { "frameHost": "vimeo.com", "pathPrefix": "/event/", "pathSuffix": "/embed", "referrerHosts": ["partial-vimeo.test"] },
+  "transportAutohide": { "enabled": true, "idleMs": 3200, "selectors": [".vp-controls"] },
+  "sourceEvidenceReferences": ["partial-observed"]
+}
