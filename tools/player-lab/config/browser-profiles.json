@@ -1,0 +1,29 @@
+{
+  "profiles": {
+    "desktop-firefox": {
+      "description": "Default desktop Firefox-style profile matching the current app's normal browser identity.",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "notes": [
+        "This profile configures selected request headers and viewport only.",
+        "It is not equivalent to GeckoView runtime behavior."
+      ]
+    },
+    "sony-bravia": {
+      "description": "Sony Bravia / Android TV request identity copied from the current GeckoBrowserActivity.kt constant.",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64; BRAVIA 4K VH2 Build/STT2.230505.001.S100) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 Safari/537.36 SonyCEBrowser/1.0 KulchaFloTVMkII/2.0",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "notes": [
+        "This profile reproduces selected request headers and viewport only.",
+        "It is not equivalent to GeckoView, Sony firmware, Android TV input handling, or the physical Bravia device.",
+        "Current app policy keeps the Sony Bravia override disabled until a provider proves it needs Sony Bravia identity."
+      ]
+    }
+  }
+}
