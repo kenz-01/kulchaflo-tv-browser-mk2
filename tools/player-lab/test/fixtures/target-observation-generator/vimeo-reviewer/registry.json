@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "reviewer-vimeo": {
+      "providerId": "reviewer-vimeo",
+      "targetId": "reviewer-vimeo",
+      "playerFamily": "vimeo",
+      "trustedMatchingEvidence": {
+        "frameHost": "vimeo.com",
+        "allowFrameSubdomains": false,
+        "pathPrefix": "/event/",
+        "pathSuffix": "/embed",
+        "referrerHosts": ["reviewer-vimeo.test"]
+      },
+      "transportAutohide": {
+        "enabled": true,
+        "selectors": [".vp-controls", ".vp-sidedock", ".vp-title"]
+      },
+      "unsupportedRequirements": []
+    }
+  }
+}

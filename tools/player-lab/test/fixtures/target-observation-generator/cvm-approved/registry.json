@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "cvm-tv": {
+      "providerId": "cvm-tv",
+      "targetId": "cvm-tv",
+      "playerFamily": "vimeo",
+      "trustedMatchingEvidence": {
+        "frameHost": "vimeo.com",
+        "allowFrameSubdomains": true,
+        "pathPrefix": "/event/",
+        "pathSuffix": "/embed",
+        "referrerHosts": ["cvmtv.com", "www.cvmtv.com"]
+      },
+      "transportAutohide": {
+        "enabled": true,
+        "idleMs": 3200,
+        "selectors": [".vp-controls", ".vp-sidedock", ".vp-title"]
+      },
+      "unsupportedRequirements": []
+    }
+  }
+}
