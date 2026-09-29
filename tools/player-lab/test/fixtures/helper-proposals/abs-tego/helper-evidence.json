@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "providerId": "abs-channel-10",
+  "playerFamily": "tego",
+  "trustedMatchingEvidence": {
+    "frameHost": "player.tegotv.com",
+    "pathPrefix": "/player.php",
+    "pathSuffix": "/player.php",
+    "allowFrameSubdomains": false,
+    "referrerHosts": ["abs.example.test"]
+  },
+  "supportedCapabilities": ["enabled", "idleMs", "selectors", "oneOwnedTimer", "interactionReveal"],
+  "unsupportedRequirements": ["readiness-predicate", "initial-settle-delay", "retry-delay-and-limit", "interaction-throttle", "inline-style-visibility", "external-reveal-bridge", "shared-provider-state"],
+  "transportAutohide": {
+    "enabled": true,
+    "idleMs": 1800,
+    "selectors": [".rmp-control-bar", ".rmp-controls", ".rmp-module"],
+    "oneOwnedTimer": true,
+    "interactionReveal": true,
+    "pagehideCleanup": false,
+    "urlFreeDiagnostics": false
+  },
+  "sourceEvidenceReferences": ["checkpoint-4c-characterization"]
+}

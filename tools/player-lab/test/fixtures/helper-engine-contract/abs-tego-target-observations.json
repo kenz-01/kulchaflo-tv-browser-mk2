@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "abs-channel-10",
+  "playerFamily": "tego",
+  "analysisSha256": "0c4b2bbc79df0065f1d74f96112360a49982c693918b304ceaabd06747c80d5f",
+  "trustedMatchingEvidence": { "frameHost": "tego.example", "pathPrefix": "/embed/", "pathSuffix": "/live", "referrerHosts": ["abs-channel-10.test"] },
+  "transportAutohide": { "enabled": true, "idleMs": 1800, "selectors": [".rmp-controls"] },
+  "unsupportedRequirements": ["readiness-predicate", "initial-settle-delay", "retry-delay-and-limit"],
+  "sourceEvidenceReferences": ["abs-observed"]
+}

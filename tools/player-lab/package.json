@@ -1,0 +1,31 @@
+{
+  "name": "kulchaflo-player-lab",
+  "version": "0.1.0-checkpoint4j-a",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/*.mjs && node --check fixtures/*.mjs && node --check test/*.mjs && npm test",
+    "browser:check": "node src/browser-runtime.mjs --check",
+    "profile": "node src/cli.mjs",
+    "fixture": "node fixtures/server.mjs",
+    "profile:fixture": "node src/profile-fixture.mjs",
+    "analyze": "node src/analyze-cli.mjs",
+    "propose-helper": "node src/helper-proposal-cli.mjs",
+    "prepare-helper-evidence": "node src/prepare-helper-evidence-cli.mjs",
+    "recommend-helper": "node src/recommend-helper-cli.mjs",
+    "certify-helper-engine": "node src/helper-engine-cli.mjs",
+    "assemble-helper-observations": "node src/assemble-helper-observations-cli.mjs",
+    "derive-target-observations": "node src/derive-target-observations-cli.mjs",
+    "prepare-policy-review": "node src/prepare-policy-review-cli.mjs",
+    "generate-policy-diff": "node src/generate-policy-diff-cli.mjs",
+    "prepare-policy-application": "node src/prepare-policy-application-cli.mjs",
+    "interaction-probe": "node src/interaction-probe.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}
