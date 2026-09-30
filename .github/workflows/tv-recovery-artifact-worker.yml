@@ -1,0 +1,49 @@
+name: TV recovery artifact worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Bounded recovery issue
+        required: true
+        default: '10'
+
+permissions:
+  contents: read
+  issues: read
+  copilot-requests: write
+
+concurrency:
+  group: tv-recovery-artifact-worker
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: ${{ github.actor == 'kenz-01' && inputs.issue_number == '10' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - run: npm install -g @github/copilot
+      - name: Generate bounded recovery patch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git checkout -b candidate
+          copilot --allow-tool='shell(git:*)' --allow-tool='shell(cat)' --allow-tool='shell(find)' --allow-tool='shell(grep)' --allow-tool='shell(sed)' --allow-tool='shell(./gradlew:*)' -p 'Work only on recovery issue #10. Read AGENTS.md and .github/copilot-instructions.md. Reconcile existing helper lineage rather than reimplementing it. Treat 8422ebc9e0ad9cc7f23dc0b2fb5d5aa95744a137 as the last confirmed Mac/physical-TV foundation. Preserve legitimate descendant work in the repository, stable CBC/CVM/CGTV/Novus behavior, and current AI/CI files. Do not invent the local CBC diagnostic, include unrelated AGP/Gradle upgrades, change release/store/production configuration, or cross a physical-TV/product-routing boundary. Produce the smallest coherent common-foundation recovery and authoritative reconciliation documentation that can be justified from repository evidence. Run deterministic tests that fit the change. Do not commit or push.'
+          git diff --binary HEAD > /tmp/issue-10-recovery.patch
+          git status --porcelain > /tmp/issue-10-status.txt
+          test -s /tmp/issue-10-recovery.patch
+      - name: Upload immutable candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-10-recovery-${{ github.sha }}
+          path: |
+            /tmp/issue-10-recovery.patch
+            /tmp/issue-10-status.txt
+          if-no-files-found: error
+          retention-days: 7
