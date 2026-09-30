@@ -52,3 +52,24 @@ jobs:
             /tmp/issue-10-status.txt
           if-no-files-found: error
           retention-days: 7
+
+
+  report:
+    needs: recover
+    if: ${{ always() && github.event_name == 'issue_comment' && github.event.issue.number == 10 }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Publish deterministic run outcome
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESULT: ${{ needs.recover.result }}
+        run: |
+          set -euo pipefail
+          if [ "$RESULT" = success ]; then
+            BODY="TV_RECOVERY_ARTIFACT_READY run=${GITHUB_RUN_ID} base=${GITHUB_SHA}\n\nRead-only Copilot recovery completed. Inspect the immutable Actions artifact before any trusted publication."
+          else
+            BODY="TV_RECOVERY_WORKER_FAILED run=${GITHUB_RUN_ID} base=${GITHUB_SHA} result=$RESULT\n\nNo candidate is accepted or published. Inspect the run and fail closed."
+          fi
+          gh issue comment 10 --repo "$GITHUB_REPOSITORY" --body "$BODY"
