@@ -81,3 +81,14 @@ Every implementation PR must state its task/acceptance contract, run determinist
 The TV lane deliberately does **not** reproduce the former Events READY/review/repair state machine, orphan-head ownership machinery, transition leases, or a second watchdog. Add orchestration only when a demonstrated TV failure requires it, and extend one deterministic path rather than creating a parallel controller.
 
 Production/store release, credentials, destructive/irreversible external actions, or genuine product decisions require explicit human approval.
+
+
+## 2026-09-30 recovery control-plane audit
+
+- Issue #10 is the sole active TV recovery task until the historical helper lineage is reconciled.
+- The last confirmed Mac/physical-TV foundation is `8422ebc9e0ad9cc7f23dc0b2fb5d5aa95744a137`; later provider branches are descendants to reconcile, not greenfield specifications.
+- Local AGP/Gradle version edits made after that APK are not physical-TV truth and must remain excluded unless separately rebuilt and validated.
+- The recovery worker is deliberately unprivileged: Copilot CLI may edit only its ephemeral Actions checkout and exports a patch/status artifact. It never receives repository-write, release/store, production, or Events credentials.
+- Authoritative wake is an owner-authored Issue #10 comment containing `TV_RECOVERY_RUN issue=10`, or an explicit manual dispatch. Do not rely on a one-time workflow-file push as the worker clock.
+- A green worker artifact is a candidate, not acceptance. Deterministic CI and independent inspection precede trusted publication; physical Bravia/TCL proof remains separate where required.
+- Do not add another watchdog, runner, transition lease system, or automatic all-push model loop to solve a missed wake.
