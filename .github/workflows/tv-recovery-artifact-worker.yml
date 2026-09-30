@@ -1,6 +1,9 @@
 name: TV recovery artifact worker
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tv-recovery-artifact-worker.yml']
   workflow_dispatch:
     inputs:
       issue_number:
@@ -19,7 +22,7 @@ concurrency:
 
 jobs:
   recover:
-    if: ${{ github.actor == 'kenz-01' && inputs.issue_number == '10' }}
+    if: ${{ github.actor == 'kenz-01' && (github.event_name == 'push' || inputs.issue_number == '10') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
