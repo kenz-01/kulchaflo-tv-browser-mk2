@@ -1,0 +1,27 @@
+name: TV Copilot CLI canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
+      - name: Prove bounded Copilot CLI invocation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git status --porcelain)" = ""
+          copilot --allow-tool='shell(git:*)' --allow-tool='shell(cat)' --allow-tool='shell(test)' -p 'Commissioning canary only. Inspect this repository read-only. Run git rev-parse HEAD and read AGENTS.md plus .github/copilot-instructions.md if present. Then print exactly one final line beginning TV_COPILOT_CANARY_OK followed by the exact HEAD SHA. Do not edit files, do not create commits, do not access network resources other than normal Copilot service access, and do not mutate GitHub.' | tee /tmp/copilot-canary.txt
+          grep -Eq '^TV_COPILOT_CANARY_OK [0-9a-f]{40}$' /tmp/copilot-canary.txt
+          test "$(git status --porcelain)" = ""
