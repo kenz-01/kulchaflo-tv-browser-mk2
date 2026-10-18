@@ -143,3 +143,17 @@ test('unknown sites and ambiguous multi-player routes are not altered', () => {
   multiTimers.forEach((callback) => callback());
   assert.equal(changes, 0);
 });
+
+test('native GeckoView keeps the 19 new official channels browser-first', () => {
+  const native = readFileSync(resolve(process.cwd(),
+    '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt'), 'utf8');
+  assert.ok(native.includes('private fun isKnownFamilyLivePageUrl(url: String): Boolean'));
+  assert.ok(native.includes('isKnownFamilyLivePageUrl(currentUrl)'));
+  assert.ok(native.includes('isKnownFamilyLivePageUrl(pageUrl)'));
+  assert.ok(native.includes('isKnownFamilyLivePageUrl(url) -> true'));
+  assert.ok(native.includes('known-family-browser-first'));
+  for (const route of routes) {
+    assert.ok(native.includes('"' + route.host + '" -> path == "' + route.path + '"'),
+      'missing exact native browser-first route: ' + route.id);
+  }
+});

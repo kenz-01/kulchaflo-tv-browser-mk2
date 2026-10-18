@@ -32,6 +32,8 @@ The active source for the 19 official routes is
 hidden iframe rewrites, native Media3 promotion, new Android permissions,
 unbounded tap retries, dependency installs, extra workflows or paid agents.
 
+Native GeckoView adds a matching exact-route safeguard in `isKnownFamilyLivePageUrl` so both extracted-stream observations and media candidates from these official pages retain browser ownership; all existing manual provider allowlists remain unchanged.
+
 ## Acceptance
 
 Offline assertions check all 19 route boundaries, registry alignment, trusted

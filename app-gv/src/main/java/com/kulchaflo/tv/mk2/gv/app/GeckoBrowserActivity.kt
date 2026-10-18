@@ -1899,6 +1899,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
+                // Preserve browser playback on every verified known-family top-level route.
+                if (isKnownFamilyLivePageUrl(currentUrl)) {
+                    GvLogger.i("GvMedia", "known-family native promote skipped reason=browser-first")
+                    promotedMediaPlayer.stop(reason = "known-family-browser-first")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 if (isCvc9DailymotionWatchPageUrl(currentUrl) || isCvc9DailymotionBrowserPlayerContextUrl(observation.url)) {
                     GvLogger.i(
                         "GvMedia",
@@ -15219,6 +15226,12 @@ return changed>0;
                 return
             }
         }
+        if (isKnownFamilyLivePageUrl(pageUrl) || isKnownFamilyLivePageUrl(currentUrl)) {
+            GvLogger.i("GvMedia", "known-family candidate ignored reason=browser-first")
+            promotedMediaPlayer.stop(reason = "known-family-browser-first")
+            geckoView.visibility = View.VISIBLE
+            return
+        }
         if (isCvc9DailymotionBrowserPlayerContextUrl(pageUrl)) {
             GvLogger.i(
                 "GvMedia",
@@ -17359,11 +17372,41 @@ return changed>0;
         return !isLiveMediaSurfaceUrl(url)
     }
 
+    private fun isKnownFamilyLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return when (host) {
+            "acentotv.acento.com.do" -> path == "/en-vivo.html"
+            "ahoratv.com" -> path == "/"
+            "antena7.com.do" -> path == "/envivo-canal-7"
+            "energiabonaire.com" -> path == "/"
+            "prensa-latina.cu" -> path == "/"
+            "etv.gp" -> path == "/direct"
+            "bonce.tv" -> path == "/"
+            "peyiguyane.com" -> path == "/tele-peyi"
+            "xfmaruba.com" -> path == "/"
+            "balchitv.com" -> path == "/"
+            "cdn.teleonce.com" -> path == "/en-vivo"
+            "tvdirect13.com" -> path == "/"
+            "telesistema11.com.do" -> path == "/en-vivo"
+            "teleuniversotv.com" -> path == "/"
+            "pointville.ag" -> path == "/live-stream"
+            "bonaotv.com" -> path == "/"
+            "rtvd.gob.do" -> path == "/"
+            "yunavision.com" -> path == "/"
+            "adoramtv.org" -> path == "/programacion-en-vivo"
+            else -> false
+        }
+    }
+
     private fun isLiveMediaSurfaceUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return when {
+            isKnownFamilyLivePageUrl(url) -> true
             host == "cbc.bb" && path.startsWith("/live") -> true
             isDbsTvLivePageUrl(url) -> true
             host == "kulchaflo.com" && path.startsWith("/channels/") -> true
