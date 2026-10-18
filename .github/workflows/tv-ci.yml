@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   deterministic:
-    name: Android deterministic gate
+    name: Android and Player Lab deterministic gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -34,3 +34,15 @@ jobs:
         uses: gradle/actions/wrapper-validation@v4
       - name: Compile and test GeckoView runtime
         run: ./gradlew :app-gv:test :app-gv:assembleBraviaRelease --console=plain
+      - name: Set up Node for offline Player Lab tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tools/player-lab/package-lock.json
+      - name: Install Player Lab JavaScript dependencies without browser download
+        run: npm ci --ignore-scripts --prefix tools/player-lab
+      - name: Check GeckoView media observer syntax
+        run: node --check app-gv/src/main/assets/gv_media_observer/content.js
+      - name: Run Player Lab deterministic tests
+        run: npm test --prefix tools/player-lab
