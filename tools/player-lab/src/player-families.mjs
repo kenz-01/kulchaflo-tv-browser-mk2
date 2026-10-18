@@ -1,0 +1,15 @@
+export const PLAYER_FAMILIES = Object.freeze([
+  'youtube',
+  'vimeo',
+  'dailymotion',
+  'jwplayer',
+  'videojs',
+  'hlsjs',
+  'shaka',
+  'flowplayer',
+  'bradmax',
+  'tego',
+  'novus',
+  'native-html5',
+  'unknown',
+]);

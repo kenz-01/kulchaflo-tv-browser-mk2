@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "authority": "bounded-reviewer-input",
+  "providerId": "reviewer-vimeo",
+  "targetId": "reviewer-vimeo",
+  "playerFamily": "vimeo",
+  "analysisSha256": "190103d8ebe175374b9046b4ef38d5d58cce33c599bc73dc09340692f1a1b79b",
+  "transportAutohide": { "idleMs": 3200 }
+}

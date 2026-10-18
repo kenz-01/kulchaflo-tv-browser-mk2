@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "targets": {
+    "cvm-tv": {
+      "providerId": "cvm-tv",
+      "initialUrl": "https://www.cvmtv.com/live",
+      "allowedMainFrameHosts": [
+        "www.cvmtv.com",
+        "cvmtv.com"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    },
+    "mtm-tv": {
+      "providerId": "mtm-tv",
+      "initialUrl": "https://www.mercyandtruth.tv/watch/?utm_source=KulchaFlo",
+      "allowedMainFrameHosts": [
+        "mercyandtruth.tv",
+        "www.mercyandtruth.tv"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
+    }
+  }
+}
