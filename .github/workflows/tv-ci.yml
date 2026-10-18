@@ -45,4 +45,4 @@ jobs:
       - name: Check GeckoView media observer syntax
         run: node --check app-gv/src/main/assets/gv_media_observer/content.js
       - name: Run Player Lab deterministic tests
-        run: npm test --prefix tools/player-lab
+        run: npm test --prefix tools/player-lab -- --test-concurrency=1
