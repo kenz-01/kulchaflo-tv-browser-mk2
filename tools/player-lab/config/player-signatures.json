@@ -1,0 +1,90 @@
+{
+  "families": {
+    "youtube": {
+      "hostPatterns": ["youtube.com", "youtube-nocookie.com", "youtu.be", "ytimg.com"],
+      "pathPatterns": ["/embed/", "/watch", "/shorts/"],
+      "scriptPatterns": ["youtube", "ytimg"],
+      "domPatterns": ["youtube", "ytp-", "html5-video-player"],
+      "globalNames": ["YT"]
+    },
+    "vimeo": {
+      "hostPatterns": ["vimeo.com", "player.vimeo.com"],
+      "pathPatterns": ["/video/", "/event/"],
+      "scriptPatterns": ["player.vimeo.com", "vimeo"],
+      "domPatterns": ["vimeo"],
+      "globalNames": ["Vimeo"]
+    },
+    "dailymotion": {
+      "hostPatterns": ["dailymotion.com", "dmcdn.net", "geo.dailymotion.com"],
+      "pathPatterns": ["/player", "/embed/", "/video/"],
+      "scriptPatterns": ["dailymotion", "dmcdn"],
+      "domPatterns": ["dailymotion"],
+      "globalNames": ["DM"]
+    },
+    "jwplayer": {
+      "hostPatterns": ["jwplayer.com", "cdn.jwplayer.com"],
+      "pathPatterns": ["/players/", "/libraries/"],
+      "scriptPatterns": ["jwplayer", "cdn.jwplayer.com"],
+      "domPatterns": ["jwplayer", "jw-player", "jwplayer-container", "jw-"],
+      "globalNames": ["jwplayer"]
+    },
+    "videojs": {
+      "hostPatterns": ["videojs.com", "vjs.zencdn.net"],
+      "pathPatterns": ["/video.js", "/video.min.js"],
+      "scriptPatterns": ["video.js", "video.min.js", "videojs"],
+      "domPatterns": ["video-js", "vjs-", "videojs"],
+      "globalNames": ["videojs"]
+    },
+    "hlsjs": {
+      "hostPatterns": ["hlsjs.video-dev.org"],
+      "pathPatterns": ["/hls.js", "/hls.min.js"],
+      "scriptPatterns": ["hls.js", "hls.min.js"],
+      "domPatterns": ["hls-js", "hlsjs"],
+      "globalNames": ["Hls"]
+    },
+    "shaka": {
+      "hostPatterns": ["shaka-player-demo.appspot.com"],
+      "pathPatterns": ["/shaka-player", "/shaka"],
+      "scriptPatterns": ["shaka-player", "shaka-player.compiled", "shaka"],
+      "domPatterns": ["shaka"],
+      "globalNames": ["shaka"]
+    },
+    "flowplayer": {
+      "hostPatterns": ["flowplayer.com"],
+      "pathPatterns": ["/flowplayer"],
+      "scriptPatterns": ["flowplayer"],
+      "domPatterns": ["flowplayer", "fp-"],
+      "globalNames": ["flowplayer"]
+    },
+    "bradmax": {
+      "hostPatterns": ["bradm.ax", "bradmax.com"],
+      "pathPatterns": ["/player"],
+      "scriptPatterns": ["bradmax", "bradm.ax"],
+      "domPatterns": ["bradmax", "bradmax-player"],
+      "globalNames": ["bradmax"]
+    },
+    "tego": {
+      "hostPatterns": ["player.tegotv.com", "tegotv.com"],
+      "pathPatterns": ["/player.php"],
+      "scriptPatterns": ["tegotv", "tego"],
+      "domPatterns": ["tego", "tegotv"],
+      "globalNames": []
+    },
+    "novus": {
+      "hostPatterns": ["novus.telearuba.aw", "telearuba.aw"],
+      "pathPatterns": [],
+      "scriptPatterns": ["novus", "telearuba"],
+      "domPatterns": ["novus", "telearuba"],
+      "globalNames": []
+    },
+    "native-html5": {
+      "hostPatterns": [],
+      "pathPatterns": [],
+      "scriptPatterns": [],
+      "domPatterns": ["html5-video", "native-video"],
+      "globalNames": []
+    }
+  },
+  "manifestExtensions": [".m3u8", ".mpd"],
+  "manifestNote": "Manifest evidence is diagnostic only and must not by itself justify exact native promotion."
+}

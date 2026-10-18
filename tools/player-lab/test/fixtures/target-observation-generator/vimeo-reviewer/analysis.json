@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "providerId": "reviewer-vimeo",
+  "targetId": "reviewer-vimeo",
+  "evidenceSummary": { "primaryPlayerFamily": "vimeo" }
+}

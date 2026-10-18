@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "authority": "directly-observed-structured-evidence",
+  "providerId": "island-tv",
+  "playerFamily": "vimeo",
+  "analysisSha256": "c2c7813361fbea0d009e0813a6b58aebcca114ede33f22f05bded6f39f05c441",
+  "trustedMatchingEvidence": { "frameHost": "vimeo.com", "pathPrefix": "/event/", "pathSuffix": "/embed", "referrerHosts": ["island-tv.test"] },
+  "providerSpecificBehavior": true,
+  "sourceEvidenceReferences": ["island-observed"]
+}

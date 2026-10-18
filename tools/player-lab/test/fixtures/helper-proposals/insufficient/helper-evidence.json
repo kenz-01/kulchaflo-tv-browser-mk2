@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "providerId": "unknown-player",
+  "playerFamily": "unknown",
+  "trustedMatchingEvidence": {},
+  "supportedCapabilities": [],
+  "unsupportedRequirements": [],
+  "conflictingEvidence": true,
+  "sourceEvidenceReferences": ["weak-evidence"]
+}
