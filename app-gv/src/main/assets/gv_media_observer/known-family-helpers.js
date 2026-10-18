@@ -103,7 +103,7 @@
     }
     if (family === "videojs") {
       return chooseOne(Array.from(document.querySelectorAll(".video-js, video-js")).filter((node) =>
-        node.querySelector("video, .vjs-tech")));
+        node.tagName === "VIDEO" || node.querySelector("video, .vjs-tech")));
     }
     if (family === "jwplayer") {
       return chooseOne(Array.from(document.querySelectorAll(".jwplayer, .jw-player")).filter((node) =>

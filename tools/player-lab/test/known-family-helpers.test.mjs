@@ -80,3 +80,66 @@ test('helper is isolated and does not enable broad autoplay or native promotion'
     }
   }
 });
+
+test('real Video.js video element gets one bounded play/unmute and player-first shell', () => {
+  const writes = [];
+  let plays = 0;
+  const style = () => ({ setProperty: (...args) => writes.push(args) });
+  const video = {
+    tagName: 'VIDEO', style: style(), readyState: 3, paused: true,
+    volume: 0, muted: true,
+    getBoundingClientRect: () => ({ width: 960, height: 540 }),
+    querySelector: () => null,
+    play() { plays += 1; return Promise.resolve(); }
+  };
+  const body = { style: style(), children: [video] };
+  video.parentElement = body;
+  const timers = [];
+  const fakeWindow = { location: { href: 'https://bonce.tv/' } };
+  fakeWindow.top = fakeWindow;
+  const fakeDocument = {
+    body, documentElement: { style: style() },
+    querySelectorAll(selector) {
+      return selector === '.video-js, video-js' ? [video] : [];
+    }
+  };
+  runInNewContext(script, {
+    URL, window: fakeWindow, document: fakeDocument,
+    setTimeout(callback) { timers.push(callback); },
+    console: { info() {} }
+  });
+  assert.equal(timers.length, 5);
+  timers.forEach((callback) => callback());
+  assert.equal(plays, 1);
+  assert.equal(video.muted, false);
+  assert.equal(video.volume, 1);
+  assert.ok(writes.some((args) => args[0] === 'position' && args[1] === 'fixed'));
+});
+
+test('unknown sites and ambiguous multi-player routes are not altered', () => {
+  const timers = [];
+  const unknownWindow = { location: { href: 'https://unknown.example/' } };
+  unknownWindow.top = unknownWindow;
+  runInNewContext(script, {
+    URL, window: unknownWindow, document: { body: {} },
+    setTimeout(callback) { timers.push(callback); }
+  });
+  assert.equal(timers.length, 0);
+
+  const candidates = [1, 2].map(() => ({
+    tagName: 'VIDEO', readyState: 3, src: 'https://example.com/live.m3u8',
+    getBoundingClientRect: () => ({ width: 960, height: 540 })
+  }));
+  const multiWindow = { location: { href: 'https://rtvd.gob.do/' } };
+  multiWindow.top = multiWindow;
+  const multiTimers = [];
+  let changes = 0;
+  runInNewContext(script, {
+    URL, window: multiWindow,
+    document: { body: { children: [] }, querySelectorAll: () => candidates },
+    setTimeout(callback) { multiTimers.push(callback); },
+    console: { info() { changes += 1; } }
+  });
+  multiTimers.forEach((callback) => callback());
+  assert.equal(changes, 0);
+});
