@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout exact head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -46,3 +48,17 @@ jobs:
         run: node --check app-gv/src/main/assets/gv_media_observer/content.js
       - name: Run Player Lab deterministic tests
         run: npm test --prefix tools/player-lab -- --test-concurrency=1
+      - name: Record Bravia APK provenance
+        run: |
+          apk=app-gv/build/outputs/apk/bravia/release/app-gv-bravia-release.apk
+          echo "git_commit=$(git rev-parse HEAD)" > app-gv/build/outputs/apk/bravia/release/BUILD_PROVENANCE.txt
+          sha256sum "$apk" >> app-gv/build/outputs/apk/bravia/release/BUILD_PROVENANCE.txt
+      - name: Upload Bravia acceptance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kulchaflo-bravia-acceptance
+          path: |
+            app-gv/build/outputs/apk/bravia/release/app-gv-bravia-release.apk
+            app-gv/build/outputs/apk/bravia/release/BUILD_PROVENANCE.txt
+          if-no-files-found: error
+          retention-days: 7
