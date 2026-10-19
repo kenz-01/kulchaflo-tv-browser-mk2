@@ -52,3 +52,18 @@ automatic arbitrary channel choice is permitted.
 
 Until physically validated, these are **candidate helpers**, not 19 accepted
 working channels. No merge to main and no app-store publication.
+
+## Physical Bravia trial, 19 October: focused follow-up
+
+The user confirmed CBC TV8 is down on the broadcaster's own website; CBC helper remains unchanged.
+Logcat showed Telemicro's Radiant player-first event but the cursor stayed in focus-navigation mode,
+Bonce's autoplay request retained the default decision, and Telesistema's geo.dailymotion.com
+request also retained the default decision. Telesistema's embedded player appeared around eight
+seconds after opening the page. Balchi's actual source returned HTTP 404 and needs source recovery.
+
+The follow-up patch adds: a Telemicro pointer-sleep event matching manual GBN/CBN behaviour;
+narrow Bonce first-party and Telesistema/Dailymotion content autoplay permission;
+Bonce-only single visible native-video fallback; retries extending to 15 seconds; and
+one player-first or no-player diagnostic emitted through the existing GeckoView bridge.
+No new native promotion, cross-site autoplay permission or CBC player changes. These remain
+test candidates until a second physical Bravia acceptance pass.

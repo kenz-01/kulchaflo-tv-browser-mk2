@@ -108,7 +108,7 @@ test('real Video.js video element gets one bounded play/unmute and player-first 
     setTimeout(callback) { timers.push(callback); },
     console: { info() {} }
   });
-  assert.equal(timers.length, 5);
+  assert.equal(timers.length, 7);
   timers.forEach((callback) => callback());
   assert.equal(plays, 1);
   assert.equal(video.muted, false);
@@ -156,4 +156,57 @@ test('native GeckoView keeps the 19 new official channels browser-first', () => 
     assert.ok(native.includes('"' + route.host + '" -> path == "' + route.path + '"'),
       'missing exact native browser-first route: ' + route.id);
   }
+});
+
+test('Bonce exact route accepts one ready plain HTML5 video, not any arbitrary multi-video page', () => {
+  const writes = [];
+  const state = [];
+  let started = 0;
+  const style = () => ({ setProperty: (...args) => writes.push(args) });
+  const video = {
+    tagName: 'VIDEO', style: style(), readyState: 3, paused: true,
+    src: 'https://example.com/hls/stream.m3u8', volume: 0, muted: true,
+    getBoundingClientRect: () => ({ width: 800, height: 450 }),
+    querySelector: () => null,
+    play() { started++; return Promise.resolve(); }
+  };
+  const body = { style: style(), children: [video] };
+  video.parentElement = body;
+  const fakeWindow = {
+    location: { href: 'https://bonce.tv/?utm_source=KulchaFlo' },
+    prompt(message) { state.push(message); }
+  };
+  fakeWindow.top = fakeWindow;
+  const timers = [];
+  runInNewContext(script, {
+    URL, window: fakeWindow,
+    document: {
+      body, documentElement: { style: style() },
+      querySelectorAll(query) {
+        if (query === 'video') return [video];
+        if (query === 'iframe') return [];
+        return [];
+      }
+    },
+    setTimeout(callback) { timers.push(callback); }
+  });
+  timers.forEach((callback) => callback());
+  assert.equal(started, 1);
+  assert.equal(video.muted, false);
+  assert.equal(video.volume, 1);
+  assert.equal(state.length, 1);
+  assert.ok(state[0].includes('content-known-family-player-first'));
+  assert.ok(writes.some((write) => write[0] === 'position' && write[1] === 'fixed'));
+});
+
+test('only Bonce and Telesistema get additional source-scoped autoplay permissions', () => {
+  const native = readFileSync(resolve(process.cwd(),
+    '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt'), 'utf8');
+  assert.ok(native.includes('knownFamilyAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW'));
+  assert.ok(native.includes('knownFamilyPermissionUri &&'));
+  assert.ok(native.includes('knownFamilyHost == "bonce.tv"'));
+  assert.ok(native.includes('knownFamilyHost == "telesistema11.com.do"'));
+  assert.ok(native.includes('thirdPartyHost?.removePrefix("www.") == "geo.dailymotion.com"'));
+  assert.ok(native.includes('reason = "radiant-player-first"'));
+  assert.ok(native.includes('reason = "known-family-player-first"'));
 });

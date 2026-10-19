@@ -81,7 +81,8 @@
   if (!route) return;
   let playerFirstApplied = false;
   const startedVideos = new WeakSet();
-  const RETRY_MS = [250, 800, 1800, 3500, 6000];
+  // Telesistema's Dailymotion player arrived around eight seconds after navigation.
+  const RETRY_MS = [250, 800, 1800, 3500, 6000, 10000, 15000];
 
   function isUsable(node) {
     if (!node || typeof node.getBoundingClientRect !== "function") return false;
@@ -102,8 +103,16 @@
         trustedFrameUrl(family, frame.getAttribute("src") || frame.src, window.location.href)));
     }
     if (family === "videojs") {
-      return chooseOne(Array.from(document.querySelectorAll(".video-js, video-js")).filter((node) =>
+      const markedPlayer = chooseOne(Array.from(document.querySelectorAll(".video-js, video-js")).filter((node) =>
         node.tagName === "VIDEO" || node.querySelector("video, .vjs-tech")));
+      if (markedPlayer) return markedPlayer;
+      // Bravia log: Bonce exposes video media evidence without a known Video.js wrapper.
+      // Only its exact official live route may use a single ready visible HTML5 video.
+      if (route.id === "bonce-tv") {
+        return chooseOne(Array.from(document.querySelectorAll("video")).filter((video) =>
+          video.readyState >= 2 || !!(video.currentSrc || video.src)));
+      }
+      return null;
     }
     if (family === "jwplayer") {
       return chooseOne(Array.from(document.querySelectorAll(".jwplayer, .jw-player")).filter((node) =>
@@ -147,8 +156,15 @@
     document.body.style.setProperty("margin", "0", "important");
     document.body.style.setProperty("background", "#000", "important");
     playerFirstApplied = true;
+    // Same private extension bridge and pointer sleep used by manual GBN/CBN helpers.
     try {
-      console.info("[KF known-family] player-first", route.id, route.family);
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "known-family-state",
+        phase: "content-known-family-player-first",
+        pageUrl: window.location.href,
+        providerId: route.id,
+        playerFamily: route.family
+      }), "");
     } catch (_) {}
   }
 
@@ -190,5 +206,20 @@
     maybeStartMedia(player);
   }
 
-  RETRY_MS.forEach((delay) => setTimeout(attempt, delay));
+  RETRY_MS.forEach((delay, index) => setTimeout(() => {
+    attempt();
+    if (index !== RETRY_MS.length - 1 || playerFirstApplied) return;
+    // One bounded diagnostic for the next logcat. No iframe URLs or media tokens.
+    try {
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "known-family-state",
+        phase: "content-known-family-no-player",
+        pageUrl: window.location.href,
+        providerId: route.id,
+        playerFamily: route.family,
+        videoCount: document.querySelectorAll("video").length,
+        iframeCount: document.querySelectorAll("iframe").length
+      }), "");
+    } catch (_) {}
+  }, delay));
 })();

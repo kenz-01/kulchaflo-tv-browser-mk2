@@ -9893,6 +9893,24 @@ return changed>0;
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
                     ) &&
                     (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
+            val knownFamilyLiveUrl = when {
+                isKnownFamilyLivePageUrl(activeSessionUrl) -> activeSessionUrl
+                isKnownFamilyLivePageUrl(currentRootUrl) -> currentRootUrl
+                else -> ""
+            }
+            val knownFamilyHost = runCatching {
+                android.net.Uri.parse(knownFamilyLiveUrl).host?.lowercase()?.removePrefix("www.")
+            }.getOrNull().orEmpty()
+            val knownFamilyPermissionUri = isKnownFamilyLivePageUrl(permission.uri.orEmpty())
+            val knownFamilyAutoplayScoped =
+                (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE) &&
+                    knownFamilyPermissionUri &&
+                    (
+                        (knownFamilyHost == "bonce.tv" && thirdPartyHost?.removePrefix("www.") == "bonce.tv") ||
+                            (knownFamilyHost == "telesistema11.com.do" &&
+                                thirdPartyHost?.removePrefix("www.") == "geo.dailymotion.com")
+                        )
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9907,6 +9925,7 @@ return changed>0;
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                knownFamilyAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 svgAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 embeddedLiveVideoJsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -13405,6 +13424,25 @@ return changed>0;
                 "player helper policy=${payload.optString("policyId")} capability=${payload.optString("capability")} " +
                     "phase=${payload.optString("phase")} reason=${payload.optString("reason")} delayMs=${payload.optInt("delayMs")}"
             )
+            return
+        }
+        if (type == "radiant-tv-state" && phase == "content-radiant-player-first" &&
+            isRadiantTvAutoplayContextUrl(pageUrl) && isRadiantTvAutoplayContextUrl(currentUrl)
+        ) {
+            enterBrowserFullscreenPointerSleep(reason = "radiant-player-first")
+            return
+        }
+        if (type == "known-family-state" && isKnownFamilyLivePageUrl(pageUrl) &&
+            isKnownFamilyLivePageUrl(currentUrl)
+        ) {
+            GvLogger.i("GvMedia",
+                "known-family helper provider=${payload.optString("providerId")} phase=$phase " +
+                    "family=${payload.optString("playerFamily")} " +
+                    "videoCount=${payload.optInt("videoCount")} iframeCount=${payload.optInt("iframeCount")}"
+            )
+            if (phase == "content-known-family-player-first") {
+                enterBrowserFullscreenPointerSleep(reason = "known-family-player-first")
+            }
             return
         }
         if (type == "cbn-virgin-islands-state") {
