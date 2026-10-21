@@ -13438,7 +13438,9 @@ return changed>0;
             GvLogger.i("GvMedia",
                 "known-family helper provider=${payload.optString("providerId")} phase=$phase " +
                     "family=${payload.optString("playerFamily")} " +
-                    "videoCount=${payload.optInt("videoCount")} iframeCount=${payload.optInt("iframeCount")}"
+                    "videoCount=${payload.optInt("videoCount")} iframeCount=${payload.optInt("iframeCount")} " +
+                    "sourceActivated=${payload.optBoolean("sourceActivated")} " +
+                    "wasLazy=${payload.optBoolean("wasLazy")} liteSpeedMarker=${payload.optBoolean("liteSpeedMarker")}"
             )
             if (phase == "content-known-family-player-first") {
                 enterBrowserFullscreenPointerSleep(reason = "known-family-player-first")

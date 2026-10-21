@@ -88,3 +88,23 @@ and multi-iframe/other-site NO-OP behaviour.
 
 **Physical playback acceptance remains pending.** Telemicro's latest
 on-TV result was good; Bonce was source-offline and CBC TV8 was source-offline.
+
+## Third Bravia trial 21 October — eager iframe activation
+
+The 03:43:57 Telesistema navigation was followed by the earlier
+`content-telesistema-lazy-iframe-wake` events at 03:44:00 and 03:44:01.
+The `content-known-family-no-player` state at 03:44:16 reported two
+iframes but no trustworthy loaded Dailymotion player. The user pressed
+D-pad Up at 03:44:31, whereupon Dailymotion loaded and the already
+approved autoplay permissions were used. This confirms `scrollIntoView`
+did not trigger LiteSpeed's deferred frame initialization on GeckoView.
+
+Replacement is **Telesistema-only**: require exactly one iframe with a
+trusted publisher-authored Dailymotion `src` or `data-*` URL; request
+`loading=eager`; if the source is deferred or has LiteSpeed lazy
+markers, set `src` once from that **same existing publisher URL** (never
+a fabricated video ID or extracted HLS URL). Follow with a single
+`scrollIntoView`, report non-sensitive activation evidence, and check
+player-first for up to 40 seconds. No synthetic remote gestures,
+new domain permissions, Media3 promotion, or other-provider changes.
+Physical Bravia testing remains the acceptance gate.

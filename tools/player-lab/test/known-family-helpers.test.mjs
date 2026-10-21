@@ -224,8 +224,7 @@ test('Telesistema wakes a unique lazy Dailymotion iframe before player-first, wi
     getBoundingClientRect() { return { width: 960, height: 540 }; },
     scrollIntoView() {
       events.push('scroll');
-      // Simulated LiteSpeed viewport observer populates the native iframe src.
-      this.attrs.src = this.attrs['data-lazy-src'];
+      // Simulated LiteSpeed viewport observer may still fire after the eager source activation.
     }
   };
   const body = { children: [frame], style: style() };
@@ -246,11 +245,11 @@ test('Telesistema wakes a unique lazy Dailymotion iframe before player-first, wi
       }
     }
   });
-  assert.equal(timers.length, 7);
+  assert.equal(timers.length, 10);
   timers.forEach((fn) => fn());
   assert.equal(events.filter((x) => x === 'scroll').length, 1);
   assert.equal(frame.getAttribute('src'), original);
-  assert.ok(events.some((x) => x.includes('content-telesistema-lazy-iframe-wake')));
+  assert.ok(events.some((x) => x.includes('content-telesistema-eager-iframe-wake')));
   assert.ok(events.some((x) => x.includes('content-known-family-player-first')));
   assert.equal(events[0], 'scroll');
   assert.ok(writes.some((entry) => entry[0] === 'position' && entry[1] === 'fixed'));
@@ -283,4 +282,59 @@ test('lazy iframe wake is fail-closed for unknown provider or multiple Dailymoti
     timers.forEach((fn) => fn());
     assert.equal(moved, 0, 'no lazy iframe scroll outside one official Dailymotion player');
   }
+});
+
+test('Telesistema forces exactly one trusted publisher-authored LiteSpeed src to load eagerly', () => {
+  const events = [];
+  const official = 'https://www.dailymotion.com/embed/video/x80ac48?autoplay=1';
+  const frame = {
+    tagName: 'IFRAME', className: 'entered litespeed-loading',
+    attrs: { src: official, loading: 'lazy' },
+    getAttribute(name) { return this.attrs[name] || null; },
+    setAttribute(name, value) { this.attrs[name] = value; events.push([name,value]); },
+    getBoundingClientRect() { return { width: 960, height: 540 }; },
+    scrollIntoView() { events.push(['scroll']); },
+    style: { setProperty() {} }, parentElement: null
+  };
+  const body = { children: [frame], style: { setProperty() {} } };
+  frame.parentElement = body;
+  const fakeWindow = { location: { href: 'https://telesistema11.com.do/en-vivo/' },
+    prompt(message) { events.push(['prompt', message]); } };
+  fakeWindow.top = fakeWindow;
+  const timers=[];
+  runInNewContext(script, {
+    URL, window:fakeWindow, setTimeout(callback){timers.push(callback);},
+    document: {
+      body, documentElement:{style:{setProperty(){}}},
+      querySelectorAll(selector) {
+        if(selector === 'iframe') return [frame];
+        if(selector === 'iframe[src]') return [frame];
+        if(selector === 'video') return [];
+        return [];
+      }
+    }
+  });
+  timers.forEach(fn => fn());
+  assert.equal(frame.attrs.loading, 'eager');
+  assert.equal(frame.attrs.src, official);
+  assert.equal(events.filter(x=>x[0]==='src').length,1);
+  assert.equal(events.filter(x=>x[0]==='scroll').length,1);
+  assert.ok(events.some(x=>x[0]==='prompt' && x[1].includes('sourceActivated')));
+});
+
+test('Telesistema does not load untrusted lazy sources', () => {
+  let sourceChanges=0;
+  const frame={
+    tagName:'IFRAME', className:'litespeed-loading',
+    getAttribute(name) { return name==='src'?'about:blank':name==='data-lazy-src'?'https://evil.example/player':''; },
+    setAttribute(name) { if(name==='src') sourceChanges++; },
+    scrollIntoView(){ throw Error('should not scroll'); },
+    getBoundingClientRect(){ return {width:700,height:350}; }
+  };
+  const w={location:{href:'https://telesistema11.com.do/en-vivo/'}};w.top=w;
+  const timers=[];
+  runInNewContext(script,{URL,window:w,setTimeout(fn){timers.push(fn);},
+    document:{body:{},querySelectorAll(sel){return sel==='iframe'?[frame]:[];}}});
+  timers.forEach(fn=>fn());
+  assert.equal(sourceChanges,0);
 });

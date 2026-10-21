@@ -83,7 +83,9 @@
   let telesistemaLazyWakeAttempted = false;
   const startedVideos = new WeakSet();
   // Telesistema's Dailymotion player arrived around eight seconds after navigation.
-  const RETRY_MS = [250, 800, 1800, 3500, 6000, 10000, 15000];
+  const RETRY_MS = route.id === "telesistema-11"
+    ? [250, 800, 1800, 3500, 6000, 10000, 15000, 20000, 30000, 40000]
+    : [250, 800, 1800, 3500, 6000, 10000, 15000];
 
   function isUsable(node) {
     if (!node || typeof node.getBoundingClientRect !== "function") return false;
@@ -112,18 +114,37 @@
     if (route.id !== "telesistema-11" || telesistemaLazyWakeAttempted || playerFirstApplied) return false;
     const frame = findTelesistemaLazyIframe();
     if (!frame || typeof frame.scrollIntoView !== "function") return false;
+    // Use only the publisher's own Dailymotion URL from this unique iframe.
+    // Never invent a stream URL or turn a non-Dailymotion embed into a player.
+    const attrs = ["src", "data-src", "data-lazy-src", "data-litespeed-src"];
+    const originalSrc = String(frame.getAttribute("src") || "");
+    const source = attrs.map((name) => String(frame.getAttribute(name) || ""))
+      .find((value) => trustedFrameUrl("dailymotion", value, window.location.href));
+    if (!source) return false;
+    const wasLazy = String(frame.getAttribute("loading") || "").toLowerCase() === "lazy";
+    const deferred = !trustedFrameUrl("dailymotion", originalSrc, window.location.href);
+    const liteSpeedMarker = /litespeed|lazyload|lazy-loading/i.test(String(frame.className || ""));
+    // Scroll alone was proven insufficient in the 21 October Bravia log.
+    // First request browser-native eager loading, then activate an existing
+    // publisher-authored data-src or LiteSpeed-deferred original src once.
     try {
-      // Match the successful Bravia D-pad scroll without synthesising a
-      // pointer/keyboard event. This permits the site's LiteSpeed observer
-      // to populate src and the existing Dailymotion browser player to load.
-      frame.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
       telesistemaLazyWakeAttempted = true;
+      frame.setAttribute("loading", "eager");
+      let sourceActivated = false;
+      if (deferred || liteSpeedMarker) {
+        frame.setAttribute("src", source);
+        sourceActivated = true;
+      }
+      frame.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
       window.prompt("__GV_MEDIA__" + JSON.stringify({
         type: "known-family-state",
-        phase: "content-telesistema-lazy-iframe-wake",
+        phase: "content-telesistema-eager-iframe-wake",
         pageUrl: window.location.href,
         providerId: route.id,
-        playerFamily: route.family
+        playerFamily: route.family,
+        sourceActivated,
+        wasLazy,
+        liteSpeedMarker
       }), "");
       return true;
     } catch (_) {
