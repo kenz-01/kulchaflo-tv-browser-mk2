@@ -210,3 +210,77 @@ test('only Bonce and Telesistema get additional source-scoped autoplay permissio
   assert.ok(native.includes('reason = "radiant-player-first"'));
   assert.ok(native.includes('reason = "known-family-player-first"'));
 });
+
+test('Telesistema wakes a unique lazy Dailymotion iframe before player-first, without changing its URL', () => {
+  const events = [];
+  const original = 'https://www.dailymotion.com/embed/video/x80ac48?autoplay=1&mute=1';
+  const writes = [];
+  const style = () => ({ setProperty: (...args) => writes.push(args) });
+  const frame = {
+    tagName: 'IFRAME', style: style(), parentElement: null,
+    attrs: { src: 'about:blank', 'data-lazy-src': original },
+    getAttribute(name) { return this.attrs[name] || null; },
+    setAttribute(name, value) { this.attrs[name] = value; },
+    getBoundingClientRect() { return { width: 960, height: 540 }; },
+    scrollIntoView() {
+      events.push('scroll');
+      // Simulated LiteSpeed viewport observer populates the native iframe src.
+      this.attrs.src = this.attrs['data-lazy-src'];
+    }
+  };
+  const body = { children: [frame], style: style() };
+  frame.parentElement = body;
+  const timers = [];
+  const page = { location: { href: 'https://telesistema11.com.do/en-vivo/?utm_source=KulchaFlo' },
+    prompt(message) { events.push(message); } };
+  page.top = page;
+  runInNewContext(script, {
+    URL, window: page, setTimeout(callback) { timers.push(callback); },
+    document: {
+      body, documentElement: { style: style() },
+      querySelectorAll(selector) {
+        if (selector === 'iframe') return [frame];
+        if (selector === 'iframe[src]') return frame.attrs.src !== 'about:blank' ? [frame] : [];
+        if (selector === 'video') return [];
+        return [];
+      }
+    }
+  });
+  assert.equal(timers.length, 7);
+  timers.forEach((fn) => fn());
+  assert.equal(events.filter((x) => x === 'scroll').length, 1);
+  assert.equal(frame.getAttribute('src'), original);
+  assert.ok(events.some((x) => x.includes('content-telesistema-lazy-iframe-wake')));
+  assert.ok(events.some((x) => x.includes('content-known-family-player-first')));
+  assert.equal(events[0], 'scroll');
+  assert.ok(writes.some((entry) => entry[0] === 'position' && entry[1] === 'fixed'));
+});
+
+test('lazy iframe wake is fail-closed for unknown provider or multiple Dailymotion embeds', () => {
+  const source = 'https://www.dailymotion.com/embed/video/x80ac48';
+  for (const [location, count] of [
+    ['https://telesistema11.com.do/en-vivo/', 2],
+    ['https://bonce.tv/', 1]
+  ]) {
+    let moved = 0;
+    const frames = Array.from({ length: count }, () => ({
+      tagName: 'IFRAME',
+      getAttribute(name) { return name === 'data-lazy-src' ? source : 'about:blank'; },
+      scrollIntoView() { moved++; },
+      getBoundingClientRect() { return { width: 800, height: 450 }; }
+    }));
+    const page = { location: { href: location } };
+    page.top = page;
+    const timers = [];
+    runInNewContext(script, {
+      URL, window: page, setTimeout(callback) { timers.push(callback); },
+      document: {
+        body: {}, querySelectorAll(selector) {
+          return selector === 'iframe' ? frames : [];
+        }
+      }
+    });
+    timers.forEach((fn) => fn());
+    assert.equal(moved, 0, 'no lazy iframe scroll outside one official Dailymotion player');
+  }
+});

@@ -67,3 +67,24 @@ Bonce-only single visible native-video fallback; retries extending to 15 seconds
 one player-first or no-player diagnostic emitted through the existing GeckoView bridge.
 No new native promotion, cross-site autoplay permission or CBC player changes. These remain
 test candidates until a second physical Bravia acceptance pass.
+
+## Bravia log 21 October — Telesistema lazy loading
+
+The second log explicitly confirms that both Dailymotion autoplay permissions were granted
+(`decision=1` at 01:32:15.618 and 01:32:15.623). At 01:32:15.340,
+the existing D-pad document scroll located `iframe.entered.litespeed-loading`;
+`geo.dailymotion.com` started loading at 01:32:15.548, with the
+known-family player-first state emitted at 01:32:16.270. The site was
+therefore **not waiting for an autoplay permission fix**; its official
+iframe had not entered the viewport to trigger LiteSpeed lazy-loading.
+
+The Telesistema-only helper now locates exactly one trusted Dailymotion
+iframe in `src` or its lazy `data-*` attributes and calls
+`scrollIntoView` **once** before the existing player-first attempt.
+It never replaces the source URL, creates a new player, injects synthetic
+pointer events or adds permission grants. When nothing uniquely matches,
+it leaves the page alone. CI guards both the positive lazy-loading case
+and multi-iframe/other-site NO-OP behaviour.
+
+**Physical playback acceptance remains pending.** Telemicro's latest
+on-TV result was good; Bonce was source-offline and CBC TV8 was source-offline.

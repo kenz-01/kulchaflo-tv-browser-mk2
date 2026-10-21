@@ -80,6 +80,7 @@
   const route = resolveRoute(window.location.href);
   if (!route) return;
   let playerFirstApplied = false;
+  let telesistemaLazyWakeAttempted = false;
   const startedVideos = new WeakSet();
   // Telesistema's Dailymotion player arrived around eight seconds after navigation.
   const RETRY_MS = [250, 800, 1800, 3500, 6000, 10000, 15000];
@@ -94,6 +95,40 @@
     const matches = Array.from(nodes || []).filter(isUsable);
     // Never guess the correct stream on a multi-player page (e.g. RTVD).
     return matches.length === 1 ? matches[0] : null;
+  }
+
+  function findTelesistemaLazyIframe() {
+    if (route.id !== "telesistema-11") return null;
+    // LiteSpeed may keep the legitimate Dailymotion URL in data-* until
+    // the iframe enters the viewport. Do not rewrite that URL or click ads.
+    const candidates = Array.from(document.querySelectorAll("iframe")).filter((frame) =>
+      ["src", "data-src", "data-lazy-src", "data-litespeed-src"].some((attribute) =>
+        trustedFrameUrl("dailymotion", frame.getAttribute(attribute), window.location.href)));
+    // Ambiguous multiple embeds must never be awakened automatically.
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function wakeTelesistemaLazyIframe() {
+    if (route.id !== "telesistema-11" || telesistemaLazyWakeAttempted || playerFirstApplied) return false;
+    const frame = findTelesistemaLazyIframe();
+    if (!frame || typeof frame.scrollIntoView !== "function") return false;
+    try {
+      // Match the successful Bravia D-pad scroll without synthesising a
+      // pointer/keyboard event. This permits the site's LiteSpeed observer
+      // to populate src and the existing Dailymotion browser player to load.
+      frame.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+      telesistemaLazyWakeAttempted = true;
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "known-family-state",
+        phase: "content-telesistema-lazy-iframe-wake",
+        pageUrl: window.location.href,
+        providerId: route.id,
+        playerFamily: route.family
+      }), "");
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function findPlayer() {
@@ -197,6 +232,7 @@
   function attempt() {
     // An official route is not sufficient evidence: the expected player must exist.
     if (resolveRoute(window.location.href) !== route) return;
+    wakeTelesistemaLazyIframe();
     const player = findPlayer();
     if (!player) return;
     if (route.family === "youtube" || route.family === "vimeo" || route.family === "dailymotion") {
