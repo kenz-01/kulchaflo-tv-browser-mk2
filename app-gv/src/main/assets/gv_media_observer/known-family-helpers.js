@@ -1,0 +1,282 @@
+(function () {
+  "use strict";
+  // Route-specific reuse of manual browser-first helpers. Never promotes media to Media3.
+  // The public-target URLs are the source of these exact route gates.
+  const ROUTES = Object.freeze([
+    { id: "acento-tv", host: "acentotv.acento.com.do", path: "/en-vivo.html", family: "youtube" },
+    { id: "ahora-tv", host: "ahoratv.com", path: "/", family: "youtube" },
+    { id: "antena-7", host: "antena7.com.do", path: "/envivo-canal-7", family: "youtube" },
+    { id: "energia-tv", host: "energiabonaire.com", path: "/", family: "youtube" },
+    { id: "prensa-latina-tv", host: "prensa-latina.cu", path: "/", family: "youtube" },
+    { id: "etv-guadeloupe", host: "etv.gp", path: "/direct", family: "videojs" },
+    { id: "bonce-tv", host: "bonce.tv", path: "/", family: "videojs" },
+    { id: "tele-peyi", host: "peyiguyane.com", path: "/tele-peyi", family: "videojs" },
+    { id: "xfm-aruba", host: "xfmaruba.com", path: "/", family: "videojs" },
+    { id: "balchi-tv", host: "balchitv.com", path: "/", family: "videojs" },
+    { id: "teleonce", host: "cdn.teleonce.com", path: "/en-vivo", family: "jwplayer" },
+    { id: "tv-direct-13", host: "tvdirect13.com", path: "/", family: "jwplayer" },
+    { id: "telesistema-11", host: "telesistema11.com.do", path: "/en-vivo", family: "dailymotion" },
+    { id: "teleuniverso-29", host: "teleuniversotv.com", path: "/", family: "dailymotion" },
+    { id: "pointe-tv", host: "pointville.ag", path: "/live-stream", family: "vimeo" },
+    { id: "bonao-tv", host: "bonaotv.com", path: "/", family: "hlsjs" },
+    { id: "rtvd", host: "rtvd.gob.do", path: "/", family: "hlsjs" },
+    { id: "yunavision", host: "yunavision.com", path: "/", family: "hlsjs" },
+    { id: "adoram-tv", host: "adoramtv.org", path: "/programacion-en-vivo", family: "html5" }
+  ]);
+
+  function normalizePath(path) {
+    const normalized = String(path || "/").toLowerCase().replace(/\/+$/, "");
+    return normalized || "/";
+  }
+
+  function resolveRoute(rawUrl) {
+    try {
+      const url = new URL(String(rawUrl || ""));
+      if (url.protocol !== "https:" || url.username || url.password) return null;
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      const path = normalizePath(url.pathname);
+      return ROUTES.find((route) => route.host === host && route.path === path) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function trustedFrameUrl(family, rawUrl, pageUrl) {
+    try {
+      const url = new URL(String(rawUrl || ""), pageUrl || "https://invalid.example/");
+      if (url.protocol !== "https:" || url.username || url.password) return false;
+      const host = url.hostname.toLowerCase();
+      const path = url.pathname.toLowerCase();
+      if (family === "youtube") {
+        return (host === "www.youtube.com" || host === "youtube.com" ||
+          host === "www.youtube-nocookie.com" || host === "youtube-nocookie.com") &&
+          (path.startsWith("/embed/") || path.startsWith("/live/"));
+      }
+      if (family === "vimeo") {
+        return ((host === "player.vimeo.com" && path.startsWith("/video/")) ||
+          ((host === "vimeo.com" || host === "www.vimeo.com") &&
+            (path.startsWith("/event/") || path.startsWith("/video/"))));
+      }
+      if (family === "dailymotion") {
+        return ((host === "www.dailymotion.com" || host === "dailymotion.com") &&
+          (path.startsWith("/embed/") || path.startsWith("/video/"))) ||
+          (host === "geo.dailymotion.com" && path.startsWith("/player"));
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Safe pure functions available for deterministic Player Lab tests.
+  globalThis.KfKnownFamilyHelpers = Object.freeze({
+    routes: ROUTES,
+    resolveRoute,
+    trustedFrameUrl
+  });
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  if (window.top !== window || !document.body) return;
+
+  const route = resolveRoute(window.location.href);
+  if (!route) return;
+  let playerFirstApplied = false;
+  let telesistemaLazyWakeAttempted = false;
+  const startedVideos = new WeakSet();
+  // Telesistema's Dailymotion player arrived around eight seconds after navigation.
+  const RETRY_MS = route.id === "telesistema-11"
+    ? [250, 800, 1800, 3500, 6000, 10000, 15000, 20000, 30000, 40000]
+    : [250, 800, 1800, 3500, 6000, 10000, 15000];
+
+  function isUsable(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width >= 300 && rect.height >= 160;
+  }
+
+  function chooseOne(nodes) {
+    const matches = Array.from(nodes || []).filter(isUsable);
+    // Never guess the correct stream on a multi-player page (e.g. RTVD).
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function findTelesistemaLazyIframe() {
+    if (route.id !== "telesistema-11") return null;
+    // LiteSpeed may keep the legitimate Dailymotion URL in data-* until
+    // the iframe enters the viewport. Do not rewrite that URL or click ads.
+    const candidates = Array.from(document.querySelectorAll("iframe")).filter((frame) =>
+      ["src", "data-src", "data-lazy-src", "data-litespeed-src"].some((attribute) =>
+        trustedFrameUrl("dailymotion", frame.getAttribute(attribute), window.location.href)));
+    // Ambiguous multiple embeds must never be awakened automatically.
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function wakeTelesistemaLazyIframe() {
+    if (route.id !== "telesistema-11" || telesistemaLazyWakeAttempted || playerFirstApplied) return false;
+    const frame = findTelesistemaLazyIframe();
+    if (!frame || typeof frame.scrollIntoView !== "function") return false;
+    // Use only the publisher's own Dailymotion URL from this unique iframe.
+    // Never invent a stream URL or turn a non-Dailymotion embed into a player.
+    const attrs = ["src", "data-src", "data-lazy-src", "data-litespeed-src"];
+    const originalSrc = String(frame.getAttribute("src") || "");
+    const source = attrs.map((name) => String(frame.getAttribute(name) || ""))
+      .find((value) => trustedFrameUrl("dailymotion", value, window.location.href));
+    if (!source) return false;
+    const wasLazy = String(frame.getAttribute("loading") || "").toLowerCase() === "lazy";
+    const deferred = !trustedFrameUrl("dailymotion", originalSrc, window.location.href);
+    const liteSpeedMarker = /litespeed|lazyload|lazy-loading/i.test(String(frame.className || ""));
+    // Scroll alone was proven insufficient in the 21 October Bravia log.
+    // First request browser-native eager loading, then activate an existing
+    // publisher-authored data-src or LiteSpeed-deferred original src once.
+    try {
+      telesistemaLazyWakeAttempted = true;
+      frame.setAttribute("loading", "eager");
+      let sourceActivated = false;
+      if (deferred || liteSpeedMarker) {
+        frame.setAttribute("src", source);
+        sourceActivated = true;
+      }
+      frame.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "known-family-state",
+        phase: "content-telesistema-eager-iframe-wake",
+        pageUrl: window.location.href,
+        providerId: route.id,
+        playerFamily: route.family,
+        sourceActivated,
+        wasLazy,
+        liteSpeedMarker
+      }), "");
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findPlayer() {
+    const family = route.family;
+    if (family === "youtube" || family === "vimeo" || family === "dailymotion") {
+      return chooseOne(Array.from(document.querySelectorAll("iframe[src]")).filter((frame) =>
+        trustedFrameUrl(family, frame.getAttribute("src") || frame.src, window.location.href)));
+    }
+    if (family === "videojs") {
+      const markedPlayer = chooseOne(Array.from(document.querySelectorAll(".video-js, video-js")).filter((node) =>
+        node.tagName === "VIDEO" || node.querySelector("video, .vjs-tech")));
+      if (markedPlayer) return markedPlayer;
+      // Bravia log: Bonce exposes video media evidence without a known Video.js wrapper.
+      // Only its exact official live route may use a single ready visible HTML5 video.
+      if (route.id === "bonce-tv") {
+        return chooseOne(Array.from(document.querySelectorAll("video")).filter((video) =>
+          video.readyState >= 2 || !!(video.currentSrc || video.src)));
+      }
+      return null;
+    }
+    if (family === "jwplayer") {
+      return chooseOne(Array.from(document.querySelectorAll(".jwplayer, .jw-player")).filter((node) =>
+        node.querySelector("video, .jw-preview, .jw-controls")));
+    }
+    if (family === "hlsjs" || family === "html5") {
+      return chooseOne(Array.from(document.querySelectorAll("video")).filter((video) =>
+        video.readyState >= 2 || !!(video.currentSrc || video.src) ||
+        !!video.querySelector("source[src]")));
+    }
+    return null;
+  }
+
+  function applyPlayerFirst(player) {
+    if (playerFirstApplied || !document.body || !isUsable(player)) return;
+    // Use the tested manual-helper pattern: isolate only a positively matched player,
+    // style outer ancestors, leave native/player transport descendants alone.
+    const path = new Set();
+    let node = player;
+    while (node && node !== document.body) {
+      path.add(node);
+      node = node.parentElement;
+    }
+    if (node !== document.body) return;
+    Array.from(document.body.children).forEach((child) => {
+      if (!path.has(child)) child.style.setProperty("display", "none", "important");
+    });
+    for (let ancestor = player; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      const style = ancestor.style;
+      style.setProperty("position", "fixed", "important");
+      style.setProperty("inset", "0", "important");
+      style.setProperty("width", "100vw", "important");
+      style.setProperty("height", "100vh", "important");
+      style.setProperty("max-width", "none", "important");
+      style.setProperty("max-height", "none", "important");
+      style.setProperty("margin", "0", "important");
+      style.setProperty("z-index", "2147483000", "important");
+    }
+    document.documentElement.style.setProperty("overflow", "hidden", "important");
+    document.body.style.setProperty("overflow", "hidden", "important");
+    document.body.style.setProperty("margin", "0", "important");
+    document.body.style.setProperty("background", "#000", "important");
+    playerFirstApplied = true;
+    // Same private extension bridge and pointer sleep used by manual GBN/CBN helpers.
+    try {
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "known-family-state",
+        phase: "content-known-family-player-first",
+        pageUrl: window.location.href,
+        providerId: route.id,
+        playerFamily: route.family
+      }), "");
+    } catch (_) {}
+  }
+
+  function allowTrustedFrame(player) {
+    if (!player || player.tagName !== "IFRAME" ||
+        !trustedFrameUrl(route.family, player.getAttribute("src") || player.src, window.location.href)) return;
+    const allow = String(player.getAttribute("allow") || "");
+    const parts = ["autoplay", "fullscreen", "picture-in-picture"];
+    const additions = parts.filter((part) => !allow.toLowerCase().split(/[; ]+/).includes(part));
+    if (additions.length) player.setAttribute("allow", (allow ? allow + "; " : "") + additions.join("; "));
+    player.setAttribute("allowfullscreen", "true");
+    // No iframe source rewrite, synthetic taps, or scripted YouTube/Dailymotion playback.
+  }
+
+  function maybeStartMedia(player) {
+    if (route.family === "youtube" || route.family === "vimeo" || route.family === "dailymotion") return;
+    const video = player.tagName === "VIDEO" ? player : player.querySelector("video");
+    if (!video || startedVideos.has(video) || video.readyState < 2) return;
+    startedVideos.add(video);
+    try {
+      video.muted = false;
+      if (typeof video.volume === "number") video.volume = 1;
+      if (video.paused && typeof video.play === "function") {
+        const result = video.play();
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  function attempt() {
+    // An official route is not sufficient evidence: the expected player must exist.
+    if (resolveRoute(window.location.href) !== route) return;
+    wakeTelesistemaLazyIframe();
+    const player = findPlayer();
+    if (!player) return;
+    if (route.family === "youtube" || route.family === "vimeo" || route.family === "dailymotion") {
+      allowTrustedFrame(player);
+    }
+    applyPlayerFirst(player);
+    maybeStartMedia(player);
+  }
+
+  RETRY_MS.forEach((delay, index) => setTimeout(() => {
+    attempt();
+    if (index !== RETRY_MS.length - 1 || playerFirstApplied) return;
+    // One bounded diagnostic for the next logcat. No iframe URLs or media tokens.
+    try {
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "known-family-state",
+        phase: "content-known-family-no-player",
+        pageUrl: window.location.href,
+        providerId: route.id,
+        playerFamily: route.family,
+        videoCount: document.querySelectorAll("video").length,
+        iframeCount: document.querySelectorAll("iframe").length
+      }), "");
+    } catch (_) {}
+  }, delay));
+})();
