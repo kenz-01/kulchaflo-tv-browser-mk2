@@ -162,6 +162,11 @@
   let compassAudioHooksAttached = false;
   let compassAudioRetryTimers = [];
   let compassAudioReady = false;
+  let radiantTvHelperScheduled = false;
+  let radiantTvPlayerFirstApplied = false;
+  let radiantTvPlayAttempted = false;
+  let radiantTvFullscreenAttempted = false;
+  const RADIANT_TV_RETRY_DELAYS_MS = [250, 750, 1600, 3200, 6000, 10000];
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
@@ -4329,6 +4334,202 @@
     });
   }
 
+
+  function radiantTvRouteKind() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    if (host === "telemicro.com.do") {
+      if (path.indexOf("/telemicro-en-vivo") === 0) return "telemicro-top";
+      if (path.indexOf("/digital-15-en-vivo") === 0) return "digital15-top";
+      if (path.indexOf("/players/5tv/") === 0) return "telemicro-player";
+      if (path.indexOf("/players/15tv/") === 0) return "digital15-player";
+    }
+    if (host === "telecentro.com.do") {
+      if (path.indexOf("/telecentro-en-vivo") === 0) return "telecentro-top";
+      if (path.indexOf("/players/13bot/") === 0) return "telecentro-player";
+    }
+    return "";
+  }
+
+  function isRadiantTvTopPage() {
+    const kind = radiantTvRouteKind();
+    return kind === "telemicro-top" || kind === "digital15-top" || kind === "telecentro-top";
+  }
+
+  function isRadiantTvPlayerFrame() {
+    const kind = radiantTvRouteKind();
+    return kind === "telemicro-player" || kind === "digital15-player" || kind === "telecentro-player";
+  }
+
+  function findRadiantTvIframe() {
+    if (!isRadiantTvTopPage()) return null;
+    const kind = radiantTvRouteKind();
+    const wanted = kind === "telemicro-top" ? "/players/5tv/" :
+      kind === "digital15-top" ? "/players/15tv/" : "/players/13bot/";
+    return Array.from(document.querySelectorAll("iframe")).find((frame) => {
+      try {
+        const src = String(frame.getAttribute("src") || frame.src || "").toLowerCase();
+        return src.indexOf(wanted) >= 0;
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function applyRadiantTvPlayerFirst() {
+    if (!isRadiantTvTopPage()) return false;
+    const frame = findRadiantTvIframe();
+    if (!frame) return false;
+    try {
+      const framePath = new Set();
+      let node = frame;
+      while (node && node !== document.body) {
+        framePath.add(node);
+        node = node.parentElement;
+      }
+      Array.from(document.body.children).forEach((child) => {
+        if (!framePath.has(child) && child !== frame) {
+          child.style.setProperty("display", "none", "important");
+        }
+      });
+      let current = frame;
+      while (current && current !== document.body) {
+        current.style.setProperty("position", "fixed", "important");
+        current.style.setProperty("inset", "0", "important");
+        current.style.setProperty("width", "100vw", "important");
+        current.style.setProperty("height", "100vh", "important");
+        current.style.setProperty("max-width", "none", "important");
+        current.style.setProperty("max-height", "none", "important");
+        current.style.setProperty("margin", "0", "important");
+        current.style.setProperty("padding", "0", "important");
+        current.style.setProperty("border", "0", "important");
+        current.style.setProperty("z-index", "2147483000", "important");
+        current = current.parentElement;
+      }
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      if (!radiantTvPlayerFirstApplied) {
+        radiantTvPlayerFirstApplied = true;
+        promptPayload({
+          type: "radiant-tv-state",
+          phase: "content-radiant-player-first",
+          pageUrl: window.location.href,
+          routeKind: radiantTvRouteKind(),
+          iframeRect: rectSummary(frame)
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findRadiantTvVideo() {
+    if (!isRadiantTvPlayerFrame()) return null;
+    const videos = Array.from(document.querySelectorAll("video"));
+    let best = null;
+    let bestArea = -1;
+    videos.forEach((video) => {
+      try {
+        const rect = video.getBoundingClientRect();
+        const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+        if (area > bestArea) {
+          bestArea = area;
+          best = video;
+        }
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function radiantTvPlaybackProgressed(video) {
+    if (!video) return false;
+    return !video.paused && Number(video.currentTime || 0) > 0.1;
+  }
+
+  function attemptRadiantTvPlayback(attemptAtMs) {
+    if (!isRadiantTvPlayerFrame()) return false;
+    const video = findRadiantTvVideo();
+    if (!video) return false;
+    try {
+      video.muted = false;
+      if (typeof video.volume === "number") video.volume = 1;
+    } catch (_) {}
+
+    let playAttempted = false;
+    let overlayClicked = false;
+    if (!radiantTvPlaybackProgressed(video) && !radiantTvPlayAttempted) {
+      radiantTvPlayAttempted = true;
+      try {
+        const result = video.play();
+        playAttempted = true;
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      } catch (_) {}
+      const overlay = Array.from(document.querySelectorAll(".rmp-overlay-button,.rmp-play-button,[aria-label*='play' i]"))
+        .find((node) => isVisible(node));
+      if (overlay) {
+        try {
+          overlay.click();
+          overlayClicked = true;
+        } catch (_) {}
+      }
+    }
+
+    setTimeout(() => {
+      const currentVideo = findRadiantTvVideo();
+      if (!currentVideo) return;
+      try {
+        currentVideo.muted = false;
+        if (typeof currentVideo.volume === "number") currentVideo.volume = 1;
+      } catch (_) {}
+      const playing = radiantTvPlaybackProgressed(currentVideo);
+      if (playing && !radiantTvFullscreenAttempted) {
+        radiantTvFullscreenAttempted = true;
+        const fullscreenControl = Array.from(document.querySelectorAll(
+          ".rmp-fullscreen,.rmp-fullscreen-button,[class*='rmp-fullscreen' i],[aria-label*='full screen' i],[aria-label*='fullscreen' i]"
+        )).find((node) => isVisible(node));
+        if (fullscreenControl) {
+          try { fullscreenControl.click(); } catch (_) {}
+        }
+      }
+      promptPayload({
+        type: "radiant-tv-state",
+        phase: "content-radiant-playback-check",
+        pageUrl: window.location.href,
+        routeKind: radiantTvRouteKind(),
+        attemptAtMs: Number(attemptAtMs || 0),
+        playAttempted,
+        overlayClicked,
+        playing,
+        paused: !!currentVideo.paused,
+        muted: !!currentVideo.muted,
+        volume: Number(typeof currentVideo.volume === "number" ? currentVideo.volume : 1),
+        currentTime: Number(currentVideo.currentTime || 0),
+        videoWidth: Number(currentVideo.videoWidth || 0),
+        videoHeight: Number(currentVideo.videoHeight || 0)
+      });
+    }, 700);
+    return true;
+  }
+
+  function scheduleRadiantTvHelper() {
+    if (radiantTvHelperScheduled || (!isRadiantTvTopPage() && !isRadiantTvPlayerFrame())) return;
+    radiantTvHelperScheduled = true;
+    RADIANT_TV_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        if (isRadiantTvTopPage()) {
+          applyRadiantTvPlayerFirst();
+          return;
+        }
+        if (isRadiantTvPlayerFrame()) {
+          attemptRadiantTvPlayback(delayMs);
+        }
+      }, delayMs);
+    });
+  }
+
   function readNovusIntent() {
     try {
       const url = new URL(window.location.href);
@@ -7689,6 +7890,7 @@
   scheduleCompassMinimalHelper();
   scheduleIslandTvMinimalHelper();
   scheduleDbsTvMinimalHelper();
+  scheduleRadiantTvHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
@@ -7718,6 +7920,7 @@
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
+  window.addEventListener("load", scheduleRadiantTvHelper, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });
