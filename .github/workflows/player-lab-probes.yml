@@ -1,0 +1,74 @@
+name: Player Lab targeted probes
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/player-lab-probes.yml"
+      - "tools/player-lab/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: player-lab-targeted-probes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: tools/player-lab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: tools/player-lab/package-lock.json
+
+      - name: Install Player Lab
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Player Lab tests
+        run: npm test
+
+      - name: Run targeted probes
+        shell: bash
+        run: |
+          set +e
+          mkdir -p reports/targeted-probes
+          : > reports/targeted-probes/run-summary.txt
+          probes=(
+            kf-post-746-wapa-tv
+            kf-post-745-wipr
+            kf-post-737-ziz-tv
+            kf-post-192-tv6
+            kf-post-932-biz-tv
+            kf-post-922-rht-tv
+          )
+          for target in "${probes[@]}"; do
+            echo "=== ${target} ===" | tee -a reports/targeted-probes/run-summary.txt
+            npm run interaction-probe -- --target "${target}" --output-root reports/targeted-probes >> reports/targeted-probes/run-summary.txt 2>&1
+            echo "exit=$?" | tee -a reports/targeted-probes/run-summary.txt
+          done
+          exit 0
+
+      - name: Upload targeted probes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-lab-targeted-probes
+          path: tools/player-lab/reports/targeted-probes
+          if-no-files-found: warn
+          retention-days: 7
