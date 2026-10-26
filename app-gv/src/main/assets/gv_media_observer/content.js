@@ -162,6 +162,12 @@
   let compassAudioHooksAttached = false;
   let compassAudioRetryTimers = [];
   let compassAudioReady = false;
+  let hostedVideoJsHelperScheduled = false;
+  let hostedVideoJsPlayerFirstApplied = false;
+  let hostedVideoJsPlayAttempted = false;
+  let hostedVideoJsUnmuteAttempted = false;
+  let hostedVideoJsFullscreenAttempted = false;
+  const HOSTED_VIDEOJS_RETRY_DELAYS_MS = [250, 750, 1600, 3200, 6000, 10000];
   const GBN_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const CVC9_PLAYER_FIRST_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 12000];
   const COMPASS_TV_SCRIPT_VERSION = "compass-jw-v4-minimal", COMPASS_TV_PLAYER_ID = "HRQZA1oT-SkbOASt9";
@@ -4329,6 +4335,181 @@
     });
   }
 
+
+  function hostedVideoJsContextKind() {
+    const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = String(window.location.pathname || "").toLowerCase();
+    const referrer = String(document.referrer || "").toLowerCase();
+    if (host === "biztv.com" && path.indexOf("/watch-biztv") === 0) return "biz-top";
+    if (
+      host === "c.streamhoster.com" &&
+      path.indexOf("/embed/media/") === 0 &&
+      referrer.indexOf("biztv.com/watch-biztv") >= 0
+    ) return "biz-player";
+    if (host === "rhtguadeloupe.fr" && path.indexOf("/live-video") === 0) return "rht-top";
+    if (
+      host === "player.infomaniak.com" &&
+      referrer.indexOf("rhtguadeloupe.fr/live-video") >= 0
+    ) return "rht-player";
+    return "";
+  }
+
+  function isHostedVideoJsTopPage() {
+    const kind = hostedVideoJsContextKind();
+    return kind === "biz-top" || kind === "rht-top";
+  }
+
+  function isHostedVideoJsPlayerFrame() {
+    const kind = hostedVideoJsContextKind();
+    return kind === "biz-player" || kind === "rht-player";
+  }
+
+  function findHostedVideoJsIframe() {
+    if (!isHostedVideoJsTopPage()) return null;
+    const kind = hostedVideoJsContextKind();
+    return Array.from(document.querySelectorAll("iframe")).find((frame) => {
+      try {
+        const parsed = new URL(String(frame.getAttribute("src") || frame.src || ""), window.location.href);
+        const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+        const path = parsed.pathname.toLowerCase();
+        if (kind === "biz-top") {
+          return host === "c.streamhoster.com" && path.indexOf("/embed/media/") === 0;
+        }
+        return host === "player.infomaniak.com";
+      } catch (_) {
+        return false;
+      }
+    }) || null;
+  }
+
+  function applyHostedVideoJsPlayerFirst() {
+    if (!isHostedVideoJsTopPage()) return false;
+    const frame = findHostedVideoJsIframe();
+    if (!frame) return false;
+    try {
+      let current = frame;
+      while (current && current !== document.body) {
+        current.style.setProperty("position", "fixed", "important");
+        current.style.setProperty("inset", "0", "important");
+        current.style.setProperty("width", "100vw", "important");
+        current.style.setProperty("height", "100vh", "important");
+        current.style.setProperty("max-width", "none", "important");
+        current.style.setProperty("max-height", "none", "important");
+        current.style.setProperty("margin", "0", "important");
+        current.style.setProperty("padding", "0", "important");
+        current.style.setProperty("border", "0", "important");
+        current.style.setProperty("z-index", "2147483000", "important");
+        current = current.parentElement;
+      }
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("overflow", "hidden", "important");
+      document.body.style.setProperty("margin", "0", "important");
+      document.body.style.setProperty("background", "#000", "important");
+      if (!hostedVideoJsPlayerFirstApplied) {
+        hostedVideoJsPlayerFirstApplied = true;
+        promptPayload({
+          type: "hosted-videojs-state",
+          phase: "content-hosted-videojs-player-first",
+          pageUrl: window.location.href,
+          contextKind: hostedVideoJsContextKind(),
+          iframeRect: rectSummary(frame)
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function findHostedVideoJsVideo() {
+    if (!isHostedVideoJsPlayerFrame()) return null;
+    const videos = Array.from(document.querySelectorAll("video"));
+    let best = null;
+    let bestArea = -1;
+    videos.forEach((video) => {
+      try {
+        const rect = video.getBoundingClientRect();
+        const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+        if (area > bestArea) {
+          bestArea = area;
+          best = video;
+        }
+      } catch (_) {}
+    });
+    return best;
+  }
+
+  function attemptHostedVideoJsPlayback(attemptAtMs) {
+    if (!isHostedVideoJsPlayerFrame()) return false;
+    const video = findHostedVideoJsVideo();
+    if (!video) return false;
+
+    if (video.paused && !hostedVideoJsPlayAttempted) {
+      hostedVideoJsPlayAttempted = true;
+      const playButton = document.querySelector(".vjs-big-play-button");
+      if (playButton && isVisible(playButton)) {
+        try { playButton.click(); } catch (_) {}
+      }
+      try {
+        const result = video.play();
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      } catch (_) {}
+    }
+
+    if ((video.muted || Number(video.volume || 0) < 0.95) && !hostedVideoJsUnmuteAttempted) {
+      hostedVideoJsUnmuteAttempted = true;
+      const muteButton = document.querySelector(".vjs-mute-control");
+      if (muteButton && isVisible(muteButton)) {
+        try { muteButton.click(); } catch (_) {}
+      }
+      try {
+        video.muted = false;
+        if (typeof video.volume === "number") video.volume = 1;
+      } catch (_) {}
+    }
+
+    const playing = !video.paused && Number(video.currentTime || 0) > 0.1;
+    if (playing && !hostedVideoJsFullscreenAttempted) {
+      hostedVideoJsFullscreenAttempted = true;
+      const fullscreenButton = document.querySelector(".vjs-fullscreen-control");
+      if (fullscreenButton && isVisible(fullscreenButton)) {
+        try { fullscreenButton.click(); } catch (_) {}
+      }
+    }
+
+    promptPayload({
+      type: "hosted-videojs-state",
+      phase: "content-hosted-videojs-playback-check",
+      pageUrl: window.location.href,
+      contextKind: hostedVideoJsContextKind(),
+      attemptAtMs: Number(attemptAtMs || 0),
+      playing,
+      paused: !!video.paused,
+      muted: !!video.muted,
+      volume: Number(typeof video.volume === "number" ? video.volume : 1),
+      currentTime: Number(video.currentTime || 0),
+      videoWidth: Number(video.videoWidth || 0),
+      videoHeight: Number(video.videoHeight || 0)
+    });
+    return true;
+  }
+
+  function scheduleHostedVideoJsHelper() {
+    if (hostedVideoJsHelperScheduled || (!isHostedVideoJsTopPage() && !isHostedVideoJsPlayerFrame())) return;
+    hostedVideoJsHelperScheduled = true;
+    HOSTED_VIDEOJS_RETRY_DELAYS_MS.forEach((delayMs) => {
+      setTimeout(() => {
+        if (isHostedVideoJsTopPage()) {
+          applyHostedVideoJsPlayerFirst();
+          return;
+        }
+        if (isHostedVideoJsPlayerFrame()) {
+          attemptHostedVideoJsPlayback(delayMs);
+        }
+      }, delayMs);
+    });
+  }
+
   function readNovusIntent() {
     try {
       const url = new URL(window.location.href);
@@ -7689,6 +7870,7 @@
   scheduleCompassMinimalHelper();
   scheduleIslandTvMinimalHelper();
   scheduleDbsTvMinimalHelper();
+  scheduleHostedVideoJsHelper();
   scheduleGbnDailymotionPlayerFirstLayout();
   scheduleCvc9DailymotionPlayerFirstLayout();
   publish();
@@ -7718,6 +7900,7 @@
   window.addEventListener("load", scheduleCgtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionPlayAssist, { once: true });
   window.addEventListener("load", scheduleCaribVisionFullscreenAssist, { once: true });
+  window.addEventListener("load", scheduleHostedVideoJsHelper, { once: true });
   window.addEventListener("load", scheduleChtvPlayAssist, { once: true });
   window.addEventListener("load", scheduleChtvFullscreenAssist, { once: true });
   window.addEventListener("load", scheduleCbcLiveHlsReady, { once: true });

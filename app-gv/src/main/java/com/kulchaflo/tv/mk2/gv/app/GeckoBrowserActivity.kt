@@ -9806,6 +9806,24 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val bizzVideoJsTopContext = isBizzTvLiveUrl(activeSessionUrl) || isBizzTvLiveUrl(currentRootUrl)
+            val bizzVideoJsPermissionUri = isBizzTvLiveUrl(permission.uri.orEmpty()) || isBizzTvPlayerUrl(permission.uri.orEmpty())
+            val bizzVideoJsThirdParty = isBizzTvPlayerUrl(permission.thirdPartyOrigin.orEmpty())
+            val bizzVideoJsAutoplayScoped = ENABLE_HOSTED_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (bizzVideoJsPermissionUri || (bizzVideoJsTopContext && bizzVideoJsThirdParty))
+            val rhtVideoJsTopContext = isRhtTvLiveUrl(activeSessionUrl) || isRhtTvLiveUrl(currentRootUrl)
+            val rhtVideoJsPermissionUri = isRhtTvLiveUrl(permission.uri.orEmpty()) || isRhtTvPlayerUrl(permission.uri.orEmpty())
+            val rhtVideoJsThirdParty = isRhtTvPlayerUrl(permission.thirdPartyOrigin.orEmpty())
+            val rhtVideoJsAutoplayScoped = ENABLE_HOSTED_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (rhtVideoJsPermissionUri || (rhtVideoJsTopContext && rhtVideoJsThirdParty))
             val compassTopContext = isCompassTvHomePageUrl(activeSessionUrl) || isCompassTvHomePageUrl(currentRootUrl)
             val compassPermissionUri = isCompassTvHomePageUrl(permission.uri.orEmpty()) || isCompassJwPlayerHost(uriHost)
             val compassThirdPartyJw = isCompassJwPlayerHost(thirdPartyHost)
@@ -9828,6 +9846,8 @@ return changed>0;
                 cvc9AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                bizzVideoJsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                rhtVideoJsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -15277,6 +15297,7 @@ return changed>0;
         private const val ENABLE_CNC3_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CVC9_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_HOSTED_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15810,6 +15831,41 @@ return changed>0;
 
     private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
         return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
+    }
+
+    private fun isBizzTvLiveUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "biztv.com" && path.startsWith("/watch-biztv")
+    }
+
+    private fun isBizzTvPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "c.streamhoster.com" && path.startsWith("/embed/media/")
+    }
+
+    private fun isRhtTvLiveUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "rhtguadeloupe.fr" && path.startsWith("/live-video")
+    }
+
+    private fun isRhtTvPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        return host == "player.infomaniak.com"
     }
 
     private fun isAbsTegoAutoplayContextUrl(url: String): Boolean {
