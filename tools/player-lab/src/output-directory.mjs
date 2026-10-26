@@ -45,7 +45,12 @@ export function createStagedProfileOutputDirectory({
         cleanup() {
           if (!promoted) {
             assertSafeIncompleteDir(incompleteDir, providerDir);
-            rmSync(incompleteDir, { recursive: true, force: true });
+            rmSync(incompleteDir, {
+              recursive: true,
+              force: true,
+              maxRetries: 10,
+              retryDelay: 100,
+            });
           }
         },
       });

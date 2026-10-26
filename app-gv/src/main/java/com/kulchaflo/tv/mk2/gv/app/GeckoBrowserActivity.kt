@@ -9806,6 +9806,16 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val zizAutoplayScoped = ENABLE_ZIZ_TV_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    isZizTvAutoplayContextUrl(permission.uri.orEmpty()) ||
+                        isZizTvAutoplayContextUrl(activeSessionUrl) ||
+                        isZizTvAutoplayContextUrl(currentRootUrl)
+                    )
             val compassTopContext = isCompassTvHomePageUrl(activeSessionUrl) || isCompassTvHomePageUrl(currentRootUrl)
             val compassPermissionUri = isCompassTvHomePageUrl(permission.uri.orEmpty()) || isCompassJwPlayerHost(uriHost)
             val compassThirdPartyJw = isCompassJwPlayerHost(thirdPartyHost)
@@ -9828,6 +9838,7 @@ return changed>0;
                 cvc9AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                zizAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
@@ -15277,6 +15288,7 @@ return changed>0;
         private const val ENABLE_CNC3_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CVC9_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_ZIZ_TV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15810,6 +15822,18 @@ return changed>0;
 
     private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
         return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
+    }
+
+    private fun isZizTvAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "zizonline.com" &&
+            (path == "/tv/channel-5" || path.startsWith("/tv/channel-5/"))
     }
 
     private fun isAbsTegoAutoplayContextUrl(url: String): Boolean {
