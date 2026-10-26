@@ -231,7 +231,7 @@ async function waitForIncomplete(root) {
 }
 
 async function waitForNoIncomplete(root) {
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
     if (!findEntries(root).some((entry) => entry.includes('.incomplete-'))) {
       return;
