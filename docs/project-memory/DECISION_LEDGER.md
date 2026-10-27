@@ -29,3 +29,11 @@ Distinguish canonical WordPress Channel user destination, broadcaster official l
 ## Release boundary
 
 STAGING/candidate build is never a production/store release. Do not merge #16→#19 prematurely or silently add wildcards; maintain exact head CI and real Sony acceptance. Existing PRs hold transient SHA and test facts; this ledger holds only durable rationale.
+
+## TV-D007 — TV-local architect-direct delivery playbook (27 October 2026)
+
+Adopt the Events repo's implement → exact-head test → verify → repair/hold → continue discipline, without its STAGING WordPress approvals, automations, runners, paid workers, auto-merge or review-controller machinery. All TV jobs must read `docs/TV_ARCHITECT_DELIVERY_PLAYBOOK.md` via the top of `AGENTS.md` and compact `.ai/TASK.md`/`.ai/STATE.md`. The TV hardware and source/security gates still control acceptance. **Why:** avoid repeated planning-only loops and context loss without weakening on-device evidence or publisher protections.
+
+## TV-D008 — Security-challenge rendering is not stream or reputation proof (27 October 2026)
+
+On HGPTV's first-party Dacast live page, a human-verification checkbox rendered and was clickable on the owner's laptop, while the Bravia displayed a spinner and no checkbox. Treat this as a **browser/site challenge rendering discrepancy**, not proven bot blacklisting, a broadcaster outage or Dacast playback failure. Investigate compatible legitimate browser, permission, cookies and widget rendering; never simulate user verification, spoof tokens or defeat the challenge. **Why:** materially different software behaviour must be diagnosed separately from the live player.
