@@ -23,3 +23,9 @@ The homepage `https://www.hgptv.com/` showed a Dacast iframe in observer samples
 ## Dependency discipline
 
 Based on draft PR #18 exact-head passive probes; this implementation is a separate draft and **not merged**. Neither #16 nor #17 nor #18 is fully Sony Bravia accepted. The existing Telemicro and manual broadcaster helpers are unchanged.
+
+## 27 October, later MTV Guyana retest — live playback observed
+
+The user has now reported **actual MTV Guyana live playback on the Sony Bravia at 1080p in fullscreen**. Initial 1080p playback was reported as stuttering, followed by an explicit correction that **1080p fullscreen was playing fine**. This **supersedes the older inference that only the preview.mp4 was playing**. Preserve the previous preview evidence as a historical observation, not an authoritative description of the current live session.
+
+**Current acceptance classification:** `LIVE_PLAYBACK_1080P_FULLSCREEN_USER_OBSERVED`, pending full on-device logcat verification of the live media source, quality state, elapsed-time progression, sound, no-touch autoplay and Back behaviour. Do not introduce a quality downgrade, force a specific HLS URL, or native-promote this browser stream on the basis of the earlier preview recording. Existing build 5 should be kept installed for capturing the live session. The ZNS-specific code in this PR does not change MTV.
