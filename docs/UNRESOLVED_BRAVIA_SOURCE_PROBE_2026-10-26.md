@@ -93,3 +93,8 @@ before each official page navigation**, captures 28 seconds, filters on
 log + stderr if app records are absent. It never clears Android logs;
 a no-app-events capture is marked INCONCLUSIVE, never a channel failure.
 No new APK is needed for this host-only correction.
+
+The host sweep requires **at least two matching**
+`unresolved probe id=<current channel> sample=` lines per capture.
+Navigation-only logs and leftover events from another channel must not be
+mistaken for genuine on-page player diagnostics.

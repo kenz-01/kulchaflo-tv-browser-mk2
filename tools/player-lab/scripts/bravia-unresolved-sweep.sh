@@ -81,14 +81,17 @@ for entry in "${CHANNELS[@]}"; do
   sleep 28
   stop_capture
   # GvLogger.kt actually emits KfMkIIGV:GvMedia and KfMkIIGV:GvNav.
-  if grep -Fq 'KfMkIIGV:' "$RAW"; then
+  # A navigation message alone is insufficient. Require an on-page probe
+  # from the *current* source ID to prevent false positive channel diagnoses.
+  sample_count="$(grep -Fc "unresolved probe id=$id sample=" "$RAW" || true)"
+  if (( sample_count >= 2 )); then
     grep -F 'KfMkIIGV:' "$RAW" | gzip -c > "$DEST/$id.log.gz"
     rm -f "$RAW" "$DEST/$id.adb-stderr.txt"
     echo "Captured verified application evidence: $DEST/$id.log.gz"
   else
     gzip -c "$RAW" > "$DEST/$id.unfiltered.log.gz"
     rm -f "$RAW"
-    echo "WARNING: no app events for $id. Saved raw log and ADB stderr; this is INCONCLUSIVE." >&2
+    echo "WARNING: fewer than 2 $id probe samples ($sample_count); saved full local log and ADB stderr. INCONCLUSIVE: check redirect, script injection or ADB." >&2
     missing=$((missing + 1))
   fi
   count=$((count + 1))

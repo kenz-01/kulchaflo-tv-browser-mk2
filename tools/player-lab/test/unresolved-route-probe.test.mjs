@@ -70,6 +70,8 @@ test('host-side sweep enumerates all 17 registered targets without deleting TV d
   assert.match(sweep, /sleep 28/);
   assert.match(sweep, /logcat -v threadtime -T 1/);
   assert.match(sweep, /KfMkIIGV:/);
+  assert.match(sweep, /unresolved probe id=\$id sample=/);
+  assert.match(sweep, /sample_count >= 2/);
   assert.match(sweep, /CAPTURE_PID=\$!/);
   assert.match(sweep, /\.unfiltered\.log\.gz/);
   assert.match(sweep, /missing=\$\(\(missing \+ 1\)\)/);
