@@ -73,3 +73,23 @@ Sources: publisher webpages at hgptv.com, znsbahamas.com,
 live99fm.com (linked TV page), viponlineradio.com, tvcarib.com,
 mtvgy.com, and scorchtv.com. No speculative embed URLs were inserted
 into the application's playback system.
+
+## 27 October — Bravia log extraction corrected
+
+Three uploaded HGPTV, ZNS and MTV logs each contain exactly 60 lines of
+**old, identical Sony/AndroidRuntime crash entries**, timestamped
+26 October 10:29. There are **no Kulcha Flo navigation or probe events**.
+They cannot establish playback, offline status, or a GeckoView defect.
+The included system crashes are from `com.sony.dtv.sonysystemservice`
+and `com.android.statementservice`, not Kulcha Flo.
+
+Root cause in the earlier capture procedure: it filtered on Android
+tags `GvMedia`/`GvNav`, but `GvLogger.kt` actually writes
+`KfMkIIGV:GvMedia`/`KfMkIIGV:GvNav`.
+
+The corrected ADB sweep starts an **unfiltered live logcat subscription
+before each official page navigation**, captures 28 seconds, filters on
+`KfMkIIGV:` **on the Mac**, and retains a local compressed full
+log + stderr if app records are absent. It never clears Android logs;
+a no-app-events capture is marked INCONCLUSIVE, never a channel failure.
+No new APK is needed for this host-only correction.

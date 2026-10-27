@@ -68,7 +68,12 @@ test('host-side sweep enumerates all 17 registered targets without deleting TV d
   }
   assert.match(sweep, /requested=\(hgptv zns-tv mtv-guyana\)/);
   assert.match(sweep, /sleep 28/);
-  assert.match(sweep, /logcat -d/);
+  assert.match(sweep, /logcat -v threadtime -T 1/);
+  assert.match(sweep, /KfMkIIGV:/);
+  assert.match(sweep, /CAPTURE_PID=\$!/);
+  assert.match(sweep, /\.unfiltered\.log\.gz/);
+  assert.match(sweep, /missing=\$\(\(missing \+ 1\)\)/);
+  assert.doesNotMatch(sweep, /-s GvMedia:I GvNav:I/);
   for(const forbidden of [' uninstall ', ' pm clear ', ' trim-caches ', ' logcat -c', ' shell input ', ' curl ', ' wget ']) {
     assert.equal(sweep.includes(forbidden), false, forbidden);
   }

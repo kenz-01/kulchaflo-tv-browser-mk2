@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Kulcha Flo TV: passive Sony Bravia source reconnaissance (17 official routes).
 # Does not remove applications, clear logcat, tap controls or upload logs.
+# GvLogger sends Android tags prefixed with KfMkIIGV: (NOT bare GvMedia).
 set -euo pipefail
 
 TV="${KF_TV:-192.168.0.16:5555}"
@@ -48,6 +49,18 @@ fi
 mkdir -p "$DEST"
 printf 'Bravia %s; evidence in %s\n' "$TV" "$DEST"
 count=0
+missing=0
+CAPTURE_PID=""
+stop_capture() {
+  if [[ -n "$CAPTURE_PID" ]]; then
+    kill "$CAPTURE_PID" 2>/dev/null || true
+    wait "$CAPTURE_PID" 2>/dev/null || true
+    CAPTURE_PID=""
+  fi
+}
+trap stop_capture EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for entry in "${CHANNELS[@]}"; do
   id="${entry%%|*}"
   url="${entry#*|}"
@@ -59,15 +72,31 @@ for entry in "${CHANNELS[@]}"; do
     if (( match == 0 )); then continue; fi
   fi
   echo "Opening official source $id; allow 28 seconds with no remote interaction"
+  # Follow unfiltered logcat before navigation, without clearing the TV log buffer.
+  RAW="$DEST/$id.raw.log"
+  adb -s "$TV" logcat -v threadtime -T 1 > "$RAW" 2>"$DEST/$id.adb-stderr.txt" &
+  CAPTURE_PID=$!
+  sleep 1
   adb -s "$TV" shell am start -n com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity -e url "$url" >/dev/null
   sleep 28
-  # Preserve the device log buffer and capture relevant tags locally.
-  adb -s "$TV" logcat -d -v threadtime -s GvMedia:I GvNav:I GvExt:I AndroidRuntime:E '*:S' | gzip -c > "$DEST/$id.log.gz"
-  echo "Saved $DEST/$id.log.gz"
+  stop_capture
+  # GvLogger.kt actually emits KfMkIIGV:GvMedia and KfMkIIGV:GvNav.
+  if grep -Fq 'KfMkIIGV:' "$RAW"; then
+    grep -F 'KfMkIIGV:' "$RAW" | gzip -c > "$DEST/$id.log.gz"
+    rm -f "$RAW" "$DEST/$id.adb-stderr.txt"
+    echo "Captured verified application evidence: $DEST/$id.log.gz"
+  else
+    gzip -c "$RAW" > "$DEST/$id.unfiltered.log.gz"
+    rm -f "$RAW"
+    echo "WARNING: no app events for $id. Saved raw log and ADB stderr; this is INCONCLUSIVE." >&2
+    missing=$((missing + 1))
+  fi
   count=$((count + 1))
 done
 if (( count == 0 )); then
   echo "Unknown channel ID. Choose from the registered list or --all." >&2
   exit 2
 fi
-echo "Captured $count official channels; keep logs private and attach selected files in ChatGPT."
+echo "Captured $count official channels ($missing inconclusive with no app events)."
+echo "Keep logs private and attach selected .log.gz files in ChatGPT."
+if (( missing > 0 )); then exit 3; fi
