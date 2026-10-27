@@ -40,3 +40,36 @@ with its supported URL extra, reads diagnostic logs, and stores them under
 It never uninstalls or changes a provider, deletes caches/logcat, or
 uploads sensitive logs. The full 17-source sweep will take around
 eight minutes and may require manual visual confirmation afterward.
+
+## Public-source reconnaissance, 27 October 2026
+
+Source routes were corrected in the Player Lab registry, the read-only
+extension gate and the Mac sweep script after checking publisher links.
+
+- **HGPTV Guyana:** official homepage `https://www.hgptv.com/`
+  currently contains a Dacast embed (`iframe.dacast.com`).
+- **ZNS Bahamas:** homepage `https://znsbahamas.com/`
+  embeds `player.streamcomedia.com/HTML5/znstv/`.
+- **Live99 TV:** broadcaster's `TV` link at `https://live99fm.com/`
+  points to `https://media.streambrothers.com/public/8014`.
+  Previously registered homepage is not the actual TV player page.
+- **VIP Radio Live TV:** broadcaster navigation now points to
+  `https://viponlineradio.com/live-tv/`, embedding
+  `new.opencaster.com`. The previous `/vip-tv/` inventory route
+  is superseded for this diagnostic pass.
+- **TVCARiB:** homepage offers several distinct live channels (main,
+  kids, gospel, Latino, cinema, music, radio). No arbitrary one-player
+  selection; identify the actual requested channel first.
+- **MTV Guyana:** current Wix live page doesn't expose a definite player
+  in static HTML; retain as unknown until on-device reconnaissance.
+- **Scorch TV:** the official page displays an active live section and
+  on-demand content, with Mux-backed thumbnails; the **live player
+  engine is not established** by thumbnails alone.
+
+The new passive classifier recognises Dacast, StreamcoMedia, OpenCaster
+and StreamBrothers **iframe hosts** when the browser sees them.
+These are platform hints, not accepted playback or live availability.
+Sources: publisher webpages at hgptv.com, znsbahamas.com,
+live99fm.com (linked TV page), viponlineradio.com, tvcarib.com,
+mtvgy.com, and scorchtv.com. No speculative embed URLs were inserted
+into the application's playback system.

@@ -73,3 +73,27 @@ test('host-side sweep enumerates all 17 registered targets without deleting TV d
     assert.equal(sweep.includes(forbidden), false, forbidden);
   }
 });
+
+test('known first-party-linked iframe hosts are classified without exposing player URLs',()=>{
+  const samples=[
+    ['https://iframe.dacast.com/live/example?token=PRIVATE','dacast-frame'],
+    ['https://player.streamcomedia.com/HTML5/znstv/?token=PRIVATE','streamcomedia-frame'],
+    ['https://new.opencaster.com/player?id=PRIVATE','opencaster-frame'],
+    ['https://media.streambrothers.com/public/8014?token=PRIVATE','streambrothers-frame']
+  ];
+  for(const [src,hint] of samples) {
+    const doc={
+      querySelectorAll(sel) {
+        return sel==='iframe'?[{
+          getAttribute(k){return k==='src'?src:null;},
+          getBoundingClientRect(){return {width:800,height:400};}
+        }]:[];
+      },
+      querySelector(){return null;}
+    };
+    const result=api.observe(doc);
+    assert.ok(result.familyHints.includes(hint),hint);
+    assert.equal(result.iframeCount,1);
+    assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+  }
+});

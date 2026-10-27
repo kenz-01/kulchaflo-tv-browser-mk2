@@ -10,10 +10,10 @@
     {id:"alcarrizos-tv",host:"alcarrizostv.com",path:"/"},
     {id:"cdn-37",host:"cdn.com.do",path:"/"},
     {id:"teleantillas",host:"teleantillas.com.do",path:"/radio-page"},
-    {id:"live-99-tv",host:"live99fm.com",path:"/"},
+    {id:"live-99-tv",host:"media.streambrothers.com",path:"/public/8014"},
     {id:"bonaire-tv",host:"bonaire.tv",path:"/"},
     {id:"zns-tv",host:"znsbahamas.com",path:"/"},
-    {id:"vip-radio-aruba-tv",host:"viponlineradio.com",path:"/vip-tv"},
+    {id:"vip-radio-aruba-tv",host:"viponlineradio.com",path:"/live-tv"},
     {id:"cubavision-internacional",host:"teveo.cu",path:"/live/video/akddwvmtyzfsfnnj"},
     {id:"telemundo-puerto-rico",host:"telemundopr.com",path:"/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645"},
     {id:"tvc-st-kitts",host:"tvcplus.live",path:"/watch-live-tv"},
@@ -61,6 +61,10 @@
     if(hosts.some(h=>h==="youtube.com"||h.endsWith(".youtube.com"))) families.push("youtube-frame");
     if(hosts.some(h=>h==="dailymotion.com"||h.endsWith(".dailymotion.com"))) families.push("dailymotion-frame");
     if(hosts.some(h=>h==="vimeo.com"||h==="player.vimeo.com")) families.push("vimeo-frame");
+    if(hosts.some(h=>h==="iframe.dacast.com")) families.push("dacast-frame");
+    if(hosts.some(h=>h==="player.streamcomedia.com")) families.push("streamcomedia-frame");
+    if(hosts.some(h=>h==="new.opencaster.com")) families.push("opencaster-frame");
+    if(hosts.some(h=>h==="media.streambrothers.com")) families.push("streambrothers-frame");
     if(videos.length) families.push("html5-video");
     return {
       iframeCount:frames.length,visibleIframeCount:frames.filter(visible).length,
