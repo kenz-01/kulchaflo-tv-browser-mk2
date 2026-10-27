@@ -1899,6 +1899,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
+                if (isZnsTvSiteUrl(currentUrl)) {
+                    GvLogger.i("GvMedia", "zns browser-first native promotion skipped")
+                    promotedMediaPlayer.stop(reason = "zns-browser-first")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 // Preserve browser playback on every verified known-family top-level route.
                 if (isKnownFamilyLivePageUrl(currentUrl)) {
                     GvLogger.i("GvMedia", "known-family native promote skipped reason=browser-first")
@@ -9893,6 +9899,21 @@ return changed>0;
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
                     ) &&
                     (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
+            val znsTop = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
+            val znsPermissionUri = permission.uri.orEmpty()
+            val znsThirdParty = permission.thirdPartyOrigin.orEmpty()
+            val znsAutoplayScoped =
+                znsTop &&
+                    (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE) &&
+                    (
+                        (isZnsTvSiteUrl(znsPermissionUri) &&
+                            (isZnsTvSiteUrl(znsThirdParty) ||
+                                isZnsStreamcomediaEmbedUrl(znsThirdParty))) ||
+                        (isZnsStreamcomediaEmbedUrl(znsPermissionUri) &&
+                            (isZnsTvSiteUrl(znsThirdParty) ||
+                                isZnsStreamcomediaEmbedUrl(znsThirdParty)))
+                    )
             val knownFamilyLiveUrl = when {
                 isKnownFamilyLivePageUrl(activeSessionUrl) -> activeSessionUrl
                 isKnownFamilyLivePageUrl(currentRootUrl) -> currentRootUrl
@@ -9925,6 +9946,7 @@ return changed>0;
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                znsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 knownFamilyAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 svgAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -13432,6 +13454,16 @@ return changed>0;
             enterBrowserFullscreenPointerSleep(reason = "radiant-player-first")
             return
         }
+        if (type == "zns-player-state" &&
+            isZnsTvSiteUrl(currentUrl) &&
+            (isZnsTvSiteUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(pageUrl))
+        ) {
+            GvLogger.i("GvMedia", "zns helper phase=$phase mode=browser-first")
+            if (phase == "zns-embedded-playing") {
+                enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")
+            }
+            return
+        }
         if (type == "unresolved-route-probe" &&
             isUnresolvedProbePageUrl(pageUrl) && isUnresolvedProbePageUrl(currentUrl)
         ) {
@@ -15284,6 +15316,12 @@ return changed>0;
                 }
                 return
             }
+        }
+        if (isZnsTvSiteUrl(currentUrl)) {
+            GvLogger.i("GvMedia", "zns browser-first candidate ignored")
+            promotedMediaPlayer.stop(reason = "zns-browser-first")
+            geckoView.visibility = View.VISIBLE
+            return
         }
         if (isKnownFamilyLivePageUrl(pageUrl) || isKnownFamilyLivePageUrl(currentUrl)) {
             GvLogger.i("GvMedia", "known-family candidate ignored reason=browser-first")
@@ -17429,6 +17467,20 @@ return changed>0;
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
         return !isLiveMediaSurfaceUrl(url)
+    }
+
+    private fun isZnsTvSiteUrl(url: String): Boolean {
+        val u = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        return u.scheme?.lowercase() == "https" &&
+            u.host?.lowercase()?.removePrefix("www.") == "znsbahamas.com" &&
+            u.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" } == "/"
+    }
+
+    private fun isZnsStreamcomediaEmbedUrl(url: String): Boolean {
+        val u = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        return u.scheme?.lowercase() == "https" &&
+            u.host?.lowercase()?.removePrefix("www.") == "player.streamcomedia.com" &&
+            u.encodedPath.orEmpty().lowercase().trimEnd('/') == "/html5/znstv"
     }
 
     private fun isUnresolvedProbePageUrl(url: String): Boolean {
