@@ -21,6 +21,22 @@ test('all 17 registered uncertain source routes match exact official URLs',()=>{
  }
  assert.equal(found.size,17);
 });
+test('HGPTV canonical watch-live route retains homepage probe but rejects unrelated routes',()=>{
+ const exact='https://www.hgptv.com/watch-live/';
+ const home='https://www.hgptv.com/';
+ assert.equal(api.routeFor(exact)?.id,'hgptv');
+ assert.equal(api.routeFor(home)?.id,'hgptv');
+ for(const invalid of [
+  'http://www.hgptv.com/watch-live/',
+  'https://evil.hgptv.com/watch-live/',
+  'https://www.hgptv.com/watch-live-backup/',
+  'https://www.hgptv.com/article/',
+ ])assert.equal(api.routeFor(invalid),null);
+ const java=readFileSync(resolve(process.cwd(),
+  '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt'),'utf8');
+ assert.ok(java.includes('"hgptv.com" -> path == "/watch-live" || path == "/"'));
+});
+
 test('media evidence includes host only, never source URLs or tokens',()=>{
  const f={getAttribute(k){return k==='src'?'https://player.vimeo.com/video/123?secret=TOKEN':'';},
   getBoundingClientRect(){return {width:800,height:400};}};

@@ -35,7 +35,7 @@ CHANNELS=(
   'cubavision-internacional|https://teveo.cu/live/video/AKDdWvMTYzfsfnNJ'
   'telemundo-puerto-rico|https://www.telemundopr.com/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645/'
   'tvc-st-kitts|https://www.tvcplus.live/watch-live-tv'
-  'hgptv|https://www.hgptv.com/'
+  'hgptv|https://www.hgptv.com/watch-live/'
   'mtv-guyana|https://www.mtvgy.com/live'
 )
 if (( $# == 0 )); then

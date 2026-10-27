@@ -46,7 +46,7 @@ eight minutes and may require manual visual confirmation afterward.
 Source routes were corrected in the Player Lab registry, the read-only
 extension gate and the Mac sweep script after checking publisher links.
 
-- **HGPTV Guyana:** official homepage `https://www.hgptv.com/`
+- **HGPTV Guyana:** the dedicated official `https://www.hgptv.com/watch-live/` destination (the actual Kulcha Flo visitor link) and official homepage `https://www.hgptv.com/`
   currently contains a Dacast embed (`iframe.dacast.com`).
 - **ZNS Bahamas:** homepage `https://znsbahamas.com/`
   embeds `player.streamcomedia.com/HTML5/znstv/`.
@@ -98,3 +98,11 @@ The host sweep requires **at least two matching**
 `unresolved probe id=<current channel> sample=` lines per capture.
 Navigation-only logs and leftover events from another channel must not be
 mistaken for genuine on-page player diagnostics.
+
+## 27 October — physical visitor-route reconciliation and CI fixture correction
+
+The actual visitor Official Link on Sony Bravia opened `https://www.hgptv.com/watch-live/`, and the publisher's navigation exposes **Watch Live** with a Dacast embed. The canonical registry and Mac sweep now open that exact dedicated route. The passive JS/Kotlin guards retain **only** the homepage and `/watch-live` as allowed HGPTV probe pages, rejecting other routes and lookalike hosts. No Dacast playback helper, permission escalation, challenge-solving or stream URL rewriting is introduced. The observed player did not play on-device; continue using normal user activation and accept only genuine sound/picture evidence.
+
+The previously failing Player Lab fixture test observed two `media-added` events, not one. The nested iframe may be observed inserting its initial media element before replacing it. The test now permits one or two **known-media-ID** insertion events while still requiring a single replacement/removal and zero interactions; this is a deterministic-fixture race boundary, not a relaxation of runtime source or TV acceptance.
+
+The older home-page-only inventory is retained in prior Git history. No Bravia APK reinstall is justified merely to correct the Mac host sweep; the passive JS/Kotlin route addition would need a new validated APK **only** if the owner chooses to trial the in-app dedicated-page diagnostic on TV. Existing installed build 5 is not assumed to contain this update.

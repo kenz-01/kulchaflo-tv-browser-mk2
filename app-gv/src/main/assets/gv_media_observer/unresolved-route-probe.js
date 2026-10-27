@@ -17,7 +17,7 @@
     {id:"cubavision-internacional",host:"teveo.cu",path:"/live/video/akddwvmtyzfsfnnj"},
     {id:"telemundo-puerto-rico",host:"telemundopr.com",path:"/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645"},
     {id:"tvc-st-kitts",host:"tvcplus.live",path:"/watch-live-tv"},
-    {id:"hgptv",host:"hgptv.com",path:"/"},
+    {id:"hgptv",host:"hgptv.com",path:"/watch-live"},
     {id:"mtv-guyana",host:"mtvgy.com",path:"/live"}
   ]);
   function path(s) { return String(s || '/').toLowerCase().replace(/\/+$/, '') || '/'; }
@@ -26,7 +26,7 @@
       const u=new URL(String(raw || ""));
       if (u.protocol!=="https:" || u.username || u.password) return null;
       return ROUTES.find(r=>r.host===u.hostname.toLowerCase().replace(/^www\./,"")
-        &&r.path===path(u.pathname))||null;
+        &&(r.path===path(u.pathname) || (r.id==="hgptv" && path(u.pathname)==="/")))||null;
     } catch (_) { return null; }
   }
   function frameHost(frame) {

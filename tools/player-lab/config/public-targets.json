@@ -488,7 +488,7 @@
     },
     "kf-post-736-hgptv": {
       "providerId": "hgptv",
-      "initialUrl": "https://www.hgptv.com/",
+      "initialUrl": "https://www.hgptv.com/watch-live/",
       "allowedMainFrameHosts": [
         "hgptv.com",
         "www.hgptv.com"

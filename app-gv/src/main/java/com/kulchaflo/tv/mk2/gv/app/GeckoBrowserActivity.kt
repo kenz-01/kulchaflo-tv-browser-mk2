@@ -17452,7 +17452,7 @@ return changed>0;
             "teveo.cu" -> path == "/live/video/akddwvmtyzfsfnnj"
             "telemundopr.com" -> path == "/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645"
             "tvcplus.live" -> path == "/watch-live-tv"
-            "hgptv.com" -> path == "/"
+            "hgptv.com" -> path == "/watch-live" || path == "/"
             "mtvgy.com" -> path == "/live"
             else -> false
         }
