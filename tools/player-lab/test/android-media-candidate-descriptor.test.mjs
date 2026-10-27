@@ -137,8 +137,12 @@ test('content owns one media publish timer and clears it on pagehide', () => {
 test('bounded descriptor helper loads before content and the legacy activity probe is absent', () => {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   assert.deepEqual(
-    manifest.content_scripts[0].js,
+    manifest.content_scripts[0].js.slice(0, 2),
     ['candidate-ranking.js', 'content.js'],
+  );
+  assert.deepEqual(
+    manifest.content_scripts[0].js.slice(2),
+    ['known-family-helpers.js', 'unresolved-route-probe.js'],
   );
   const activity = readFileSync(activityPath, 'utf8');
   assert.doesNotMatch(activity, /triggerDirectMediaProbe|activity-js-probe|lastProbeUrlBySession/);
