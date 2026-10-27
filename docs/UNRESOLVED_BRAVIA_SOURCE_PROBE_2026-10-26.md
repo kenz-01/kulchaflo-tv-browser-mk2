@@ -21,3 +21,22 @@ player detected, unknown embed or redirect requiring route correction.
 
 Do not confuse offline unit tests with physical Bravia acceptance. PRs #16
 and #17 remain unmerged; Telesistema stays on broadcaster-instability hold.
+
+## One-command source sweep on the Mac
+
+After installing the acceptance APK from PR #18, download/clone this branch's
+`tools/player-lab/scripts/bravia-unresolved-sweep.sh` and run it from Terminal:
+
+```bash
+bash tools/player-lab/scripts/bravia-unresolved-sweep.sh
+```
+
+The default runs three distinct sources: `hgptv`, `zns-tv` and
+`mtv-guyana`, each with 28 seconds of untouched playback observation.
+Provide channel IDs as arguments to choose others, or `--all` to
+cycle through all 17 official URLs. The script only opens the existing app
+with its supported URL extra, reads diagnostic logs, and stores them under
+`~/Downloads/kf-bravia-logs/unresolved-sweep/<UTC stamp>/`.
+It never uninstalls or changes a provider, deletes caches/logcat, or
+uploads sensitive logs. The full 17-source sweep will take around
+eight minutes and may require manual visual confirmation afterward.

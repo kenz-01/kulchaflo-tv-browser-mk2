@@ -58,3 +58,18 @@ test('native logs scoped evidence and probe never controls playback',()=>{
  for(const x of ['.play(','.click(','.setAttribute(','.scrollIntoView(', 'fetch('])
   assert.equal(source.includes(x),false);
 });
+
+test('host-side sweep enumerates all 17 registered targets without deleting TV data', () => {
+  const sweep = readFileSync(resolve(process.cwd(),'scripts/bravia-unresolved-sweep.sh'),'utf8');
+  for(const key of keys) {
+    const target = inventory[key];
+    assert.ok(sweep.includes("'" + target.providerId + "|" + target.initialUrl + "'"),
+      'missing official sweep route ' + key);
+  }
+  assert.match(sweep, /requested=\(hgptv zns-tv mtv-guyana\)/);
+  assert.match(sweep, /sleep 28/);
+  assert.match(sweep, /logcat -d/);
+  for(const forbidden of [' uninstall ', ' pm clear ', ' trim-caches ', ' logcat -c', ' shell input ', ' curl ', ' wget ']) {
+    assert.equal(sweep.includes(forbidden), false, forbidden);
+  }
+});
