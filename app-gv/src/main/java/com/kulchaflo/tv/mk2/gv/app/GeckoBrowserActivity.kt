@@ -13432,6 +13432,25 @@ return changed>0;
             enterBrowserFullscreenPointerSleep(reason = "radiant-player-first")
             return
         }
+        if (type == "unresolved-route-probe" &&
+            isUnresolvedProbePageUrl(pageUrl) && isUnresolvedProbePageUrl(currentUrl)
+        ) {
+            fun labels(key: String): String {
+                val a = payload.optJSONArray(key) ?: return "none"
+                return (0 until minOf(a.length(), 8))
+                    .map { a.optString(it).take(90) }.joinToString(",").ifBlank { "none" }
+            }
+            GvLogger.i("GvMedia",
+                "unresolved probe id=${payload.optString("providerId").take(65)} " +
+                "sample=${payload.optInt("sampleIndex")} atMs=${payload.optInt("sampleDelayMs")} " +
+                "frames=${payload.optInt("iframeCount")} visibleFrames=${payload.optInt("visibleIframeCount")} " +
+                "videos=${payload.optInt("videoCount")} visibleVideos=${payload.optInt("visibleVideoCount")} " +
+                "ready=${payload.optInt("readyVideoCount")} playing=${payload.optInt("playingCount")} " +
+                "mutedPlaying=${payload.optInt("mutedPlayingCount")} " +
+                "hosts=${labels("frameHosts")} families=${labels("familyHints")}"
+            )
+            return
+        }
         if (type == "known-family-state" && isKnownFamilyLivePageUrl(pageUrl) &&
             isKnownFamilyLivePageUrl(currentUrl)
         ) {
@@ -17410,6 +17429,33 @@ return changed>0;
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
         return !isLiveMediaSurfaceUrl(url)
+    }
+
+    private fun isUnresolvedProbePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return when(host) {
+            "theislamicnetwork.org" -> path == "/"
+            "sankhyatv.com" -> path == "/live"
+            "scorchtv.com" -> path == "/"
+            "tvcarib.com" -> path == "/"
+            "jamaicatravelchannel.com" -> path == "/"
+            "alcarrizostv.com" -> path == "/"
+            "cdn.com.do" -> path == "/"
+            "teleantillas.com.do" -> path == "/radio-page"
+            "live99fm.com" -> path == "/"
+            "bonaire.tv" -> path == "/"
+            "znsbahamas.com" -> path == "/"
+            "viponlineradio.com" -> path == "/vip-tv"
+            "teveo.cu" -> path == "/live/video/akddwvmtyzfsfnnj"
+            "telemundopr.com" -> path == "/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645"
+            "tvcplus.live" -> path == "/watch-live-tv"
+            "hgptv.com" -> path == "/"
+            "mtvgy.com" -> path == "/live"
+            else -> false
+        }
     }
 
     private fun isKnownFamilyLivePageUrl(url: String): Boolean {

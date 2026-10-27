@@ -142,7 +142,7 @@ test('bounded descriptor helper loads before content and the legacy activity pro
   );
   assert.deepEqual(
     manifest.content_scripts[0].js.slice(2),
-    ['known-family-helpers.js'],
+    ['known-family-helpers.js', 'unresolved-route-probe.js'],
   );
   const activity = readFileSync(activityPath, 'utf8');
   assert.doesNotMatch(activity, /triggerDirectMediaProbe|activity-js-probe|lastProbeUrlBySession/);

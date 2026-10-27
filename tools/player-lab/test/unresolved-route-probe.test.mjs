@@ -1,0 +1,60 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {runInNewContext} from 'node:vm';
+const root=resolve(process.cwd(),'../../app-gv/src/main/assets/gv_media_observer');
+const source=readFileSync(resolve(root,'unresolved-route-probe.js'),'utf8');
+const context={URL}; runInNewContext(source,context);
+const api=context.KfUnresolvedProbe;
+const inventory=JSON.parse(readFileSync(resolve(process.cwd(),'config/public-targets.json'),'utf8')).targets;
+const keys=["kf-post-933-islamic-network","kf-post-931-sankhya-television","kf-post-930-scorch-tv","kf-post-929-tvcarib","kf-post-924-jamaica-travel-channel","kf-post-917-alcarrizos-tv","kf-post-913-cdn-37","kf-post-909-teleantillas","kf-post-900-live-99-tv","kf-post-898-bonaire-tv","kf-post-897-zns-tv","kf-post-895-vip-radio-live-tv","kf-post-904-cubavision-internacional","kf-post-744-telemundo-pr","kf-post-738-tvc-st-kitts","kf-post-736-hgptv","kf-post-734-mtv-guyana"];
+test('all 17 registered uncertain source routes match exact official URLs',()=>{
+ assert.equal(api.routes.length,17);
+ const found=new Set();
+ for(const key of keys){
+  const t=inventory[key];assert.ok(t,key);
+  const p=api.routeFor(t.initialUrl);assert.ok(p,key);assert.equal(p.id,t.providerId);found.add(p.id);
+  const u=new URL(t.initialUrl);
+  assert.equal(api.routeFor('http://'+u.host+u.pathname),null);
+  assert.equal(api.routeFor('https://evil.'+u.host+u.pathname),null);
+ }
+ assert.equal(found.size,17);
+});
+test('media evidence includes host only, never source URLs or tokens',()=>{
+ const f={getAttribute(k){return k==='src'?'https://player.vimeo.com/video/123?secret=TOKEN':'';},
+  getBoundingClientRect(){return {width:800,height:400};}};
+ const v={paused:false,muted:true,readyState:4,src:'https://cdn.example/?secret=TOKEN',
+  getBoundingClientRect(){return {width:800,height:400};}};
+ const d={querySelectorAll(q){return q==='iframe'?[f]:q==='video'?[v]:[];},
+  querySelector(q){return q==='.video-js,video-js'?{}:null;}};
+ const x=api.observe(d);
+ assert.equal(x.playingCount,1);assert.equal(x.mutedPlayingCount,1);
+ assert.ok(x.frameHosts.includes('player.vimeo.com'));assert.ok(x.familyHints.includes('vimeo-frame'));
+ assert.doesNotMatch(JSON.stringify(x),/TOKEN|https:|video\/123/);
+});
+test('probe schedules five samples only on top-level exact targets',()=>{
+ const timers=[],messages=[];
+ const d={querySelectorAll(){return[];},querySelector(){return null;}};
+ const w={location:{href:'https://www.hgptv.com/'},prompt(s){messages.push(s);}};w.top=w;
+ runInNewContext(source,{URL,window:w,document:d,setTimeout(fn,ms){timers.push([fn,ms]);}});
+ assert.deepEqual(timers.map(x=>x[1]),[750,3000,8000,15000,25000]);
+ timers.forEach(([fn])=>fn());
+ assert.equal(messages.length,5);
+ assert.ok(messages.every(m=>m.startsWith('__GV_MEDIA__')&&m.includes('unresolved-route-probe')));
+ const none=[],other={location:{href:'https://kulchaflo.com/'}};other.top=other;
+ runInNewContext(source,{URL,window:other,document:d,setTimeout(fn){none.push(fn);}});
+ assert.equal(none.length,0);
+ const child={location:{href:w.location.href},top:{}};
+ runInNewContext(source,{URL,window:child,document:d,setTimeout(fn){none.push(fn);}});
+ assert.equal(none.length,0);
+});
+test('native logs scoped evidence and probe never controls playback',()=>{
+ const java=readFileSync(resolve(process.cwd(),
+  '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt'),'utf8');
+ assert.ok(java.includes('type == "unresolved-route-probe"'));
+ assert.ok(java.includes('isUnresolvedProbePageUrl(currentUrl)'));
+ for(const r of api.routes)assert.ok(java.includes('"'+r.host+'" -> path == "'+r.path+'"'));
+ for(const x of ['.play(','.click(','.setAttribute(','.scrollIntoView(', 'fetch('])
+  assert.equal(source.includes(x),false);
+});
