@@ -1899,6 +1899,19 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
+                if (isZnsTvSiteUrl(currentUrl)) {
+                    GvLogger.i("GvMedia", "zns browser-first native promotion skipped")
+                    promotedMediaPlayer.stop(reason = "zns-browser-first")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
+                // Preserve browser playback on every verified known-family top-level route.
+                if (isKnownFamilyLivePageUrl(currentUrl)) {
+                    GvLogger.i("GvMedia", "known-family native promote skipped reason=browser-first")
+                    promotedMediaPlayer.stop(reason = "known-family-browser-first")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 if (isCvc9DailymotionWatchPageUrl(currentUrl) || isCvc9DailymotionBrowserPlayerContextUrl(observation.url)) {
                     GvLogger.i(
                         "GvMedia",
@@ -9806,6 +9819,77 @@ return changed>0;
                     gbnPermissionUri ||
                         (gbnTopContext && gbnThirdPartyDailymotion)
                     )
+            val historicalGapTopContext =
+                isHistoricalLiveGapAutoplayContextUrl(activeSessionUrl) ||
+                    isHistoricalLiveGapAutoplayContextUrl(currentRootUrl)
+            val historicalGapPermissionUri =
+                isHistoricalLiveGapAutoplayContextUrl(permission.uri.orEmpty())
+            val historicalGapThirdParty =
+                isHistoricalLiveGapAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty()) ||
+                    isTv6DailymotionPlayerUrl(permission.thirdPartyOrigin.orEmpty())
+            val historicalGapAutoplayScoped = ENABLE_HISTORICAL_LIVE_GAP_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    historicalGapPermissionUri ||
+                        (historicalGapTopContext && historicalGapThirdParty)
+                    )
+            val identiteTopContext =
+                isIdentiteProFhiAutoplayContextUrl(activeSessionUrl) ||
+                    isIdentiteProFhiAutoplayContextUrl(currentRootUrl)
+            val identitePermissionUri = isIdentiteProFhiAutoplayContextUrl(permission.uri.orEmpty())
+            val identiteThirdParty = isIdentiteProFhiAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
+            val identiteAutoplayScoped = ENABLE_IDENTITE_PRO_FHI_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    identitePermissionUri ||
+                        (identiteTopContext && identiteThirdParty)
+                    )
+            val embeddedLiveVideoJsTopContext =
+                isEmbeddedLiveVideoJsAutoplayContextUrl(activeSessionUrl) ||
+                    isEmbeddedLiveVideoJsAutoplayContextUrl(currentRootUrl)
+            val embeddedLiveVideoJsPermissionUri =
+                isEmbeddedLiveVideoJsAutoplayContextUrl(permission.uri.orEmpty())
+            val embeddedLiveVideoJsThirdParty =
+                isEmbeddedLiveVideoJsAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
+            val embeddedLiveVideoJsAutoplayScoped = ENABLE_EMBEDDED_LIVE_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    embeddedLiveVideoJsPermissionUri ||
+                        (embeddedLiveVideoJsTopContext && embeddedLiveVideoJsThirdParty)
+                    )
+            val svgTopContext = isSvgTvAutoplayContextUrl(activeSessionUrl) || isSvgTvAutoplayContextUrl(currentRootUrl)
+            val svgPermissionUri = isSvgTvAutoplayContextUrl(permission.uri.orEmpty())
+            val svgThirdPartyCloudflare = isSvgTvCloudflareHost(thirdPartyHost)
+            val svgAutoplayScoped = ENABLE_SVG_CLOUDFLARE_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    svgPermissionUri ||
+                        (svgTopContext && svgThirdPartyCloudflare)
+                    )
+            val radiantTopContext = isRadiantTvAutoplayContextUrl(activeSessionUrl) || isRadiantTvAutoplayContextUrl(currentRootUrl)
+            val radiantPermissionUri = isRadiantTvAutoplayContextUrl(permission.uri.orEmpty())
+            val radiantThirdParty = isRadiantTvAutoplayContextUrl(permission.thirdPartyOrigin.orEmpty())
+            val radiantAutoplayScoped = ENABLE_RADIANT_TV_AUTOPLAY_PERMISSION_ALLOW &&
+                (
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    ) &&
+                (
+                    radiantPermissionUri ||
+                        (radiantTopContext && radiantThirdParty)
+                    )
             val compassTopContext = isCompassTvHomePageUrl(activeSessionUrl) || isCompassTvHomePageUrl(currentRootUrl)
             val compassPermissionUri = isCompassTvHomePageUrl(permission.uri.orEmpty()) || isCompassJwPlayerHost(uriHost)
             val compassThirdPartyJw = isCompassJwPlayerHost(thirdPartyHost)
@@ -9815,6 +9899,39 @@ return changed>0;
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
                     ) &&
                     (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
+            val znsTop = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
+            val znsPermissionUri = permission.uri.orEmpty()
+            val znsThirdParty = permission.thirdPartyOrigin.orEmpty()
+            val znsAutoplayScoped =
+                znsTop &&
+                    (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE) &&
+                    (
+                        (isZnsTvSiteUrl(znsPermissionUri) &&
+                            (isZnsTvSiteUrl(znsThirdParty) ||
+                                isZnsStreamcomediaEmbedUrl(znsThirdParty))) ||
+                        (isZnsStreamcomediaEmbedUrl(znsPermissionUri) &&
+                            (isZnsTvSiteUrl(znsThirdParty) ||
+                                isZnsStreamcomediaEmbedUrl(znsThirdParty)))
+                    )
+            val knownFamilyLiveUrl = when {
+                isKnownFamilyLivePageUrl(activeSessionUrl) -> activeSessionUrl
+                isKnownFamilyLivePageUrl(currentRootUrl) -> currentRootUrl
+                else -> ""
+            }
+            val knownFamilyHost = runCatching {
+                android.net.Uri.parse(knownFamilyLiveUrl).host?.lowercase()?.removePrefix("www.")
+            }.getOrNull().orEmpty()
+            val knownFamilyPermissionUri = isKnownFamilyLivePageUrl(permission.uri.orEmpty())
+            val knownFamilyAutoplayScoped =
+                (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE) &&
+                    knownFamilyPermissionUri &&
+                    (
+                        (knownFamilyHost == "bonce.tv" && thirdPartyHost?.removePrefix("www.") == "bonce.tv") ||
+                            (knownFamilyHost == "telesistema11.com.do" &&
+                                thirdPartyHost?.removePrefix("www.") == "geo.dailymotion.com")
+                        )
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9829,6 +9946,13 @@ return changed>0;
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                znsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                knownFamilyAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                radiantAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                svgAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                embeddedLiveVideoJsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                identiteAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                historicalGapAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -13324,6 +13448,56 @@ return changed>0;
             )
             return
         }
+        if (type == "radiant-tv-state" && phase == "content-radiant-player-first" &&
+            isRadiantTvAutoplayContextUrl(pageUrl) && isRadiantTvAutoplayContextUrl(currentUrl)
+        ) {
+            enterBrowserFullscreenPointerSleep(reason = "radiant-player-first")
+            return
+        }
+        if (type == "zns-player-state" &&
+            isZnsTvSiteUrl(currentUrl) &&
+            (isZnsTvSiteUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(pageUrl))
+        ) {
+            GvLogger.i("GvMedia", "zns helper phase=$phase mode=browser-first")
+            if (phase == "zns-embedded-playing") {
+                enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")
+            }
+            return
+        }
+        if (type == "unresolved-route-probe" &&
+            isUnresolvedProbePageUrl(pageUrl) && isUnresolvedProbePageUrl(currentUrl)
+        ) {
+            fun labels(key: String): String {
+                val a = payload.optJSONArray(key) ?: return "none"
+                return (0 until minOf(a.length(), 8))
+                    .map { a.optString(it).take(90) }.joinToString(",").ifBlank { "none" }
+            }
+            GvLogger.i("GvMedia",
+                "unresolved probe id=${payload.optString("providerId").take(65)} " +
+                "sample=${payload.optInt("sampleIndex")} atMs=${payload.optInt("sampleDelayMs")} " +
+                "frames=${payload.optInt("iframeCount")} visibleFrames=${payload.optInt("visibleIframeCount")} " +
+                "videos=${payload.optInt("videoCount")} visibleVideos=${payload.optInt("visibleVideoCount")} " +
+                "ready=${payload.optInt("readyVideoCount")} playing=${payload.optInt("playingCount")} " +
+                "mutedPlaying=${payload.optInt("mutedPlayingCount")} " +
+                "hosts=${labels("frameHosts")} families=${labels("familyHints")}"
+            )
+            return
+        }
+        if (type == "known-family-state" && isKnownFamilyLivePageUrl(pageUrl) &&
+            isKnownFamilyLivePageUrl(currentUrl)
+        ) {
+            GvLogger.i("GvMedia",
+                "known-family helper provider=${payload.optString("providerId")} phase=$phase " +
+                    "family=${payload.optString("playerFamily")} " +
+                    "videoCount=${payload.optInt("videoCount")} iframeCount=${payload.optInt("iframeCount")} " +
+                    "sourceActivated=${payload.optBoolean("sourceActivated")} " +
+                    "wasLazy=${payload.optBoolean("wasLazy")} liteSpeedMarker=${payload.optBoolean("liteSpeedMarker")}"
+            )
+            if (phase == "content-known-family-player-first") {
+                enterBrowserFullscreenPointerSleep(reason = "known-family-player-first")
+            }
+            return
+        }
         if (type == "cbn-virgin-islands-state") {
             val layoutApplied = payload.optBoolean("layoutApplied")
             val playbackActive = payload.optBoolean("playbackActive")
@@ -15143,6 +15317,18 @@ return changed>0;
                 return
             }
         }
+        if (isZnsTvSiteUrl(currentUrl)) {
+            GvLogger.i("GvMedia", "zns browser-first candidate ignored")
+            promotedMediaPlayer.stop(reason = "zns-browser-first")
+            geckoView.visibility = View.VISIBLE
+            return
+        }
+        if (isKnownFamilyLivePageUrl(pageUrl) || isKnownFamilyLivePageUrl(currentUrl)) {
+            GvLogger.i("GvMedia", "known-family candidate ignored reason=browser-first")
+            promotedMediaPlayer.stop(reason = "known-family-browser-first")
+            geckoView.visibility = View.VISIBLE
+            return
+        }
         if (isCvc9DailymotionBrowserPlayerContextUrl(pageUrl)) {
             GvLogger.i(
                 "GvMedia",
@@ -15277,6 +15463,11 @@ return changed>0;
         private const val ENABLE_CNC3_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CVC9_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_GBN_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_RADIANT_TV_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_SVG_CLOUDFLARE_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_EMBEDDED_LIVE_VIDEOJS_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_IDENTITE_PRO_FHI_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_HISTORICAL_LIVE_GAP_AUTOPLAY_PERMISSION_ALLOW = true
         private const val CVC9_DAILYMOTION_WATCH_PAGE_URL = "https://www.dailymotion.com/video/x7gy059"
         private const val ENABLE_ABS_TEGO_GESTURE_FULLSCREEN_RETRY = false
         private const val ENABLE_ABS_TEGO_NATIVE_F_FULLSCREEN = false
@@ -15810,6 +16001,92 @@ return changed>0;
 
     private fun isTttOrTegoLivePlayerUrl(url: String): Boolean {
         return isTttLivePlayerUrl(url) || isTttTegoPlayerUrl(url)
+    }
+
+    private fun isTv6DailymotionPlayerUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        return host == "geo.dailymotion.com" && path == "/player/x8dgt.html"
+    }
+
+    private fun isHistoricalLiveGapAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "wapa.tv") return path.startsWith("/envivo")
+        if (host == "wipr.pr") return path.startsWith("/envivo")
+        if (host == "zizonline.com") return path.startsWith("/tv/channel-5")
+        if (host == "tv6tnt.com") return path.startsWith("/watch_live")
+        return isTv6DailymotionPlayerUrl(url)
+    }
+
+    private fun isIdentiteProFhiAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "identiteradio.com") return path == "/tv" || path.startsWith("/tv/")
+        if (host == "vdo2.pro-fhi.net") return path.startsWith("/hybrid-stream-video-widget/")
+        return false
+    }
+
+    private fun isEmbeddedLiveVideoJsAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "biztv.com") return path.startsWith("/watch-biztv")
+        if (host == "c.streamhoster.com") return path.startsWith("/embed/media/")
+        if (host == "rhtguadeloupe.fr") return path.startsWith("/live-video")
+        if (host == "madrasfm.tv") return path.isBlank() || path == "/"
+        if (host == "radiofusion.fr") return path.startsWith("/fusion-tv")
+        if (host == "player.infomaniak.com") return true
+        return false
+    }
+
+    private fun isSvgTvCloudflareHost(host: String?): Boolean {
+        val normalized = host?.lowercase().orEmpty().removePrefix("www.")
+        return normalized.endsWith(".cloudflarestream.com") || normalized == "cloudflarestream.com"
+    }
+
+    private fun isSvgTvAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "watchsvgtv.com") {
+            return path.isBlank() || path == "/" || path.startsWith("/live")
+        }
+        return isSvgTvCloudflareHost(host) && path.endsWith("/iframe")
+    }
+
+    private fun isRadiantTvAutoplayContextUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase()
+        if (host == "telemicro.com.do") {
+            return path.startsWith("/telemicro-en-vivo") ||
+                path.startsWith("/digital-15-en-vivo") ||
+                path.startsWith("/players/5tv/") ||
+                path.startsWith("/players/15tv/")
+        }
+        if (host == "telecentro.com.do") {
+            return path.startsWith("/telecentro-en-vivo") ||
+                path.startsWith("/players/13bot/")
+        }
+        return false
     }
 
     private fun isAbsTegoAutoplayContextUrl(url: String): Boolean {
@@ -17192,11 +17469,82 @@ return changed>0;
         return !isLiveMediaSurfaceUrl(url)
     }
 
+    private fun isZnsTvSiteUrl(url: String): Boolean {
+        val u = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        return u.scheme?.lowercase() == "https" &&
+            u.host?.lowercase()?.removePrefix("www.") == "znsbahamas.com" &&
+            u.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" } == "/"
+    }
+
+    private fun isZnsStreamcomediaEmbedUrl(url: String): Boolean {
+        val u = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        return u.scheme?.lowercase() == "https" &&
+            u.host?.lowercase()?.removePrefix("www.") == "player.streamcomedia.com" &&
+            u.encodedPath.orEmpty().lowercase().trimEnd('/') == "/html5/znstv"
+    }
+
+    private fun isUnresolvedProbePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return when(host) {
+            "theislamicnetwork.org" -> path == "/"
+            "sankhyatv.com" -> path == "/live"
+            "scorchtv.com" -> path == "/"
+            "tvcarib.com" -> path == "/"
+            "jamaicatravelchannel.com" -> path == "/"
+            "alcarrizostv.com" -> path == "/"
+            "cdn.com.do" -> path == "/"
+            "teleantillas.com.do" -> path == "/radio-page"
+            "media.streambrothers.com" -> path == "/public/8014"
+            "bonaire.tv" -> path == "/"
+            "znsbahamas.com" -> path == "/"
+            "viponlineradio.com" -> path == "/live-tv"
+            "teveo.cu" -> path == "/live/video/akddwvmtyzfsfnnj"
+            "telemundopr.com" -> path == "/noticias/puerto-rico/mira-aqui-nuestra-programacion-en-vivo-3/2019645"
+            "tvcplus.live" -> path == "/watch-live-tv"
+            "hgptv.com" -> path == "/"
+            "mtvgy.com" -> path == "/live"
+            else -> false
+        }
+    }
+
+    private fun isKnownFamilyLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https") return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return when (host) {
+            "acentotv.acento.com.do" -> path == "/en-vivo.html"
+            "ahoratv.com" -> path == "/"
+            "antena7.com.do" -> path == "/envivo-canal-7"
+            "energiabonaire.com" -> path == "/"
+            "prensa-latina.cu" -> path == "/"
+            "etv.gp" -> path == "/direct"
+            "bonce.tv" -> path == "/"
+            "peyiguyane.com" -> path == "/tele-peyi"
+            "xfmaruba.com" -> path == "/"
+            "balchitv.com" -> path == "/"
+            "cdn.teleonce.com" -> path == "/en-vivo"
+            "tvdirect13.com" -> path == "/"
+            "telesistema11.com.do" -> path == "/en-vivo"
+            "teleuniversotv.com" -> path == "/"
+            "pointville.ag" -> path == "/live-stream"
+            "bonaotv.com" -> path == "/"
+            "rtvd.gob.do" -> path == "/"
+            "yunavision.com" -> path == "/"
+            "adoramtv.org" -> path == "/programacion-en-vivo"
+            else -> false
+        }
+    }
+
     private fun isLiveMediaSurfaceUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return when {
+            isKnownFamilyLivePageUrl(url) -> true
             host == "cbc.bb" && path.startsWith("/live") -> true
             isDbsTvLivePageUrl(url) -> true
             host == "kulchaflo.com" && path.startsWith("/channels/") -> true
