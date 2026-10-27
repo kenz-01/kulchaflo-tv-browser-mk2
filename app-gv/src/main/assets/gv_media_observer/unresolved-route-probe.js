@@ -25,7 +25,7 @@
     try {
       const u=new URL(String(raw || ""));
       if (u.protocol!=="https:" || u.username || u.password) return null;
-      return ROUTES.find(r=>r.host===u.hostname.toLowerCase().replace(/^www\\./,"")
+      return ROUTES.find(r=>r.host===u.hostname.toLowerCase().replace(/^www\./,"")
         &&r.path===path(u.pathname))||null;
     } catch (_) { return null; }
   }
@@ -36,7 +36,7 @@
         if (!raw) continue;
         const u=new URL(raw,"https://invalid.example/");
         if (u.protocol==="https:"&&!u.username&&!u.password&&u.hostname!=="invalid.example")
-          return u.hostname.toLowerCase().replace(/^www\\./,"").slice(0,90);
+          return u.hostname.toLowerCase().replace(/^www\./,"").slice(0,90);
       } catch (_) {}
     }
     return "";
