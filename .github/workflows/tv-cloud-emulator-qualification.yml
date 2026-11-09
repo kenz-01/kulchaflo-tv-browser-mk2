@@ -31,15 +31,6 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Verify supported Android TV system image
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdkmanager --list | grep -F "system-images;android-36;android-tv;x86_64" || {
-            echo "Android TV API36 x86_64 system image is unavailable on this runner."
-            exit 1
-          }
-
       - name: Enable Android emulator KVM
         shell: bash
         run: |
@@ -60,6 +51,7 @@ jobs:
           api-level: 36
           target: android-tv
           arch: x86_64
+          profile: tv_1080p
           cores: 2
           ram-size: 2048M
           disk-size: 4096M
