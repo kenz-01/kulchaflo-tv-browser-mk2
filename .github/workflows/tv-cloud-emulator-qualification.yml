@@ -2,11 +2,6 @@ name: TV cloud emulator qualification
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/tv-cloud-emulator-qualification.yml"
-      - "tools/player-lab/scripts/tv-cloud-emulator-qualification.sh"
 
 permissions:
   contents: read
