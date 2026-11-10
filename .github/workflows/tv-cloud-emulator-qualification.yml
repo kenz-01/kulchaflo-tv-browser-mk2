@@ -103,12 +103,7 @@ jobs:
           disk-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: |
-            case "$TV_TEST_PROFILE" in
-              qualification) bash tools/player-lab/scripts/tv-cloud-emulator-qualification.sh ;;
-              zns) bash tools/player-lab/scripts/tv-zns-source-feedback.sh ;;
-              *) echo "Unknown emulator test profile" >&2; exit 2 ;;
-            esac
+          script: bash tools/player-lab/scripts/tv-cloud-emulator-dispatch.sh "$TV_TEST_PROFILE"
 
       - name: Finalize ZNS receipt if prerequisites failed
         if: always()

@@ -7,11 +7,13 @@ const script = readFileSync(resolve(process.cwd(), 'scripts/tv-zns-source-feedba
 const workflow = readFileSync(resolve(process.cwd(), '../../.github/workflows/tv-cloud-emulator-qualification.yml'), 'utf8');
 const neutralQualification = readFileSync(resolve(process.cwd(), 'scripts/tv-cloud-emulator-qualification.sh'), 'utf8');
 const classifier = readFileSync(resolve(process.cwd(), 'src/zns-feedback-outcome.mjs'), 'utf8');
+const dispatcher = readFileSync(resolve(process.cwd(), 'scripts/tv-cloud-emulator-dispatch.sh'), 'utf8');
 
 test('ZNS remains a separate explicitly selected manual profile on standard free runners', () => {
   assert.match(workflow, /workflow_dispatch:[\s\S]*test_profile:[\s\S]*type: choice[\s\S]*default: qualification[\s\S]*- qualification[\s\S]*- zns/);
-  assert.match(workflow, /zns\) bash tools\/player-lab\/scripts\/tv-zns-source-feedback\.sh/);
-  assert.match(workflow, /qualification\) bash tools\/player-lab\/scripts\/tv-cloud-emulator-qualification\.sh/);
+  assert.match(workflow, /script: bash tools\/player-lab\/scripts\/tv-cloud-emulator-dispatch\.sh "\$TV_TEST_PROFILE"/);
+  assert.match(dispatcher, /qualification\)[\s\S]*?exec bash tools\/player-lab\/scripts\/tv-cloud-emulator-qualification\.sh/);
+  assert.match(dispatcher, /zns\)[\s\S]*?exec bash tools\/player-lab\/scripts\/tv-zns-source-feedback\.sh/);
   assert.doesNotMatch(workflow, /^\s*(pull_request|push|schedule):/m);
   assert.match(workflow, /runs-on:\s+ubuntu-latest/);
   assert.doesNotMatch(workflow, /larger runner|self-hosted|schedule:/i);
@@ -19,8 +21,9 @@ test('ZNS remains a separate explicitly selected manual profile on standard free
 
 test('the neutral infrastructure qualification remains generic and does not navigate to a broadcaster', () => {
   assert.match(neutralQualification, /https:\/\/example\.com/);
+  assert.match(neutralQualification, /selected_profile=qualification/);
   assert.doesNotMatch(neutralQualification, /znsbahamas|streamcomedia|KEYCODE_DPAD_CENTER/i);
-  assert.match(workflow, /qualification\) bash tools\/player-lab\/scripts\/tv-cloud-emulator-qualification\.sh/);
+  assert.match(dispatcher, /qualification\)/);
 });
 
 test('the ZNS profile uses only the official route and never dispatches play or center actions', () => {
