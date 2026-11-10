@@ -56,6 +56,54 @@ test('truncated or unavailable Android state stays unknown unless target presenc
   assert.equal(unavailable.diagnostics.window_focus, 'command_unavailable');
 });
 
+test('null mCurrentFocus stays unknown when mFocusedApp reports the target activity', () => {
+  const result = parseState({window: {stdout: [
+    'mCurrentFocus=null',
+    `mFocusedApp=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`,
+  ].join('\n'), returncode: 0}});
+  assert.equal(result.window_focus, 'unknown');
+  assert.equal(result.diagnostics.window_focus, 'entry_unparsed');
+});
+
+test('an other mCurrentFocus remains no when mFocusedApp reports the target activity', () => {
+  const result = parseState({window: {stdout: [
+    'mCurrentFocus=Window{b com.android.launcher/.Launcher}',
+    `mFocusedApp=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`,
+  ].join('\n'), returncode: 0}});
+  assert.equal(result.window_focus, 'no');
+  assert.equal(result.diagnostics.window_focus, 'other_component');
+});
+
+test('a target mCurrentFocus remains yes with a target mFocusedApp corroboration', () => {
+  const result = parseState({window: {stdout: [
+    `mCurrentFocus=Window{b ${packageName}/.app.GeckoBrowserActivity}`,
+    `mFocusedApp=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`,
+  ].join('\n'), returncode: 0}});
+  assert.equal(result.window_focus, 'yes');
+  assert.equal(result.diagnostics.window_focus, 'target_component');
+});
+
+test('truncated or unparseable mCurrentFocus stays unknown despite target mFocusedApp', () => {
+  const unparseable = parseState({window: {stdout: [
+    'mCurrentFocus=Window{b splash without a component}',
+    `mFocusedApp=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`,
+  ].join('\n'), returncode: 0}});
+  assert.equal(unparseable.window_focus, 'unknown');
+  assert.equal(unparseable.diagnostics.window_focus, 'entry_unparsed');
+
+  const truncated = parseState({window: {
+    stdout: [
+      'mCurrentFocus=Window{b splash without a component}',
+      `mFocusedApp=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`,
+      'x'.repeat(64 * 1024),
+    ].join('\n'),
+    returncode: 0,
+    truncated: true,
+  }});
+  assert.equal(truncated.window_focus, 'unknown');
+  assert.equal(truncated.diagnostics.window_focus, 'entry_unparsed');
+});
+
 test('log snapshot retains only bounded allowlisted phases and player scalars', () => {
   const input = [
     'I/GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',

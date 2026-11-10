@@ -96,8 +96,10 @@ def parse_capture(capture):
         activity.get("stdout", ""), re.compile(r"(?:topResumedActivity|mResumedActivity)"),
         activity.get("truncated", False), activity.get("error")
     )
+    # mFocusedApp describes an app/activity; only mCurrentFocus proves the
+    # input-focused window and can determine the reported window-focus state.
     focus, focus_detail = component_status(
-        window.get("stdout", ""), re.compile(r"(?:mCurrentFocus|mFocusedApp)"),
+        window.get("stdout", ""), re.compile(r"^\s*mCurrentFocus\s*="),
         window.get("truncated", False), window.get("error")
     )
     return {
