@@ -10,10 +10,26 @@ const PHASES = new Set([
 const APP_CHECKPOINTS = ['after_launch', 'after_dpad', 'after_back'];
 const INFRA_FAILURE_STAGES = new Set([
   'preflight',
+  'workflow_setup',
+  'kvm_preflight',
+  'apk_assembly',
   'emulator_boot',
   'apk_install',
+  'interaction_capture',
+]);
+const FAILURE_STAGES = new Set([
+  ...INFRA_FAILURE_STAGES,
   'launch',
   'required_app_state',
+  'emulator_step',
+  'evidence_capture',
+  'log_capture',
+  'complete',
+]);
+const APP_DIAGNOSTICS = new Set([
+  'target_process', 'process_absent', 'unavailable', 'unparseable', 'output_truncated',
+  'target_component', 'other_component', 'entry_missing', 'entry_unparsed',
+  'ambiguous_components', 'too_many_entries', 'command_unavailable',
 ]);
 
 const isStatus = (value) => value === 'yes' || value === 'no';
@@ -39,16 +55,37 @@ function safeAppState(appState = {}) {
 }
 
 function safeScreenshots(screenshots = {}) {
+  const status = (value) => ['captured', 'missing', 'oversize'].includes(value) ? value : 'missing';
   return {
+    after_launch: {
+      file: 'zns-after-launch.png',
+      status: status(screenshots.after_launch),
+    },
     after_dpad: {
       file: 'zns-after-dpad.png',
-      status: screenshots.after_dpad === 'captured' ? 'captured' : 'missing',
+      status: status(screenshots.after_dpad),
     },
     after_back: {
       file: 'zns-after-back.png',
-      status: screenshots.after_back === 'captured' ? 'captured' : 'missing',
+      status: status(screenshots.after_back),
+    },
+    after_failure: {
+      file: 'zns-after-failure.png',
+      status: status(screenshots.after_failure),
     },
   };
+}
+
+function safeAppDiagnostics(diagnostics = {}) {
+  return Object.fromEntries(['after_launch', 'after_dpad', 'after_back', 'after_failure'].map((checkpoint) => {
+    const state = diagnostics[checkpoint] ?? {};
+    const safe = (value) => APP_DIAGNOSTICS.has(value) ? value : 'unavailable';
+    return [checkpoint, {
+      pidof: safe(state.pidof),
+      activity_foreground: safe(state.activity_foreground),
+      window_focus: safe(state.window_focus),
+    }];
+  }));
 }
 
 function safeActions(actions = {}) {
@@ -76,15 +113,23 @@ export function classifyZnsFeedback(evidence = {}) {
     && evidence.observation_phases.every((phase) => PHASES.has(phase));
   const phases = phasesAreValid ? [...new Set(evidence.observation_phases)] : [];
   const appState = safeAppState(evidence.app_state);
+  const appDiagnostics = safeAppDiagnostics(evidence.app_state_diagnostics);
+  const failureState = Object.fromEntries(['process', 'activity_foreground', 'window_focus'].map((key) => [
+    key,
+    isStatus(evidence.failure_state?.[key]) ? evidence.failure_state[key] : 'unknown',
+  ]));
   const screenshots = safeScreenshots(evidence.screenshots);
   const actions = safeActions(evidence.actions);
   const playerState = safePlayerState(evidence.player_state);
   const infra = evidence.infrastructure ?? {};
-  const failureStage = INFRA_FAILURE_STAGES.has(evidence.failure_stage)
+  const failureStage = FAILURE_STAGES.has(evidence.failure_stage)
     ? evidence.failure_stage
     : null;
 
-  const explicitInfraFailure = failureStage !== null
+  const explicitInfraFailure = INFRA_FAILURE_STAGES.has(failureStage)
+    || failureStage === 'launch' && evidence.infrastructure?.app_launch === 'no'
+    || failureStage === 'required_app_state'
+      && APP_CHECKPOINTS.some((checkpoint) => Object.values(appState[checkpoint]).includes('no'))
     || infra.emulator_boot === 'no'
     || infra.apk_install === 'no'
     || infra.app_launch === 'no'
@@ -162,6 +207,8 @@ export function classifyZnsFeedback(evidence = {}) {
       app_launch: isStatus(infra.app_launch) ? infra.app_launch : 'unknown',
     },
     app_state: appState,
+    app_state_diagnostics: appDiagnostics,
+    failure_state: failureState,
     screenshots,
     actions,
     log_capture: evidence.log_capture === 'complete' ? 'complete' : 'incomplete',
@@ -171,6 +218,9 @@ export function classifyZnsFeedback(evidence = {}) {
     classification,
     reason,
     failure_stage: failureStage,
+    launch_status: ['confirmed', 'failed', 'unconfirmed'].includes(evidence.launch_status)
+      ? evidence.launch_status
+      : 'unknown',
     helper_initiated_playback: false,
     live_stream_verified: false,
     moving_picture_verified: false,
@@ -186,6 +236,11 @@ function evidenceFromEnvironment(env) {
     activity_foreground: env[`TV_${name}_FOREGROUND`] || 'unknown',
     window_focus: env[`TV_${name}_FOCUS`] || 'unknown',
   });
+  const diagnosticCheckpoint = (name) => ({
+    pidof: env[`TV_${name}_PIDOF_DIAGNOSTIC`] || 'unavailable',
+    activity_foreground: env[`TV_${name}_ACTIVITY_DIAGNOSTIC`] || 'command_unavailable',
+    window_focus: env[`TV_${name}_FOCUS_DIAGNOSTIC`] || 'command_unavailable',
+  });
   return {
     commit: env.GITHUB_SHA,
     profile: env.TV_TEST_PROFILE,
@@ -200,9 +255,18 @@ function evidenceFromEnvironment(env) {
       after_dpad: appCheckpoint('DPAD'),
       after_back: appCheckpoint('BACK'),
     },
+    app_state_diagnostics: {
+      after_launch: diagnosticCheckpoint('LAUNCH'),
+      after_dpad: diagnosticCheckpoint('DPAD'),
+      after_back: diagnosticCheckpoint('BACK'),
+      after_failure: diagnosticCheckpoint('FAILURE'),
+    },
+    failure_state: appCheckpoint('FAILURE'),
     screenshots: {
+      after_launch: env.TV_SCREENSHOT_LAUNCH,
       after_dpad: env.TV_SCREENSHOT_DPAD,
       after_back: env.TV_SCREENSHOT_BACK,
+      after_failure: env.TV_SCREENSHOT_FAILURE,
     },
     actions: {
       dpad_down_up_dispatched: env.TV_DPAD_DISPATCH,
@@ -218,6 +282,7 @@ function evidenceFromEnvironment(env) {
     },
     video_time_advanced_observed: env.TV_TIME_ADVANCED,
     failure_stage: env.TV_FAILURE_STAGE,
+    launch_status: env.TV_LAUNCH_STATUS,
   };
 }
 

@@ -43,7 +43,9 @@ jobs:
               "source": {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False},
               "infrastructure": {"emulator_boot": "unknown", "apk_install": "unknown", "app_launch": "unknown"},
               "app_state": {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")},
-              "screenshots": {"after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}},
+              "app_state_diagnostics": {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")},
+              "failure_state": {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"},
+              "screenshots": {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}},
               "actions": {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"},
               "log_capture": "incomplete",
               "observation_phases": [],
@@ -52,6 +54,7 @@ jobs:
               "classification": "INCONCLUSIVE",
               "reason": "The workflow has not completed the selected source diagnostic.",
               "failure_stage": None,
+              "launch_status": "unknown",
               "helper_initiated_playback": False,
               "live_stream_verified": False,
               "moving_picture_verified": False,
@@ -75,6 +78,7 @@ jobs:
           cache: gradle
 
       - name: Enable Android emulator KVM
+        id: kvm
         shell: bash
         run: |
           set -euo pipefail
@@ -84,6 +88,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Assemble existing emulator-compatible GeckoView APK
+        id: apk_assembly
         run: |
           chmod +x gradlew
           ./gradlew :app-gv:assembleUniversalDebug --console=plain
@@ -111,6 +116,8 @@ jobs:
           TV_TEST_PROFILE: ${{ inputs.test_profile }}
           TV_COMMIT: ${{ github.sha }}
           TV_JOB_STATUS: ${{ job.status }}
+          TV_KVM_OUTCOME: ${{ steps.kvm.outcome }}
+          TV_APK_ASSEMBLY_OUTCOME: ${{ steps.apk_assembly.outcome }}
           TV_EMULATOR_STEP_OUTCOME: ${{ steps.emulator_test.outcome }}
         run: |
           if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
@@ -128,22 +135,40 @@ jobs:
           receipt.setdefault("source", {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False})
           receipt.setdefault("infrastructure", {"emulator_boot": "unknown", "apk_install": "unknown", "app_launch": "unknown"})
           receipt.setdefault("app_state", {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")})
-          receipt.setdefault("screenshots", {"after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}})
+          receipt.setdefault("app_state_diagnostics", {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")})
+          receipt.setdefault("failure_state", {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"})
+          receipt.setdefault("screenshots", {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}})
           receipt.setdefault("actions", {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"})
           receipt.setdefault("log_capture", "incomplete")
           receipt.setdefault("observation_phases", [])
           receipt.setdefault("player_state", None)
           receipt.setdefault("video_time_advanced_observed", "no")
-          failed = os.environ.get("TV_JOB_STATUS") == "failure" or os.environ.get("TV_EMULATOR_STEP_OUTCOME") == "failure"
+          if os.environ.get("TV_KVM_OUTCOME") == "failure":
+              failure_stage = "kvm_preflight"
+              classification = "INFRA_FAILURE"
+              reason = "The KVM preflight failed before the emulator test started."
+          elif os.environ.get("TV_APK_ASSEMBLY_OUTCOME") == "failure":
+              failure_stage = "apk_assembly"
+              classification = "INFRA_FAILURE"
+              reason = "The emulator-compatible APK assembly failed before emulator execution."
+          elif os.environ.get("TV_EMULATOR_STEP_OUTCOME") == "failure":
+              failure_stage = "emulator_step"
+              classification = "INCONCLUSIVE"
+              reason = "The combined emulator boot/test step failed before it produced a finalized diagnostic receipt."
+          else:
+              failure_stage = "workflow_setup"
+              classification = "INFRA_FAILURE" if os.environ.get("TV_JOB_STATUS") == "failure" else "INCONCLUSIVE"
+              reason = "The workflow ended before the emulator diagnostic produced its final receipt."
           receipt.update({
               "schema_version": 1,
               "receipt_finalized": True,
               "harness_completed": False,
               "commit": os.environ.get("TV_COMMIT", "unknown"),
               "selected_profile": "zns",
-              "classification": "INFRA_FAILURE" if failed else "INCONCLUSIVE",
-              "reason": "A workflow prerequisite failed before the source diagnostic produced its final receipt." if failed else "The workflow ended before a complete source diagnostic receipt was produced.",
-              "failure_stage": "preflight" if failed else None,
+              "classification": classification,
+              "reason": reason,
+              "failure_stage": failure_stage,
+              "launch_status": receipt.get("launch_status", "unknown"),
               "helper_initiated_playback": False,
               "live_stream_verified": False,
               "moving_picture_verified": False,

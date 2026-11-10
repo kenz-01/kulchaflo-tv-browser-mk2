@@ -107,6 +107,38 @@ test('classifies emulator and required app-state failures as infrastructure fail
   assert.equal(emulatorFailure.harness_completed, false);
 });
 
+test('an unparseable focus entry stays inconclusive while a parsed other window is a real failure', () => {
+  const uncertainFocus = classifyZnsFeedback(completeEvidence({
+    app_state: {
+      ...allAppState(),
+      after_launch: {process: 'yes', activity_foreground: 'yes', window_focus: 'unknown'},
+    },
+    app_state_diagnostics: {
+      after_launch: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing'},
+    },
+    failure_state: {process: 'yes', activity_foreground: 'yes', window_focus: 'unknown'},
+    failure_stage: 'required_app_state',
+    launch_status: 'confirmed',
+  }));
+  const otherWindow = classifyZnsFeedback(completeEvidence({
+    app_state: {
+      ...allAppState(),
+      after_launch: {process: 'yes', activity_foreground: 'yes', window_focus: 'no'},
+    },
+    app_state_diagnostics: {
+      after_launch: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'other_component'},
+    },
+    failure_stage: 'required_app_state',
+  }));
+
+  assert.equal(uncertainFocus.classification, 'INCONCLUSIVE');
+  assert.equal(uncertainFocus.failure_stage, 'required_app_state');
+  assert.equal(uncertainFocus.app_state_diagnostics.after_launch.window_focus, 'entry_missing');
+  assert.equal(uncertainFocus.failure_state.window_focus, 'unknown');
+  assert.equal(otherWindow.classification, 'INFRA_FAILURE');
+  assert.equal(otherWindow.app_state_diagnostics.after_launch.window_focus, 'other_component');
+});
+
 test('install, launch, profile, and commit prerequisites fail closed', () => {
   const installFailure = classifyZnsFeedback(completeEvidence({
     infrastructure: {emulator_boot: 'yes', apk_install: 'no', app_launch: 'unknown'},
