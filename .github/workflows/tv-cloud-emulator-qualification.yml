@@ -2,6 +2,15 @@ name: TV cloud emulator qualification
 
 on:
   workflow_dispatch:
+    inputs:
+      test_profile:
+        description: Select the neutral qualification or the separate ZNS source observation
+        required: true
+        type: choice
+        default: qualification
+        options:
+          - qualification
+          - zns
 
 permissions:
   contents: read
@@ -12,10 +21,52 @@ concurrency:
 
 jobs:
   qualify:
-    name: Android TV x86_64 emulator smoke
+    name: Bounded Android TV diagnostic harness (not media acceptance)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Initialize fail-closed ZNS receipt
+        env:
+          TV_TEST_PROFILE: ${{ inputs.test_profile }}
+          TV_COMMIT: ${{ github.sha }}
+        run: |
+          if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
+          mkdir -p "$RUNNER_TEMP/tv-emulator-qualification"
+          python3 - <<'PY'
+          import json, os
+          receipt = {
+              "schema_version": 1,
+              "receipt_finalized": False,
+              "harness_completed": False,
+              "commit": os.environ.get("TV_COMMIT", "unknown"),
+              "selected_profile": "zns",
+              "source": {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False},
+              "infrastructure": {"emulator_boot": "unknown", "apk_install": "unknown", "app_launch": "unknown"},
+              "app_state": {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")},
+              "app_state_diagnostics": {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")},
+              "failure_state": {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"},
+              "screenshots": {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}},
+              "actions": {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"},
+              "log_capture": "incomplete",
+              "observation_phases": [],
+              "player_state": None,
+              "video_time_advanced_observed": "no",
+              "classification": "INCONCLUSIVE",
+              "reason": "The workflow has not completed the selected source diagnostic.",
+              "failure_stage": None,
+              "launch_status": "unknown",
+              "helper_initiated_playback": False,
+              "live_stream_verified": False,
+              "moving_picture_verified": False,
+              "audio_output_verified": False,
+              "physical_bravia_verified": False,
+          }
+          path = os.path.join(os.environ["RUNNER_TEMP"], "tv-emulator-qualification", "zns-diagnostic-receipt.json")
+          with open(path, "w", encoding="utf-8") as stream:
+              json.dump(receipt, stream, indent=2)
+              stream.write("\n")
+          PY
+
       - name: Checkout candidate
         uses: actions/checkout@v4
 
@@ -27,6 +78,7 @@ jobs:
           cache: gradle
 
       - name: Enable Android emulator KVM
+        id: kvm
         shell: bash
         run: |
           set -euo pipefail
@@ -36,12 +88,16 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Assemble existing emulator-compatible GeckoView APK
+        id: apk_assembly
         run: |
           chmod +x gradlew
           ./gradlew :app-gv:assembleUniversalDebug --console=plain
 
-      - name: Boot Android TV and exercise remote/navigation
+      - name: Boot Android TV and run the selected on-demand test
+        id: emulator_test
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TV_TEST_PROFILE: ${{ inputs.test_profile }}
         with:
           api-level: 36
           target: android-tv
@@ -52,13 +108,90 @@ jobs:
           disk-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: bash tools/player-lab/scripts/tv-cloud-emulator-qualification.sh
+          script: bash tools/player-lab/scripts/tv-cloud-emulator-dispatch.sh "$TV_TEST_PROFILE"
+
+      - name: Finalize ZNS receipt if prerequisites failed
+        if: always()
+        env:
+          TV_TEST_PROFILE: ${{ inputs.test_profile }}
+          TV_COMMIT: ${{ github.sha }}
+          TV_JOB_STATUS: ${{ job.status }}
+          TV_KVM_OUTCOME: ${{ steps.kvm.outcome }}
+          TV_APK_ASSEMBLY_OUTCOME: ${{ steps.apk_assembly.outcome }}
+          TV_EMULATOR_STEP_OUTCOME: ${{ steps.emulator_test.outcome }}
+        run: |
+          if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
+          python3 - <<'PY'
+          import json, os
+          path = os.path.join(os.environ["RUNNER_TEMP"], "tv-emulator-qualification", "zns-diagnostic-receipt.json")
+          try:
+              with open(path, encoding="utf-8") as stream:
+                  receipt = json.load(stream)
+          except (OSError, json.JSONDecodeError):
+              receipt = {}
+          if receipt.get("receipt_finalized"):
+              raise SystemExit(0)
+          os.makedirs(os.path.dirname(path), exist_ok=True)
+          receipt.setdefault("source", {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False})
+          receipt.setdefault("infrastructure", {"emulator_boot": "unknown", "apk_install": "unknown", "app_launch": "unknown"})
+          receipt.setdefault("app_state", {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")})
+          receipt.setdefault("app_state_diagnostics", {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")})
+          receipt.setdefault("failure_state", {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"})
+          receipt.setdefault("screenshots", {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}})
+          receipt.setdefault("actions", {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"})
+          receipt.setdefault("log_capture", "incomplete")
+          receipt.setdefault("observation_phases", [])
+          receipt.setdefault("player_state", None)
+          receipt.setdefault("video_time_advanced_observed", "no")
+          if os.environ.get("TV_KVM_OUTCOME") == "failure":
+              failure_stage = "kvm_preflight"
+              classification = "INFRA_FAILURE"
+              reason = "The KVM preflight failed before the emulator test started."
+          elif os.environ.get("TV_APK_ASSEMBLY_OUTCOME") == "failure":
+              failure_stage = "apk_assembly"
+              classification = "INFRA_FAILURE"
+              reason = "The emulator-compatible APK assembly failed before emulator execution."
+          elif os.environ.get("TV_EMULATOR_STEP_OUTCOME") == "failure":
+              failure_stage = "emulator_step"
+              classification = "INCONCLUSIVE"
+              reason = "The combined emulator boot/test step failed before it produced a finalized diagnostic receipt."
+          else:
+              failure_stage = "workflow_setup"
+              classification = "INFRA_FAILURE" if os.environ.get("TV_JOB_STATUS") == "failure" else "INCONCLUSIVE"
+              reason = "The workflow ended before the emulator diagnostic produced its final receipt."
+          receipt.update({
+              "schema_version": 1,
+              "receipt_finalized": True,
+              "harness_completed": False,
+              "commit": os.environ.get("TV_COMMIT", "unknown"),
+              "selected_profile": "zns",
+              "classification": classification,
+              "reason": reason,
+              "failure_stage": failure_stage,
+              "launch_status": receipt.get("launch_status", "unknown"),
+              "helper_initiated_playback": False,
+              "live_stream_verified": False,
+              "moving_picture_verified": False,
+              "audio_output_verified": False,
+              "physical_bravia_verified": False,
+          })
+          with open(path, "w", encoding="utf-8") as stream:
+              json.dump(receipt, stream, indent=2)
+              stream.write("\n")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as stream:
+                  stream.write("## ZNS diagnostic harness report\n\n")
+                  stream.write(f"- Classification: `{receipt['classification']}`\n")
+                  stream.write(f"- Commit: `{receipt['commit']}`\n")
+                  stream.write("- The bounded diagnostic harness did not complete; this receipt does not verify live playback.\n")
+          PY
 
       - name: Upload bounded qualification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tv-cloud-emulator-qualification
+          name: tv-cloud-emulator-${{ inputs.test_profile }}
           path: ${{ runner.temp }}/tv-emulator-qualification/
           if-no-files-found: ignore
           retention-days: 1

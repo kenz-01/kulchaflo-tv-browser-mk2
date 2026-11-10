@@ -1,0 +1,45 @@
+name: TV ZNS evidence relay
+
+on:
+  workflow_run:
+    workflows: ["TV cloud emulator qualification"]
+    types: [completed]
+    branches: ["codex/**"]
+
+permissions: {}
+
+concurrency:
+  group: tv-zns-evidence-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    if: >-
+      github.repository == 'kenz-01/kulchaflo-tv-browser-mk2' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.workflow_id == 412417539 &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      issues: write
+    steps:
+      - name: Checkout trusted main relay code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Validate provenance and publish sanitized receipt only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TV_RUN_ID: ${{ github.event.workflow_run.id }}
+          TV_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          TV_RUN_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          TV_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          TV_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: python3 tools/player-lab/scripts/tv-zns-evidence-relay.py

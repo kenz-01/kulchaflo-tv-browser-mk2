@@ -138,7 +138,7 @@ test('bounded descriptor helper loads before content and the legacy activity pro
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   assert.deepEqual(
     manifest.content_scripts[0].js,
-    ['candidate-ranking.js', 'content.js'],
+    ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js'],
   );
   const activity = readFileSync(activityPath, 'utf8');
   assert.doesNotMatch(activity, /triggerDirectMediaProbe|activity-js-probe|lastProbeUrlBySession/);

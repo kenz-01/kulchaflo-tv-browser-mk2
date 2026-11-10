@@ -1899,6 +1899,12 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             }
 
             observation.kind == GvMediaPathController.ObservationKind.DIRECT_MEDIA_READY -> {
+                if (isZnsTvSiteUrl(currentUrl) || isZnsStreamcomediaEmbedUrl(currentUrl)) {
+                    GvLogger.i("GvMedia", "zns browser-first native promotion skipped")
+                    promotedMediaPlayer.stop(reason = "zns-browser-first")
+                    geckoView.visibility = View.VISIBLE
+                    return
+                }
                 if (isCvc9DailymotionWatchPageUrl(currentUrl) || isCvc9DailymotionBrowserPlayerContextUrl(observation.url)) {
                     GvLogger.i(
                         "GvMedia",
@@ -13372,6 +13378,31 @@ return changed>0;
             }
             return
         }
+        if (type == "zns-player-state") {
+            if (!isZnsTvSiteUrl(currentUrl) ||
+                !(isZnsTvSiteUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(pageUrl))
+            ) return
+            if (phase !in setOf(
+                    "zns-outer-player-first",
+                    "zns-embedded-observed",
+                    "zns-embedded-playing",
+                    "zns-video-time-advanced",
+                )
+            ) return
+            val readyState = payload.optInt("readyState", -1).coerceIn(-1, 4)
+            val paused = payload.optBoolean("paused", true)
+            val muted = payload.optBoolean("muted", true)
+            val observedVolume = payload.optDouble("volume", -1.0)
+            val volume = if (observedVolume.isFinite() && observedVolume in 0.0..1.0) observedVolume else -1.0
+            GvLogger.i(
+                "GvMedia",
+                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume"
+            )
+            if (phase == "zns-embedded-playing") {
+                enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")
+            }
+            return
+        }
         if (type == "compass-live-state") {
             GvLogger.i(
                 "GvMedia",
@@ -15167,6 +15198,14 @@ return changed>0;
                 "gbn native promote skipped reason=dailymotion-browser-player pageUrl=$pageUrl currentUrl=$currentUrl"
             )
             promotedMediaPlayer.stop(reason = "gbn-dailymotion-browser-player")
+            geckoView.visibility = View.VISIBLE
+            return
+        }
+        if (isZnsTvSiteUrl(pageUrl) || isZnsTvSiteUrl(currentUrl) ||
+            isZnsStreamcomediaEmbedUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(currentUrl)
+        ) {
+            GvLogger.i("GvMedia", "zns browser-first candidate ignored")
+            promotedMediaPlayer.stop(reason = "zns-browser-first")
             geckoView.visibility = View.VISIBLE
             return
         }
@@ -17138,6 +17177,24 @@ return changed>0;
         return path == "/live" || path == "/live/"
     }
 
+    private fun isZnsTvSiteUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https" || !uri.encodedUserInfo.isNullOrEmpty()) return false
+        if (uri.port != -1 && uri.port != 443) return false
+        val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return host == "znsbahamas.com" && path == "/"
+    }
+
+    private fun isZnsStreamcomediaEmbedUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https" || !uri.encodedUserInfo.isNullOrEmpty()) return false
+        if (uri.port != -1 && uri.port != 443) return false
+        val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/')
+        return host == "player.streamcomedia.com" && path == "/html5/znstv"
+    }
+
     private fun isDbsTvLivePageUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         val scheme = uri.scheme?.lowercase().orEmpty()
@@ -17197,6 +17254,7 @@ return changed>0;
         val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
         val path = uri.encodedPath.orEmpty().lowercase()
         return when {
+            isZnsTvSiteUrl(url) || isZnsStreamcomediaEmbedUrl(url) -> true
             host == "cbc.bb" && path.startsWith("/live") -> true
             isDbsTvLivePageUrl(url) -> true
             host == "kulchaflo.com" && path.startsWith("/channels/") -> true
