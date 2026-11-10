@@ -2,6 +2,15 @@ name: TV cloud emulator qualification
 
 on:
   workflow_dispatch:
+    inputs:
+      test_profile:
+        description: Select the neutral qualification or the separate ZNS source observation
+        required: true
+        type: choice
+        default: qualification
+        options:
+          - qualification
+          - zns
 
 permissions:
   contents: read
@@ -40,8 +49,10 @@ jobs:
           chmod +x gradlew
           ./gradlew :app-gv:assembleUniversalDebug --console=plain
 
-      - name: Boot Android TV and exercise remote/navigation
+      - name: Boot Android TV and run the selected on-demand test
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TV_TEST_PROFILE: ${{ inputs.test_profile }}
         with:
           api-level: 36
           target: android-tv
@@ -52,13 +63,18 @@ jobs:
           disk-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: bash tools/player-lab/scripts/tv-cloud-emulator-qualification.sh
+          script: |
+            case "$TV_TEST_PROFILE" in
+              qualification) bash tools/player-lab/scripts/tv-cloud-emulator-qualification.sh ;;
+              zns) bash tools/player-lab/scripts/tv-zns-source-feedback.sh ;;
+              *) echo "Unknown emulator test profile" >&2; exit 2 ;;
+            esac
 
       - name: Upload bounded qualification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tv-cloud-emulator-qualification
+          name: tv-cloud-emulator-${{ inputs.test_profile }}
           path: ${{ runner.temp }}/tv-emulator-qualification/
           if-no-files-found: ignore
           retention-days: 1

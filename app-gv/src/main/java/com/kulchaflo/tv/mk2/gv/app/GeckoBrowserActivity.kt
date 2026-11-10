@@ -9821,20 +9821,6 @@ return changed>0;
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
                     ) &&
                     (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
-            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
-            val znsPermissionUri = permission.uri.orEmpty()
-            val znsThirdPartyOrigin = permission.thirdPartyOrigin.orEmpty()
-            val znsAutoplayScoped = znsTopContext &&
-                (
-                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
-                        permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
-                    ) &&
-                (
-                    (isZnsTvSiteUrl(znsPermissionUri) &&
-                        (isZnsTvSiteUrl(znsThirdPartyOrigin) || isZnsStreamcomediaEmbedUrl(znsThirdPartyOrigin))) ||
-                        (isZnsStreamcomediaEmbedUrl(znsPermissionUri) &&
-                            (isZnsTvSiteUrl(znsThirdPartyOrigin) || isZnsStreamcomediaEmbedUrl(znsThirdPartyOrigin)))
-                    )
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9849,7 +9835,6 @@ return changed>0;
                 cnc3AutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 gbnAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 compassAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
-                znsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 (facebookScoped || googleVideoScoped) &&
                     (
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS ||
@@ -13399,13 +13384,20 @@ return changed>0;
             ) return
             if (phase !in setOf(
                     "zns-outer-player-first",
+                    "zns-embedded-observed",
                     "zns-embedded-playing",
-                    "zns-embedded-start-attempt",
-                    "zns-embedded-play-rejected",
                     "zns-video-time-advanced",
                 )
             ) return
-            GvLogger.i("GvMedia", "zns helper phase=$phase mode=browser-first")
+            val readyState = payload.optInt("readyState", -1).coerceIn(-1, 4)
+            val paused = payload.optBoolean("paused", true)
+            val muted = payload.optBoolean("muted", true)
+            val observedVolume = payload.optDouble("volume", -1.0)
+            val volume = if (observedVolume.isFinite() && observedVolume in 0.0..1.0) observedVolume else -1.0
+            GvLogger.i(
+                "GvMedia",
+                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume"
+            )
             if (phase == "zns-embedded-playing") {
                 enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")
             }

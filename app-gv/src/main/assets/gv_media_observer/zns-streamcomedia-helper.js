@@ -103,10 +103,6 @@
       if (applied || route(window.location.href) !== "site") return;
       const frame = officialFrame(document);
       if (!frame) return;
-      const allow = String(frame.getAttribute("allow") || "");
-      if (!allow.toLowerCase().includes("autoplay")) {
-        frame.setAttribute("allow", allow ? `${allow}; autoplay` : "autoplay");
-      }
       frame.setAttribute("allowfullscreen", "true");
       if (!applyPlayerFirst(frame, document)) return;
       applied = true;
@@ -117,7 +113,6 @@
   }
 
   if (ownRoute !== "embed" || window.top === window || route(document.referrer) !== "site") return;
-  const playAttempted = new WeakSet();
   const observed = new WeakSet();
   const progressSampled = new WeakSet();
   const attempt = () => {
@@ -125,7 +120,21 @@
     if (!video) return;
     if (!observed.has(video)) {
       observed.add(video);
-      video.addEventListener("playing", () => report("zns-embedded-playing"));
+      const playerState = () => {
+        let volume = -1;
+        try {
+          const value = Number(video.volume);
+          if (Number.isFinite(value)) volume = Math.max(0, Math.min(1, value));
+        } catch (_) {}
+        return {
+          readyState: Math.max(0, Math.min(4, Number(video.readyState) || 0)),
+          paused: Boolean(video.paused),
+          muted: Boolean(video.muted),
+          volume,
+        };
+      };
+      report("zns-embedded-observed", playerState());
+      video.addEventListener("playing", () => report("zns-embedded-playing", playerState()));
       video.addEventListener("timeupdate", () => {
         if (progressSampled.has(video)) return;
         let startTime;
@@ -140,21 +149,6 @@
           }
         }, PROGRESS_SAMPLE_MS);
       });
-    }
-    if (video.readyState < 2 || playAttempted.has(video)) return;
-    playAttempted.add(video);
-    try {
-      video.muted = false;
-      if (typeof video.volume === "number") video.volume = 1;
-      if (video.paused && typeof video.play === "function") {
-        const result = video.play();
-        if (result && typeof result.catch === "function") {
-          result.catch(() => report("zns-embedded-play-rejected"));
-        }
-      }
-      report("zns-embedded-start-attempt");
-    } catch (_) {
-      report("zns-embedded-play-rejected");
     }
   };
   RETRY_DELAYS_MS.forEach((delay) => setTimeout(attempt, delay));

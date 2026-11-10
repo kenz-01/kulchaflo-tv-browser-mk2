@@ -43,7 +43,7 @@ test('only one visible official frame receives the bounded player-first layout',
   const frame = {
     parentElement: container,
     style: style(events),
-    attrs: {src: 'https://player.streamcomedia.com/HTML5/znstv/?session=private'},
+    attrs: {src: 'https://player.streamcomedia.com/HTML5/znstv/?session=private', allow: 'fullscreen; picture-in-picture'},
     getAttribute(key) { return this.attrs[key] || null; },
     setAttribute(key, value) { this.attrs[key] = value; },
     getBoundingClientRect() { return {width: 900, height: 500}; },
@@ -65,7 +65,7 @@ test('only one visible official frame receives the bounded player-first layout',
 
   assert.deepEqual(timers.map(({delay}) => delay), [300, 900, 2000, 4000, 7000, 11000, 18000]);
   assert.equal(frame.attrs.allowfullscreen, 'true');
-  assert.match(frame.attrs.allow, /autoplay/i);
+  assert.equal(frame.attrs.allow, 'fullscreen; picture-in-picture');
   assert.equal(promptEvents.length, 1);
   assert.match(promptEvents[0], /zns-outer-player-first/);
   assert.match(promptEvents[0], /https:\/\/znsbahamas\.com\//);
@@ -83,7 +83,40 @@ test('ambiguous visible official frames are left untouched', () => {
   assert.equal(api.officialFrame({querySelectorAll() { return [frame(), frame()]; }}), null);
 });
 
-test('trusted embed gets one play attempt and a bounded, URL-free time-progression receipt', () => {
+test('loading the trusted embed preserves mute and volume and never calls play', () => {
+  for (const [muted, volume] of [[true, 0], [false, 0.35]]) {
+    const timers = [];
+    let playCalls = 0;
+    const video = {
+      readyState: 4,
+      paused: true,
+      muted,
+      volume,
+      currentTime: 1,
+      addEventListener() {},
+      getBoundingClientRect() { return {width: 900, height: 500}; },
+      play() { playCalls += 1; return {catch() {}}; },
+    };
+    const window = {location: {href: 'https://player.streamcomedia.com/HTML5/znstv/'}, top: {}, prompt() {}};
+    runInNewContext(helperSource, {
+      URL,
+      window,
+      document: {
+        referrer: 'https://znsbahamas.com/',
+        querySelectorAll(selector) { return selector === 'video' ? [video] : []; },
+      },
+      setTimeout(callback, delay) { timers.push({callback, delay}); },
+    });
+    timers.forEach(({callback}) => callback());
+
+    assert.equal(playCalls, 0);
+    assert.equal(video.paused, true);
+    assert.equal(video.muted, muted);
+    assert.equal(video.volume, volume);
+  }
+});
+
+test('trusted player state and bounded time progression are reported without audio changes', () => {
   const timers = [];
   const prompts = [];
   let playCalls = 0;
@@ -91,7 +124,7 @@ test('trusted embed gets one play attempt and a bounded, URL-free time-progressi
     readyState: 4,
     paused: true,
     muted: true,
-    volume: 0,
+    volume: 0.35,
     currentTime: 1,
     addEventListener(name, callback) { this[`on${name}`] = callback; },
     getBoundingClientRect() { return {width: 900, height: 500}; },
@@ -114,11 +147,23 @@ test('trusted embed gets one play attempt and a bounded, URL-free time-progressi
   const retries = timers.splice(0);
   assert.deepEqual(retries.map(({delay}) => delay), [300, 900, 2000, 4000, 7000, 11000, 18000]);
   retries.forEach(({callback}) => callback());
+  assert.equal(playCalls, 0);
+  assert.equal(video.paused, true);
+  assert.equal(video.muted, true);
+  assert.equal(video.volume, 0.35);
+  const observed = prompts.find((value) => value.includes('zns-embedded-observed'));
+  assert.ok(observed);
+  assert.match(observed, /"paused":true/);
+  assert.match(observed, /"muted":true/);
+  assert.match(observed, /"volume":0\.35/);
+
+  // Simulate site-owned playback events; the helper only observes them.
+  video.paused = false;
   video.onplaying();
   video.ontimeupdate();
-  assert.equal(playCalls, 1);
-  assert.equal(video.muted, false);
-  assert.equal(video.volume, 1);
+  assert.equal(playCalls, 0);
+  assert.equal(video.muted, true);
+  assert.equal(video.volume, 0.35);
   assert.equal(timers.length, 1);
   assert.equal(timers[0].delay, 4000);
   video.currentTime = 2;
@@ -148,7 +193,11 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.deepEqual(manifest.content_scripts[0].js, ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js']);
   assert.match(activity, /private fun isZnsTvSiteUrl[\s\S]*?host == "znsbahamas\.com" && path == "\/"/);
   assert.match(activity, /private fun isZnsStreamcomediaEmbedUrl[\s\S]*?host == "player\.streamcomedia\.com" && path == "\/html5\/znstv"/);
-  assert.match(activity, /val znsAutoplayScoped = znsTopContext[\s\S]*?znsAutoplayScoped -> GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_ALLOW/);
+  assert.doesNotMatch(activity, /znsAutoplayScoped|zns autoplay permission/);
+  assert.doesNotMatch(helperSource, /video\.muted\s*=|video\.volume\s*=|video\.play\s*\(/);
+  assert.match(helperSource, /addEventListener\("playing"/);
+  assert.match(helperSource, /addEventListener\("timeupdate"/);
+  assert.match(activity, /zns helper phase=\$phase mode=browser-first ready=\$readyState paused=\$paused muted=\$muted volume=\$volume/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first/);
   assert.match(activity, /zns browser-first candidate ignored/);
   assert.match(activity, /isZnsTvSiteUrl\(currentUrl\) \|\| isZnsStreamcomediaEmbedUrl\(currentUrl\)/);
