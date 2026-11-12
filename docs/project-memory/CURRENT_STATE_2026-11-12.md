@@ -5,6 +5,10 @@
 
 **Start here after the 9 Nov handover.** This dated state corrects stale PR #23/#25 merge instructions. Exact GitHub, accepted source and physical Sony Bravia observations remain higher authority than prose. The Events counterpart is `kenz-01/kulchaflo-events-engine/docs/project-memory/CURRENT_STATE_2026-11-12.md` on its handover draft branch.
 
+## Master architect restart point from the owner's recorded conversation
+
+The precise [three-lane new-chat restart checkpoint](https://github.com/kenz-01/kulchaflo-events-engine/blob/docs/handover-20261109-multirepo-architect-codex/docs/project-memory/archive/2026-11-12_RESUME_FROM_SCREEN_RECORDING.md) is anchored on the final **TIJ #1455 'ok do it'** source-only investigation, not on TV PR #23/#25. TV remains an **independent active lane**: review [draft PR #26](https://github.com/kenz-01/kulchaflo-tv-browser-mk2/pull/26) without treating previous owner approval for run #43088339285 as authorisation for a fresh run. As independently checked on 12 Nov ~20:00 UK, #26 is still draft at head **bc2b84d0d9d9f6ec0415bf1119be8b7d42fe6762** with deterministic CI **#43139767573 SUCCESS**. The first controlled D139 STAGING PHP code synchronisation succeeded in the **Events/WordPress host only**, and is unrelated to TV emulator installation or test evidence. No second scheduler or paid overage.
+
 ## Three independent engineering lanes
 
 One ChatGPT architect coordinates Carnival Codex, Channel Codex and **TV Codex** via the existing hourly heartbeat. TV owns only `kenz-01/kulchaflo-tv-browser-mk2`, GeckoView `app-gv`, existing player lab and source-scoped helper tests. No second scheduler, shared Events CI/credentials, paid runner or arbitrary provider/DRM workaround.
