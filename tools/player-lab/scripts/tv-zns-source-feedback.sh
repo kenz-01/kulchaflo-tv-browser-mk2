@@ -25,8 +25,12 @@ for checkpoint in LAUNCH DPAD BACK FAILURE; do
   printf -v "TV_${checkpoint}_PIDOF_DIAGNOSTIC" '%s' unavailable
   printf -v "TV_${checkpoint}_ACTIVITY_DIAGNOSTIC" '%s' command_unavailable
   printf -v "TV_${checkpoint}_FOCUS_DIAGNOSTIC" '%s' command_unavailable
+  printf -v "TV_${checkpoint}_WINDOW_MANAGER_FOCUS_DIAGNOSTIC" '%s' command_unavailable
+  printf -v "TV_${checkpoint}_INPUT_FOCUS_DIAGNOSTIC" '%s' command_unavailable
+  printf -v "TV_${checkpoint}_FOCUS_SOURCE" '%s' unknown
   export "TV_${checkpoint}_PROCESS" "TV_${checkpoint}_FOREGROUND" "TV_${checkpoint}_FOCUS"
   export "TV_${checkpoint}_PIDOF_DIAGNOSTIC" "TV_${checkpoint}_ACTIVITY_DIAGNOSTIC" "TV_${checkpoint}_FOCUS_DIAGNOSTIC"
+  export "TV_${checkpoint}_WINDOW_MANAGER_FOCUS_DIAGNOSTIC" "TV_${checkpoint}_INPUT_FOCUS_DIAGNOSTIC" "TV_${checkpoint}_FOCUS_SOURCE"
 done
 export TV_SCREENSHOT_LAUNCH=missing TV_SCREENSHOT_DPAD=missing
 export TV_SCREENSHOT_BACK=missing TV_SCREENSHOT_FAILURE=missing
@@ -66,24 +70,34 @@ capture_app_state() {
 import json,re,sys
 try:
  d=json.load(sys.stdin)
- values=[d.get("process","unknown"),d.get("activity_foreground","unknown"),d.get("window_focus","unknown")]
+ state=[d.get("process","unknown"),d.get("activity_foreground","unknown"),d.get("window_focus","unknown")]
  diag=d.get("diagnostics",{})
- values += [diag.get("pidof","unavailable"),diag.get("activity_foreground","command_unavailable"),diag.get("window_focus","command_unavailable")]
- allowed={"yes","no","unknown","target_process","process_absent","unavailable","unparseable","output_truncated","too_many_entries","target_component","other_component","entry_missing","entry_unparsed","ambiguous_components","command_unavailable"}
- print("\t".join(value if value in allowed else "unknown" for value in values))
+ details=[diag.get("pidof","unavailable"),diag.get("activity_foreground","command_unavailable"),diag.get("window_focus","command_unavailable"),diag.get("window_manager_focus","command_unavailable"),diag.get("input_focus","command_unavailable")]
+ source=diag.get("focus_source","unknown")
+ statuses={"yes","no","unknown"}
+ allowed={"target_process","process_absent","unavailable","unparseable","output_truncated","too_many_entries","target_component","other_component","input_target_window","input_other_window","focus_signal_conflict","entry_missing","entry_unparsed","ambiguous_components","command_unavailable"}
+ sources={"window_manager","input_dispatcher","both","conflict","unknown"}
+ values=[value if isinstance(value,str) and value in statuses else "unknown" for value in state]
+ values += [value if isinstance(value,str) and value in allowed else "unavailable" for value in details]
+ values.append(source if isinstance(source,str) and source in sources else "unknown")
+ print("\t".join(values))
 except Exception:
- print("unknown\tunknown\tunknown\tunavailable\tcommand_unavailable\tcommand_unavailable")
-' 2>/dev/null || printf 'unknown\tunknown\tunknown\tunavailable\tcommand_unavailable\tcommand_unavailable')
-  local process foreground focus pidof_diag activity_diag focus_diag
-  IFS=$'\t' read -r process foreground focus pidof_diag activity_diag focus_diag <<< "$decoded"
+ print("unknown\tunknown\tunknown\tunavailable\tcommand_unavailable\tcommand_unavailable\tcommand_unavailable\tcommand_unavailable\tunknown")
+' 2>/dev/null || printf 'unknown\tunknown\tunknown\tunavailable\tcommand_unavailable\tcommand_unavailable\tcommand_unavailable\tcommand_unavailable\tunknown')
+  local process foreground focus pidof_diag activity_diag focus_diag window_manager_diag input_diag focus_source
+  IFS=$'\t' read -r process foreground focus pidof_diag activity_diag focus_diag window_manager_diag input_diag focus_source <<< "$decoded"
   printf -v "TV_${label}_PROCESS" '%s' "${process:-unknown}"
   printf -v "TV_${label}_FOREGROUND" '%s' "${foreground:-unknown}"
   printf -v "TV_${label}_FOCUS" '%s' "${focus:-unknown}"
   printf -v "TV_${label}_PIDOF_DIAGNOSTIC" '%s' "${pidof_diag:-unavailable}"
   printf -v "TV_${label}_ACTIVITY_DIAGNOSTIC" '%s' "${activity_diag:-command_unavailable}"
   printf -v "TV_${label}_FOCUS_DIAGNOSTIC" '%s' "${focus_diag:-command_unavailable}"
+  printf -v "TV_${label}_WINDOW_MANAGER_FOCUS_DIAGNOSTIC" '%s' "${window_manager_diag:-command_unavailable}"
+  printf -v "TV_${label}_INPUT_FOCUS_DIAGNOSTIC" '%s' "${input_diag:-command_unavailable}"
+  printf -v "TV_${label}_FOCUS_SOURCE" '%s' "${focus_source:-unknown}"
   export "TV_${label}_PROCESS" "TV_${label}_FOREGROUND" "TV_${label}_FOCUS"
   export "TV_${label}_PIDOF_DIAGNOSTIC" "TV_${label}_ACTIVITY_DIAGNOSTIC" "TV_${label}_FOCUS_DIAGNOSTIC"
+  export "TV_${label}_WINDOW_MANAGER_FOCUS_DIAGNOSTIC" "TV_${label}_INPUT_FOCUS_DIAGNOSTIC" "TV_${label}_FOCUS_SOURCE"
   [[ "$process" == yes && "$foreground" == yes && "$focus" == yes ]]
 }
 

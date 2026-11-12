@@ -8,24 +8,40 @@ const stateTool = resolve(scripts, 'tv-emulator-state.py');
 const logTool = resolve(scripts, 'tv-zns-log-snapshot.py');
 const packageName = 'com.kulchaflo.tv.mk2.gv';
 
-function parseState({pidof = {stdout: '412\n', returncode: 0}, activity = {}, window = {}} = {}) {
+function parseState({pidof = {stdout: '412\n', returncode: 0}, activity = {}, window = {}, input = {}} = {}) {
   const result = spawnSync('python3', [stateTool, '--parse-json'], {
-    input: JSON.stringify({pidof, activity, window}),
+    input: JSON.stringify({pidof, activity, window, input}),
     encoding: 'utf8',
   });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
 
+function focusedWindow(packageName = 'com.kulchaflo.tv.mk2.gv', displayId = 0) {
+  return {
+    stdout: [
+      'Input Dispatcher State:',
+      '  FocusedWindows:',
+      `    displayId=${displayId}, name='Window{abc u0 ${packageName}/.app.GeckoBrowserActivity}', token=secret-token`,
+      '  FocusedApplications:',
+      '    displayId=0, name=secret-application-token',
+    ].join('\n'),
+    returncode: 0,
+  };
+}
+
 test('Android state reports only redacted target/other/unknown parser outcomes', () => {
   const target = parseState({
     activity: {stdout: `topResumedActivity=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`, returncode: 0},
     window: {stdout: `mCurrentFocus=Window{b ${packageName}/.app.GeckoBrowserActivity}`, returncode: 0},
+    input: focusedWindow(),
   });
   assert.equal(target.process, 'yes');
   assert.equal(target.activity_foreground, 'yes');
   assert.equal(target.window_focus, 'yes');
   assert.equal(target.diagnostics.window_focus, 'target_component');
+  assert.equal(target.diagnostics.input_focus, 'input_target_window');
+  assert.equal(target.diagnostics.focus_source, 'both');
 
   const other = parseState({
     activity: {stdout: `topResumedActivity=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`, returncode: 0},
@@ -63,6 +79,7 @@ test('null mCurrentFocus stays unknown when mFocusedApp reports the target activ
   ].join('\n'), returncode: 0}});
   assert.equal(result.window_focus, 'unknown');
   assert.equal(result.diagnostics.window_focus, 'entry_unparsed');
+  assert.equal(result.diagnostics.focus_source, 'unknown');
 });
 
 test('an other mCurrentFocus remains no when mFocusedApp reports the target activity', () => {
@@ -102,6 +119,68 @@ test('truncated or unparseable mCurrentFocus stays unknown despite target mFocus
   }});
   assert.equal(truncated.window_focus, 'unknown');
   assert.equal(truncated.diagnostics.window_focus, 'entry_unparsed');
+});
+
+test('InputDispatcher focused display-0 window verifies API 36 focus when mCurrentFocus is absent', () => {
+  const result = parseState({
+    activity: {stdout: `topResumedActivity=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`, returncode: 0},
+    window: {stdout: `mFocusedApp=ActivityRecord{a ${packageName}/.app.GeckoBrowserActivity t5}`, returncode: 0},
+    input: focusedWindow(),
+  });
+
+  assert.equal(result.activity_foreground, 'yes');
+  assert.equal(result.window_focus, 'yes');
+  assert.equal(result.diagnostics.window_manager_focus, 'entry_missing');
+  assert.equal(result.diagnostics.input_focus, 'input_target_window');
+  assert.equal(result.diagnostics.window_focus, 'input_target_window');
+  assert.equal(result.diagnostics.focus_source, 'input_dispatcher');
+  assert.doesNotMatch(JSON.stringify(result), /secret|GeckoBrowserActivity|kulchaflo|Window\{/);
+});
+
+test('a verified other InputDispatcher window is lost app focus, distinct from missing diagnostics', () => {
+  const lostFocus = parseState({
+    window: {stdout: 'mFocusedApp=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', returncode: 0},
+    input: focusedWindow('com.android.launcher', 0),
+  });
+  const missing = parseState({
+    window: {stdout: 'mFocusedApp=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', returncode: 0},
+    input: {stdout: 'Input Dispatcher State:\n  FocusedWindows:\n', returncode: 0},
+  });
+
+  assert.equal(lostFocus.window_focus, 'no');
+  assert.equal(lostFocus.diagnostics.window_manager_focus, 'entry_missing');
+  assert.equal(lostFocus.diagnostics.input_focus, 'input_other_window');
+  assert.equal(lostFocus.diagnostics.window_focus, 'input_other_window');
+  assert.equal(lostFocus.diagnostics.focus_source, 'input_dispatcher');
+  assert.equal(missing.window_focus, 'unknown');
+  assert.equal(missing.diagnostics.window_manager_focus, 'entry_missing');
+  assert.equal(missing.diagnostics.input_focus, 'entry_missing');
+  assert.equal(missing.diagnostics.focus_source, 'unknown');
+});
+
+test('conflicting, malformed, unavailable, and non-TV-display input evidence stays unknown', () => {
+  const conflicting = parseState({
+    window: {stdout: 'mCurrentFocus=Window{a com.android.launcher/.Launcher}', returncode: 0},
+    input: focusedWindow(),
+  });
+  const malformed = parseState({input: {stdout: [
+    'Input Dispatcher State:', '  FocusedWindows:', "    displayId=0, name='secret-window-without-component'",
+  ].join('\n'), returncode: 0}});
+  const unavailable = parseState({input: {error: 'timeout'}});
+  const otherDisplay = parseState({input: focusedWindow(packageName, 1)});
+  const truncatedOther = parseState({input: {...focusedWindow('com.android.launcher'), truncated: true}});
+
+  assert.equal(conflicting.window_focus, 'unknown');
+  assert.equal(conflicting.diagnostics.window_focus, 'focus_signal_conflict');
+  assert.equal(conflicting.diagnostics.focus_source, 'conflict');
+  assert.equal(malformed.window_focus, 'unknown');
+  assert.equal(malformed.diagnostics.input_focus, 'entry_unparsed');
+  assert.equal(unavailable.window_focus, 'unknown');
+  assert.equal(unavailable.diagnostics.input_focus, 'command_unavailable');
+  assert.equal(otherDisplay.window_focus, 'unknown');
+  assert.equal(otherDisplay.diagnostics.input_focus, 'entry_missing');
+  assert.equal(truncatedOther.window_focus, 'unknown');
+  assert.equal(truncatedOther.diagnostics.input_focus, 'output_truncated');
 });
 
 test('log snapshot retains only bounded allowlisted phases and player scalars', () => {

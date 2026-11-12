@@ -74,6 +74,14 @@ test('Android and log diagnostics are bounded and reduce raw output to fixed all
   assert.match(stateParser, /other_component/);
   assert.match(stateParser, /entry_unparsed/);
   assert.match(stateParser, /output_truncated/);
+  assert.match(stateParser, /dumpsys.*input|run_adb\(\["shell", "dumpsys", "input"\]\)/);
+  assert.match(stateParser, /FocusedWindows/);
+  assert.match(stateParser, /input_target_window/);
+  assert.match(stateParser, /focus_signal_conflict/);
+  assert.match(classifier, /window_manager_focus/);
+  assert.match(classifier, /input_focus/);
+  assert.match(classifier, /FOCUS_SOURCES/);
+  assert.match(relay, /FOCUS_SOURCES/);
   assert.doesNotMatch(stateParser, /print\(.*stdout|"raw_dump"/);
   assert.match(logSnapshot, /MAX_LOG_BYTES = 64 \* 1024/);
   assert.match(logSnapshot, /PHASE_SET/);

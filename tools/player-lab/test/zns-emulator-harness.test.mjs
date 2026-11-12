@@ -58,8 +58,16 @@ if [[ "$1" == "shell" ]]; then
       elif [[ "$3" == "window" ]]; then
         case "$TV_FOCUS_MODE" in
           target) printf '%s\\n' 'mCurrentFocus=Window{b com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}' ;;
+          input-target) printf '%s\\n' 'mFocusedApp=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity t5}' ;;
           other) printf '%s\\n' 'mCurrentFocus=Window{b com.android.launcher/.Launcher}' ;;
           missing) : ;;
+        esac
+      elif [[ "$3" == "input" ]]; then
+        case "$TV_FOCUS_MODE" in
+          target) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=secret" ;;
+          input-target) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=secret" ;;
+          other) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.android.launcher/.Launcher}', token=secret" ;;
+          missing) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" ;;
         esac
       fi
       ;;
@@ -76,7 +84,7 @@ exit 0
   return {root, scriptPath: join(scriptDir, 'tv-zns-source-feedback.sh'), bin, apk};
 }
 
-function runFailure(focusMode) {
+function runHarness(focusMode) {
   const sandbox = createSandbox(focusMode);
   const summary = join(sandbox.root, 'step-summary.md');
   const trace = join(sandbox.root, 'adb-trace.txt');
@@ -111,13 +119,16 @@ function runFailure(focusMode) {
 }
 
 test('failure captures an early frame, bounded state, failure frame, and safe summary before exit', () => {
-  const {result, receipt, traceText, summaryText, snapshot} = runFailure('missing');
+  const {result, receipt, traceText, summaryText, snapshot} = runHarness('missing');
   assert.equal(result.status, 1, result.stderr);
   assert.ok(receipt);
   assert.equal(receipt.failure_stage, 'required_app_state');
   assert.equal(receipt.classification, 'INCONCLUSIVE');
   assert.equal(receipt.app_state.after_launch.window_focus, 'unknown');
   assert.equal(receipt.app_state_diagnostics.after_launch.window_focus, 'entry_missing');
+  assert.equal(receipt.app_state_diagnostics.after_launch.window_manager_focus, 'entry_missing');
+  assert.equal(receipt.app_state_diagnostics.after_launch.input_focus, 'entry_missing');
+  assert.equal(receipt.app_state_diagnostics.after_launch.focus_source, 'unknown');
   assert.equal(receipt.failure_state.window_focus, 'unknown');
   assert.equal(receipt.app_state_diagnostics.after_failure.window_focus, 'entry_missing');
   assert.equal(receipt.screenshots.after_launch.status, 'captured');
@@ -137,9 +148,22 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
 });
 
 test('a parsed other focused component is a real negative state, not parser uncertainty', () => {
-  const {result, receipt} = runFailure('other');
+  const {result, receipt} = runHarness('other');
   assert.equal(result.status, 1);
   assert.equal(receipt.app_state.after_launch.window_focus, 'no');
   assert.equal(receipt.app_state_diagnostics.after_launch.window_focus, 'other_component');
   assert.equal(receipt.classification, 'INFRA_FAILURE');
+});
+
+test('the harness accepts verified InputDispatcher focus when API 36 omits mCurrentFocus', () => {
+  const {result, receipt, traceText} = runHarness('input-target');
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(receipt.harness_completed, true);
+  assert.equal(receipt.app_state.after_launch.window_focus, 'yes');
+  assert.equal(receipt.app_state_diagnostics.after_launch.window_manager_focus, 'entry_missing');
+  assert.equal(receipt.app_state_diagnostics.after_launch.input_focus, 'input_target_window');
+  assert.equal(receipt.app_state_diagnostics.after_launch.window_focus, 'input_target_window');
+  assert.equal(receipt.app_state_diagnostics.after_launch.focus_source, 'input_dispatcher');
+  assert.match(traceText, /shell dumpsys input/);
+  assert.doesNotMatch(JSON.stringify(receipt), /secret|GeckoBrowserActivity|kulchaflo/);
 });
