@@ -183,6 +183,35 @@ test('conflicting, malformed, unavailable, and non-TV-display input evidence sta
   assert.equal(truncatedOther.diagnostics.input_focus, 'output_truncated');
 });
 
+test('truncated InputDispatcher dumps cannot establish focus from a retained prefix', () => {
+  const target = focusedWindow();
+  const other = focusedWindow('com.android.launcher');
+  const oversized = {...target, stdout: `${target.stdout}\n${'x'.repeat(64 * 1024)}`};
+  for (const input of [
+    {...target, truncated: true},
+    {...other, truncated: true},
+    oversized,
+  ]) {
+    const result = parseState({input});
+    assert.equal(result.window_focus, 'unknown');
+    assert.equal(result.diagnostics.input_focus, 'output_truncated');
+    assert.equal(result.diagnostics.window_focus, 'entry_missing');
+    assert.equal(result.diagnostics.focus_source, 'unknown');
+    assert.doesNotMatch(JSON.stringify(result), /secret|GeckoBrowserActivity|com\\.android/);
+  }
+
+  // An independently complete WindowManager signal remains usable;
+  // incomplete InputDispatcher evidence must not corroborate it.
+  const windowManager = parseState({
+    window: {stdout: `mCurrentFocus=Window{b ${packageName}/.app.GeckoBrowserActivity}`, returncode: 0},
+    input: {...target, truncated: true},
+  });
+  assert.equal(windowManager.window_focus, 'yes');
+  assert.equal(windowManager.diagnostics.window_focus, 'target_component');
+  assert.equal(windowManager.diagnostics.input_focus, 'output_truncated');
+  assert.equal(windowManager.diagnostics.focus_source, 'window_manager');
+});
+
 test('log snapshot retains only bounded allowlisted phases and player scalars', () => {
   const input = [
     'I/GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',
