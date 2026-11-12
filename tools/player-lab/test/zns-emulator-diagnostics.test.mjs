@@ -197,7 +197,7 @@ test('truncated InputDispatcher dumps cannot establish focus from a retained pre
     assert.equal(result.diagnostics.input_focus, 'output_truncated');
     assert.equal(result.diagnostics.window_focus, 'entry_missing');
     assert.equal(result.diagnostics.focus_source, 'unknown');
-    assert.doesNotMatch(JSON.stringify(result), /secret|GeckoBrowserActivity|com\\.android/);
+    assert.doesNotMatch(JSON.stringify(result), /secret|GeckoBrowserActivity|com\.android/);
   }
 
   // An independently complete WindowManager signal remains usable;
