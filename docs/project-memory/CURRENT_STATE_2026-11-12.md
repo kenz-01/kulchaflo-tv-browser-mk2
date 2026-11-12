@@ -1,5 +1,8 @@
 # Kulcha Flo TV current state — 12 November 2026
 
+> **Owner conversation video recovery, 12 Nov evening:** The linked Events [screen-recording decision recovery](https://github.com/kenz-01/kulchaflo-events-engine/blob/docs/handover-20261109-multirepo-architect-codex/docs/project-memory/archive/2026-11-12_Screen_Recording_Decision_Recovery.md) shows the owner explicitly approved only ONE historic manual ZNS emulator test under the £0 boundary (already represented by run #43088339285). This is not rolling authority for new dispatch. It also confirms TVJ's **iCanLive** and **1SpotMedia** should be preserved as distinct viewing destinations: the owner confirmed iCanLive worked via its external viewing destination, while 1SpotMedia remained untested. External website playback must not be misrepresented as GeckoView/Android TV app playback. Keep WATCH LIVE TV (legitimate destinations) distinct from LIVE NOW (verified current programming). Video is partial; use GitHub/source/runtime for fresh proof.
+
+
 **Start here after the 9 Nov handover.** This dated state corrects stale PR #23/#25 merge instructions. Exact GitHub, accepted source and physical Sony Bravia observations remain higher authority than prose. The Events counterpart is `kenz-01/kulchaflo-events-engine/docs/project-memory/CURRENT_STATE_2026-11-12.md` on its handover draft branch.
 
 ## Three independent engineering lanes
