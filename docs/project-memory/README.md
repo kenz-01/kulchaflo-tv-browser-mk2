@@ -1,3 +1,7 @@
+## 12 November 2026 — latest TV handover after merged emulator foundation
+
+**Start here:** [12 Nov TV current state](CURRENT_STATE_2026-11-12.md). #23 and #25 are **MERGED**, not pending first approval. ZNS run #43088339285 stopped on Android API36 focus diagnostics after app foreground, without proving playback failure; draft #26 adds a fail-closed InputDispatcher fallback, reported 331/331 Player Lab and green deterministic CI, but still needs an authorised fresh real emulator test. Continue TV Codex independently from Carnival and Channel Codex under one existing architect. No paid runner, unverified audio/Bravia claims, automatic restart or release.
+
 # Kulcha Flo TV project memory — START HERE
 
 **Purpose:** durable, self-contained TV app handover equivalent to the Events project's Git memory pack. It preserves the why/owner-device evidence alongside active GitHub implementation contracts without pretending copied snapshots are live code truth.
