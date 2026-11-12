@@ -92,7 +92,10 @@ def input_window_status(capture):
         return "unknown", "command_unavailable"
 
     text, was_truncated = bounded_text(capture.get("stdout", ""))
-    truncated = bool(capture.get("truncated")) or was_truncated
+    # InputDispatcher can contain multiple focused-window entries; a partial
+    # dump cannot rule out a later conflicting display-0 window. Fail closed.
+    if capture.get("truncated") or was_truncated:
+        return "unknown", "output_truncated"
     lines = text.splitlines()
     headers = [index for index, line in enumerate(lines) if FOCUSED_WINDOWS_HEADER.search(line)]
     if not headers:
@@ -135,10 +138,8 @@ def input_window_status(capture):
         return "unknown", "ambiguous_components"
     if outcomes == ["yes"]:
         return "yes", "input_target_window"
-    if outcomes == ["no"] and not truncated:
+    if outcomes == ["no"]:
         return "no", "input_other_window"
-    if truncated:
-        return "unknown", "output_truncated"
     return "unknown", "entry_missing"
 
 
