@@ -183,6 +183,27 @@ test('conflicting, malformed, unavailable, and non-TV-display input evidence sta
   assert.equal(truncatedOther.diagnostics.input_focus, 'output_truncated');
 });
 
+test('InputDispatcher with no FocusedWindows header fails closed without parser exceptions', () => {
+  for (const stdout of [
+    '',
+    "Input Dispatcher State:\n  FocusedApplications:\n    displayId=0, name='secret-app'",
+  ]) {
+    const result = parseState({input: {stdout, returncode: 0}});
+    assert.equal(result.window_focus, 'unknown');
+    assert.equal(result.diagnostics.input_focus, 'entry_missing');
+    assert.equal(result.diagnostics.focus_source, 'unknown');
+    assert.doesNotMatch(JSON.stringify(result), /secret-app/);
+  }
+
+  const independentWindow = parseState({
+    window: {stdout: `mCurrentFocus=Window{b ${packageName}/.app.GeckoBrowserActivity}`, returncode: 0},
+    input: {stdout: 'Input Dispatcher State:', returncode: 0},
+  });
+  assert.equal(independentWindow.window_focus, 'yes');
+  assert.equal(independentWindow.diagnostics.input_focus, 'entry_missing');
+  assert.equal(independentWindow.diagnostics.focus_source, 'window_manager');
+});
+
 test('truncated InputDispatcher dumps cannot establish focus from a retained prefix', () => {
   const target = focusedWindow();
   const other = focusedWindow('com.android.launcher');
