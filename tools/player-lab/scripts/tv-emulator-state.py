@@ -99,7 +99,7 @@ def input_window_status(capture):
     lines = text.splitlines()
     headers = [index for index, line in enumerate(lines) if FOCUSED_WINDOWS_HEADER.search(line)]
     if not headers:
-        return "unknown", "output_truncated" if truncated else "entry_missing"
+        return "unknown", "entry_missing"
     if len(headers) != 1:
         return "unknown", "ambiguous_components"
 
