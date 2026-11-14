@@ -15,6 +15,11 @@ const cases = [
   ['bradmax', { iframeUrls: ['https://bradm.ax/player/live'], domSignals: ['bradmax-player'] }],
   ['tego', { iframeUrls: ['https://player.tegotv.com/player.php?channel=1'], domSignals: ['tegotv-player'] }],
   ['novus', { scriptUrls: ['https://novus.telearuba.aw/assets/novus.js'], domSignals: ['novus-channel'] }],
+  ['infomaniak', { iframeUrls: ['https://player.infomaniak.com/?channel=71605&player=11390'] }],
+  ['pro-fhi', { iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'] }],
+  ['streamhoster', { iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'] }],
+  ['telemicro', { iframeUrls: ['https://telemicro.com.do/players/5tv/index.php'] }],
+  ['radiant', { scriptUrls: ['https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js'], domSignals: ['rmp-container rmp-overlay-button'] }],
   ['native-html5', { mediaElementCount: 1 }],
 ];
 
@@ -126,4 +131,95 @@ test('configured families match supported player families except unknown', () =>
   const configured = Object.keys(loadPlayerSignatures().families).sort();
   const supported = PLAYER_FAMILIES.filter((family) => family !== 'unknown').sort();
   assert.deepEqual(configured, supported);
+});
+
+
+test('new live hosted-player families outrank generic HTML5 evidence', () => {
+  const infomaniak = classifyPlayer({
+    iframeUrls: ['https://player.infomaniak.com/?channel=example&player=example'],
+    mediaElementCount: 1,
+  });
+  assert.equal(infomaniak.primaryFamily, 'infomaniak');
+  assert.ok(infomaniak.secondaryFamilies.includes('native-html5'));
+
+  const proFhi = classifyPlayer({
+    iframeUrls: ['https://vdo2.pro-fhi.net/hybrid-stream-video-widget/example'],
+    domSignals: ['fluid-player'],
+    mediaElementCount: 1,
+  });
+  assert.equal(proFhi.primaryFamily, 'pro-fhi');
+  assert.ok(proFhi.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('BizTV Streamhoster iframe remains hosted-player primary', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://c.streamhoster.com/embed/media/example/channel/player'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'streamhoster');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('Telemicro shared player routes classify as one hosted family', () => {
+  for (const path of ['5tv', '15tv', '13tv']) {
+    const result = classifyPlayer({
+      iframeUrls: [`https://telemicro.com.do/players/${path}/index.php`],
+      mediaElementCount: 1,
+    });
+    assert.equal(result.primaryFamily, 'telemicro');
+    assert.ok(result.secondaryFamilies.includes('native-html5'));
+  }
+});
+
+
+test('ordinary category scripts do not false-positive as Tego', () => {
+  const result = classifyPlayer({
+    scriptUrls: [
+      'https://example.test/wp-content/plugins/post-category-image/assets/category-public.js',
+      'https://example.test/assets/category-slider.js',
+    ],
+  });
+  assert.notEqual(result.primaryFamily, 'tego');
+  assert.equal(result.secondaryFamilies.includes('tego'), false);
+});
+
+
+test('Radiant Media Player outranks Telemicro wrapper evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://telemicro.com.do/players/15tv/index.php'],
+    scriptUrls: ['https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js'],
+    domSignals: ['rmp-container rmp-overlay-button rmp-play-pause'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'radiant');
+  assert.ok(result.secondaryFamilies.includes('telemicro'));
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
+});
+
+
+test('same-origin site scripts do not count as hosted-player script evidence', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://telemicro.com.do/players/15tv/index.php'],
+    scriptUrls: [
+      'https://telemicro.com.do/wp-content/themes/site/app.js',
+      'https://telemicro.com.do/wp-includes/js/react.min.js',
+      'https://cdn.radiantmediatechs.com/rmp/9.16.4/js/rmp.min.js',
+    ],
+    domSignals: ['rmp-container rmp-overlay-button'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'radiant');
+  assert.ok(result.secondaryFamilies.includes('telemicro'));
+});
+
+
+test('Cloudflare Stream customer iframe classifies as hosted player', () => {
+  const result = classifyPlayer({
+    iframeUrls: ['https://customer-example.cloudflarestream.com/example/iframe'],
+    mediaElementCount: 1,
+  });
+  assert.equal(result.primaryFamily, 'cloudflare-stream');
+  assert.ok(result.secondaryFamilies.includes('native-html5'));
 });
