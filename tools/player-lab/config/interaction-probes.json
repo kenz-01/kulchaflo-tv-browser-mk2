@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "probes": {
+    "kf-post-923-madras-fm-tv": {
+      "frameHost": "player.infomaniak.com",
+      "selector": ".vjs-big-play-button",
+      "family": "videojs",
+      "activation": "keyboard-enter",
+      "frameWaitMs": 12000
+    },
+    "kf-post-920-tele-peyi": {
+      "frameHost": "player.infomaniak.com",
+      "selector": ".vjs-big-play-button",
+      "family": "videojs"
+    },
+    "kf-post-912-digital-15": {
+      "frameHost": "telemicro.com.do",
+      "pathPrefix": "/players/15tv/",
+      "selector": ".rmp-overlay-button",
+      "family": "radiant",
+      "activation": "dom-click"
+    },
+    "kf-post-911-telecentro-13": {
+      "frameHost": "telecentro.com.do",
+      "pathPrefix": "/players/13bot",
+      "selector": ".rmp-overlay-button",
+      "family": "radiant",
+      "activation": "dom-click"
+    },
+    "kf-post-896-xfm-aruba": {
+      "frameHost": "live2.tensila.com",
+      "pathPrefix": "/onair-v-1.xfm1027/player.html",
+      "selector": ".vjs-big-play-button",
+      "family": "videojs",
+      "frameWaitMs": 15000
+    },
+    "kf-post-894-balchi-tv": {
+      "frameHost": "rtmpcontrol.com",
+      "pathPrefix": "/VideoPlayer/balchitv",
+      "selector": ".vjs-big-play-button",
+      "family": "videojs"
+    },
+    "kf-post-918-bonao-tv": {
+      "frameHost": "bonaotv.com",
+      "selector": "video",
+      "family": "hlsjs",
+      "activation": "media-play"
+    },
+    "kf-post-916-adoram-tv": {
+      "frameHost": "adoramtv.org",
+      "selector": "video",
+      "family": "native-html5",
+      "activation": "media-play"
+    },
+    "kf-post-915-yunavision": {
+      "frameHost": "yunavision.com",
+      "selector": "video",
+      "family": "hlsjs",
+      "activation": "media-play"
+    },
+    "kf-post-905-rtvd": {
+      "frameHost": "rtvd.gob.do",
+      "selector": "video",
+      "family": "hlsjs",
+      "activation": "media-play"
+    },
+    "kf-post-746-wapa-tv": {
+      "frameHost": "wapa.tv",
+      "selector": ".fp-playbutton",
+      "family": "flowplayer",
+      "activation": "dom-click",
+      "frameWaitMs": 15000
+    },
+    "kf-post-745-wipr": {
+      "frameHost": "wipr.pr",
+      "selector": ".vjs-big-play-button",
+      "family": "videojs",
+      "activation": "dom-click",
+      "navigationTimeoutMs": 60000,
+      "frameWaitMs": 12000
+    },
+    "kf-post-737-ziz-tv": {
+      "frameHost": "zizonline.com",
+      "selector": "#tvUnmute",
+      "family": "hlsjs",
+      "activation": "dom-click"
+    },
+    "kf-post-192-tv6": {
+      "frameHost": "geo.dailymotion.com",
+      "selector": ".playback_button",
+      "family": "dailymotion",
+      "activation": "dom-click",
+      "frameWaitMs": 12000,
+      "pathPrefix": "/player/x8dgt.html"
+    },
+    "kf-post-932-biz-tv": {
+      "frameHost": "c.streamhoster.com",
+      "pathPrefix": "/embed/media/",
+      "selector": ".vjs-mute-control",
+      "family": "videojs",
+      "activation": "dom-click"
+    },
+    "kf-post-922-rht-tv": {
+      "frameHost": "player.infomaniak.com",
+      "selector": ".vjs-mute-control",
+      "family": "videojs",
+      "activation": "dom-click",
+      "frameWaitMs": 12000
+    }
+  }
+}
