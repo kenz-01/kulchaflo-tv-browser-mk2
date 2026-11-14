@@ -405,6 +405,23 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   assert.doesNotMatch(oversized.stdout, /hidden/);
 });
 
+test('log snapshot accepts ZNS evidence only from exact GvMedia message prefixes', () => {
+  const spoofed = [
+    '11-14 12:00:00.000 1234 1234 I KfMkIIGV:GvNav: zns helper phase=zns-video-time-advanced mode=browser-first ready=4 paused=false muted=true volume=0.25',
+    '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvNav: zns media event=error networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
+    '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: zns autoplay permission type=audible requested=other decision=allow',
+    '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: unrelated prefix zns media event=error networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
+  ].join('\n');
+  const result = spawnSync('python3', [logTool, '--parse'], {input: spoofed, encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.observation_phases, []);
+  assert.equal(report.player_state, null);
+  assert.deepEqual(report.media_diagnostics.events, []);
+  assert.equal(report.media_diagnostics.observed, 'no');
+  assert.equal(report.media_diagnostics.autoplay_permission_observed, 'unknown');
+});
+
 test('ZNS navigation failures reported with GeckoView uri fields are detected without retaining URLs', () => {
   const input = [
     '11-14 12:00:00.000 1234 1234 E KfMkIIGV:GvNav: load error tabId=abc uri=https://znsbahamas.com/?session=secret category=3 code=-11',

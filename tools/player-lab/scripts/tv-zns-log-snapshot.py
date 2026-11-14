@@ -25,9 +25,9 @@ MEDIA_EVENTS = (
     "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
     "pause", "waiting", "stalled", "error", "abort", "emptied",
 )
-PHASE_PATTERN = re.compile(r"zns helper phase=([a-z0-9-]+) mode=browser-first")
+PHASE_PATTERN = re.compile(r"^zns helper phase=([a-z0-9-]+) mode=browser-first")
 STATE_PATTERN = re.compile(
-    r"zns helper phase=zns-embedded-observed mode=browser-first "
+    r"^zns helper phase=zns-embedded-observed mode=browser-first "
     r"ready=([0-4]) paused=(true|false) muted=(true|false) "
     r"volume=(0(?:\.\d+)?|1(?:\.0+)?)"
 )
@@ -35,9 +35,14 @@ MEDIA_STATE_PATTERN = re.compile(
     r"\bnetworkState=([0-3]) mediaError=(-1|[0-4]) sourcePresent=(true|false) "
     r"rendered=(yes|no|unknown) autoplay=(true|false) controls=(true|false)"
 )
-MEDIA_EVENT_PATTERN = re.compile(r"\bzns media event=([a-z]+)\b")
+MEDIA_SNAPSHOT_PREFIX = re.compile(
+    r"^(?:zns helper phase=zns-embedded-observed mode=browser-first|"
+    r"zns media event=(?:loadstart|loadedmetadata|loadeddata|canplay|play|playing|"
+    r"pause|waiting|stalled|error|abort|emptied))\b"
+)
+MEDIA_EVENT_PATTERN = re.compile(r"^zns media event=([a-z]+)\b")
 AUTOPLAY_PERMISSION_PATTERN = re.compile(
-    r"\bzns autoplay permission type=(audible|inaudible) "
+    r"^zns autoplay permission type=(audible|inaudible) "
     r"requested=(allow|deny|other) decision=(allow|deny|other)\b"
 )
 APP_LOG_TAG = re.compile(r"\b[VDIWEF]\s+KfMkIIGV:(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
@@ -73,43 +78,44 @@ def sanitize(text, capture_status="complete"):
     autoplay_permissions = []
     observed = set()
     for line in text.splitlines():
-        phase_match = PHASE_PATTERN.search(line)
-        if phase_match and phase_match.group(1) in PHASE_SET and phase_match.group(1) not in phases:
-            phases.append(phase_match.group(1))
-        state_match = STATE_PATTERN.search(line)
-        if state_match:
-            phases.append("zns-embedded-observed") if "zns-embedded-observed" not in phases else None
-            player_state = {
-                "ready": int(state_match.group(1)),
-                "paused": state_match.group(2) == "true",
-                "muted": state_match.group(3) == "true",
-                "volume": float(state_match.group(4)),
-            }
-        media_match = MEDIA_STATE_PATTERN.search(line)
-        if media_match:
-            network_state, error_code, source_present, rendered, autoplay, controls = media_match.groups()
-            media_error_code = int(error_code)
-            media_state = {
-                "network_state": int(network_state),
-                "media_error_code": media_error_code if media_error_code in (1, 2, 3, 4) else None,
-                "error_observed": "yes" if media_error_code in (1, 2, 3, 4) else "no" if media_error_code == 0 else "unknown",
-                "source_present": source_present == "true",
-                "rendered": rendered,
-                "autoplay": autoplay == "true",
-                "controls": controls == "true",
-            }
-        event_match = MEDIA_EVENT_PATTERN.search(line)
-        if event_match and event_match.group(1) in MEDIA_EVENTS:
-            media_events.add(event_match.group(1))
-        permission_match = AUTOPLAY_PERMISSION_PATTERN.search(line)
-        if permission_match:
-            permission = dict(zip(("type", "requested", "decision"), permission_match.groups()))
-            if permission not in autoplay_permissions and len(autoplay_permissions) < 8:
-                autoplay_permissions.append(permission)
         tag_match = APP_LOG_TAG.search(line) or LEGACY_APP_LOG_TAG.search(line)
         if not tag_match:
             continue
         tag, message = tag_match.groups()
+        if tag == "GvMedia":
+            phase_match = PHASE_PATTERN.match(message)
+            if phase_match and phase_match.group(1) in PHASE_SET and phase_match.group(1) not in phases:
+                phases.append(phase_match.group(1))
+            state_match = STATE_PATTERN.match(message)
+            if state_match:
+                phases.append("zns-embedded-observed") if "zns-embedded-observed" not in phases else None
+                player_state = {
+                    "ready": int(state_match.group(1)),
+                    "paused": state_match.group(2) == "true",
+                    "muted": state_match.group(3) == "true",
+                    "volume": float(state_match.group(4)),
+                }
+            media_match = MEDIA_STATE_PATTERN.search(message) if MEDIA_SNAPSHOT_PREFIX.match(message) else None
+            if media_match:
+                network_state, error_code, source_present, rendered, autoplay, controls = media_match.groups()
+                media_error_code = int(error_code)
+                media_state = {
+                    "network_state": int(network_state),
+                    "media_error_code": media_error_code if media_error_code in (1, 2, 3, 4) else None,
+                    "error_observed": "yes" if media_error_code in (1, 2, 3, 4) else "no" if media_error_code == 0 else "unknown",
+                    "source_present": source_present == "true",
+                    "rendered": rendered,
+                    "autoplay": autoplay == "true",
+                    "controls": controls == "true",
+                }
+            event_match = MEDIA_EVENT_PATTERN.match(message)
+            if event_match and event_match.group(1) in MEDIA_EVENTS:
+                media_events.add(event_match.group(1))
+            permission_match = AUTOPLAY_PERMISSION_PATTERN.match(message)
+            if permission_match:
+                permission = dict(zip(("type", "requested", "decision"), permission_match.groups()))
+                if permission not in autoplay_permissions and len(autoplay_permissions) < 8:
+                    autoplay_permissions.append(permission)
         if tag == "GvTabs":
             if "session configured " in message:
                 observed.add("browser_session_configured")
