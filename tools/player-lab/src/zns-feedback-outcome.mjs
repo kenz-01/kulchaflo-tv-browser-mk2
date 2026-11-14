@@ -48,6 +48,25 @@ const LAUNCH_OBSERVATIONS = [
   'zns_navigation_completed',
   'zns_navigation_failed',
 ];
+const ATTEMPT_RECOVERY_REASONS = new Set([
+  'initial_navigation',
+  'official_frame_without_embedded_helper',
+  'navigation_failed_after_start',
+  'navigation_completed_without_player_state',
+  'navigation_pending_after_bounded_wait',
+]);
+const ATTEMPT_STOP_OBSERVATIONS = new Set([
+  'embedded_video_time_advanced',
+  'top_level_navigation_failed',
+  'embedded_state_window_elapsed_without_time_advancement',
+  'embedded_state_poll_limit_without_time_advancement',
+  'embedded_helper_active_without_video_state',
+  'official_frame_seen_without_embedded_helper',
+  'top_level_navigation_completed_without_player_state',
+  'top_level_navigation_pending_at_poll_limit',
+  'navigation_start_not_observed_at_poll_limit',
+  'recovery_launch_not_confirmed',
+]);
 
 const isStatus = (value) => value === 'yes' || value === 'no';
 const asBoolean = (value) => value === true || value === 'true';
@@ -91,6 +110,61 @@ function safeScreenshots(screenshots = {}) {
       status: status(screenshots.after_failure),
     },
   };
+}
+
+function safeAttemptSnapshot(snapshot = {}) {
+  const phasesValid = Array.isArray(snapshot.observation_phases)
+    && snapshot.observation_phases.every((phase) => PHASES.has(phase));
+  const phases = phasesValid ? [...new Set(snapshot.observation_phases)] : [];
+  const captureStatus = ['complete', 'incomplete', 'truncated'].includes(snapshot.capture_status)
+    ? snapshot.capture_status
+    : 'incomplete';
+  return {
+    capture_status: captureStatus,
+    official_frame_observed: isStatus(snapshot.official_frame_observed) ? snapshot.official_frame_observed : 'unknown',
+    embed_observed: isStatus(snapshot.embed_observed) ? snapshot.embed_observed : 'unknown',
+    iframe_load_watch_attached: isStatus(snapshot.iframe_load_watch_attached) ? snapshot.iframe_load_watch_attached : 'unknown',
+    iframe_load_event_after_watch: isStatus(snapshot.iframe_load_event_after_watch) ? snapshot.iframe_load_event_after_watch : 'unknown',
+    embedded_helper_active_observed: isStatus(snapshot.embedded_helper_active_observed) ? snapshot.embedded_helper_active_observed : 'unknown',
+    launch_observations: safeLaunchObservations(snapshot.launch_observations),
+    observation_phases: phases,
+    player_state: safePlayerState(snapshot.player_state),
+    media_diagnostics: safeMediaDiagnostics(snapshot.media_diagnostics),
+    video_time_advanced_observed: isStatus(snapshot.video_time_advanced_observed) ? snapshot.video_time_advanced_observed : 'unknown',
+  };
+}
+
+function safeNavigationAttempts(value = []) {
+  if (!Array.isArray(value)) return [];
+  const status = (input) => ['captured', 'missing', 'oversize'].includes(input) ? input : 'missing';
+  return value.slice(0, 2).flatMap((attempt, index) => {
+    if (!attempt || typeof attempt !== 'object') return [];
+    const number = attempt.attempt_number;
+    if (!Number.isInteger(number) || number !== index + 1) return [];
+    return [{
+      attempt_number: number,
+      recovery_reason: ATTEMPT_RECOVERY_REASONS.has(attempt.recovery_reason) ? attempt.recovery_reason : 'initial_navigation',
+      poll_count: Number.isInteger(attempt.poll_count) ? Math.max(0, Math.min(15, attempt.poll_count)) : 0,
+      stop_observation: ATTEMPT_STOP_OBSERVATIONS.has(attempt.stop_observation)
+        ? attempt.stop_observation
+        : 'navigation_start_not_observed_at_poll_limit',
+      before: safeAttemptSnapshot(attempt.before),
+      after: safeAttemptSnapshot(attempt.after),
+      screenshots: {
+        before: {file: `zns-attempt-${number}-before.png`, status: status(attempt.screenshots?.before)},
+        after: {file: `zns-attempt-${number}-after.png`, status: status(attempt.screenshots?.after)},
+      },
+    }];
+  });
+}
+
+function diagnosticCause(mediaDiagnostics) {
+  return ({
+    1: 'media_aborted',
+    2: 'media_network_error',
+    3: 'media_decode_error',
+    4: 'unsupported_media_source',
+  })[mediaDiagnostics.media_error_code] ?? 'not_established';
 }
 
 function safeAppDiagnostics(diagnostics = {}) {
@@ -180,6 +254,9 @@ export function classifyZnsFeedback(evidence = {}) {
   const phasesAreValid = Array.isArray(evidence.observation_phases)
     && evidence.observation_phases.every((phase) => PHASES.has(phase));
   const phases = phasesAreValid ? [...new Set(evidence.observation_phases)] : [];
+  const progressionFlag = evidence.video_time_advanced_observed === 'yes'
+    || evidence.video_time_advanced_observed === true;
+  const progressionPhase = phases.includes('zns-video-time-advanced');
   const appState = safeAppState(evidence.app_state);
   const appDiagnostics = safeAppDiagnostics(evidence.app_state_diagnostics);
   const failureState = Object.fromEntries(['process', 'activity_foreground', 'window_focus'].map((key) => [
@@ -191,6 +268,12 @@ export function classifyZnsFeedback(evidence = {}) {
   const playerState = safePlayerState(evidence.player_state);
   const mediaDiagnostics = safeMediaDiagnostics(evidence.media_diagnostics);
   const launchObservations = safeLaunchObservations(evidence.launch_observations);
+  const navigationAttempts = safeNavigationAttempts(evidence.navigation_attempts);
+  const frameLifecycle = {
+    iframe_load_watch_attached: isStatus(evidence.iframe_load_watch_attached) ? evidence.iframe_load_watch_attached : 'unknown',
+    iframe_load_event_after_watch: isStatus(evidence.iframe_load_event_after_watch) ? evidence.iframe_load_event_after_watch : 'unknown',
+    embedded_helper_active_observed: isStatus(evidence.embedded_helper_active_observed) ? evidence.embedded_helper_active_observed : 'unknown',
+  };
   const diagnosticContinuation = safeContinuation(evidence.diagnostic_continuation);
   const infra = evidence.infrastructure ?? {};
   const failureStage = FAILURE_STAGES.has(evidence.failure_stage)
@@ -228,9 +311,6 @@ export function classifyZnsFeedback(evidence = {}) {
     const baseComplete = appStateComplete && infrastructureComplete && evidenceCaptureComplete
       && interactionsComplete && identityComplete
       && diagnosticContinuation.mode !== 'passive_focus_unknown';
-    const progressionFlag = evidence.video_time_advanced_observed === 'yes'
-      || evidence.video_time_advanced_observed === true;
-    const progressionPhase = phases.includes('zns-video-time-advanced');
     const embeddedPhase = phases.includes('zns-embedded-observed');
 
     if (!baseComplete || !phasesAreValid || !isStatus(evidence.video_time_advanced_observed)) {
@@ -263,6 +343,11 @@ export function classifyZnsFeedback(evidence = {}) {
     && actions.dpad_down_up_dispatched === 'yes'
     && actions.back_dispatched === 'yes'
     && diagnosticContinuation.mode !== 'passive_focus_unknown';
+  const mediaCause = diagnosticCause(mediaDiagnostics);
+  const progressionConsistent = progressionFlag === progressionPhase;
+  const playbackProgression = progressionConsistent && progressionFlag
+    ? 'yes'
+    : progressionConsistent && evidence.log_capture === 'complete' ? 'no' : 'unknown';
 
   return {
     schema_version: 1,
@@ -290,6 +375,17 @@ export function classifyZnsFeedback(evidence = {}) {
     app_state_diagnostics: appDiagnostics,
     failure_state: failureState,
     screenshots,
+    navigation_attempts: navigationAttempts,
+    frame_lifecycle: frameLifecycle,
+    harness_limits: {
+      max_navigation_attempts: 2,
+      max_recovery_attempts: 1,
+      max_navigation_window_seconds_per_attempt: 45,
+      max_log_snapshot_seconds: 6,
+      max_polls_per_attempt: 15,
+      poll_interval_seconds: 2,
+      post_embed_observation_polls: 5,
+    },
     actions,
     launch_observations: launchObservations,
     diagnostic_continuation: diagnosticContinuation,
@@ -300,6 +396,10 @@ export function classifyZnsFeedback(evidence = {}) {
     player_state: playerState,
     media_diagnostics: mediaDiagnostics,
     video_time_advanced_observed: evidence.video_time_advanced_observed === 'yes' ? 'yes' : 'no',
+    diagnostic_success: mediaCause !== 'not_established',
+    diagnostic_cause: mediaCause,
+    playback_progression: playbackProgression,
+    device_acceptance: 'not_tested',
     classification,
     reason,
     failure_stage: failureStage,
@@ -379,6 +479,12 @@ function evidenceFromEnvironment(env) {
     },
     media_diagnostics: (() => {
       try { return JSON.parse(env.TV_ZNS_MEDIA_DIAGNOSTICS || '{}'); } catch { return {}; }
+    })(),
+    iframe_load_watch_attached: env.TV_IFRAME_LOAD_WATCH_ATTACHED,
+    iframe_load_event_after_watch: env.TV_IFRAME_LOAD_EVENT_AFTER_WATCH,
+    embedded_helper_active_observed: env.TV_EMBEDDED_HELPER_ACTIVE,
+    navigation_attempts: (() => {
+      try { return JSON.parse(env.TV_NAVIGATION_ATTEMPTS_JSON || '[]'); } catch { return []; }
     })(),
     video_time_advanced_observed: env.TV_TIME_ADVANCED,
     failure_stage: env.TV_FAILURE_STAGE,

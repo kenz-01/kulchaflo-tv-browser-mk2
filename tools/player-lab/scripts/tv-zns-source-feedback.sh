@@ -8,11 +8,18 @@ ACTIVITY="$PACKAGE/.app.GeckoBrowserActivity"
 APK="app-gv/build/outputs/apk/universal/debug/app-gv-universal-debug.apk"
 REPORT_DIR="${RUNNER_TEMP:-/tmp}/tv-emulator-qualification"
 RECEIPT="$REPORT_DIR/zns-diagnostic-receipt.json"
+ATTEMPT_SCREENSHOT_DIR="$REPORT_DIR/navigation-attempts"
 SOURCE_URL="https://znsbahamas.com/"
 STAGE="preflight"
 MAX_SCREENSHOT_BYTES=$((4 * 1024 * 1024))
+MAX_NAVIGATION_POLLS=15
+POLL_INTERVAL_SECONDS=2
+MIN_POST_EMBED_POLLS=5
+MAX_NAVIGATION_SECONDS_PER_ATTEMPT=45
+MAX_LOG_SNAPSHOT_SECONDS=6
 
 mkdir -p "$REPORT_DIR"
+mkdir -p "$ATTEMPT_SCREENSHOT_DIR"
 export TV_TEST_PROFILE=zns TV_ZNS_SOURCE_URL="$SOURCE_URL"
 export TV_EMULATOR_BOOT=no TV_APK_INSTALL=unknown TV_APP_LAUNCH=unknown
 export TV_LAUNCH_STATUS=unknown TV_FAILURE_STAGE=
@@ -24,6 +31,9 @@ export TV_ZNS_NAVIGATION_REQUESTED=unknown TV_ZNS_NAVIGATION_STARTED=unknown
 export TV_ZNS_NAVIGATION_COMPLETED=unknown TV_ZNS_NAVIGATION_FAILED=unknown
 export TV_CONTINUATION_MODE=not_used TV_CONTINUATION_WAIT=no TV_CONTINUATION_KEYS_WITHHELD=no
 export TV_FAILURE_CAPTURED=no
+export TV_IFRAME_LOAD_WATCH_ATTACHED=unknown TV_IFRAME_LOAD_EVENT_AFTER_WATCH=unknown
+export TV_EMBEDDED_HELPER_ACTIVE=unknown TV_CURRENT_ZNS_SNAPSHOT='{}'
+export TV_NAVIGATION_ATTEMPTS_JSON='[]'
 for checkpoint in LAUNCH DPAD BACK FAILURE; do
   printf -v "TV_${checkpoint}_PROCESS" '%s' unknown
   printf -v "TV_${checkpoint}_FOREGROUND" '%s' unknown
@@ -40,15 +50,21 @@ for checkpoint in LAUNCH DPAD BACK FAILURE; do
 done
 export TV_SCREENSHOT_LAUNCH=missing TV_SCREENSHOT_DPAD=missing
 export TV_SCREENSHOT_BACK=missing TV_SCREENSHOT_FAILURE=missing
+export TV_ATTEMPT1_BEFORE_SCREENSHOT=missing TV_ATTEMPT1_AFTER_SCREENSHOT=missing
+export TV_ATTEMPT2_BEFORE_SCREENSHOT=missing TV_ATTEMPT2_AFTER_SCREENSHOT=missing
 export TV_DPAD_DISPATCH=no TV_BACK_DISPATCH=no
 
 capture_screenshot() {
-  local phase="$1" label="$1" remote local_path size status=missing
+  local phase="$1" label="$1" remote local_path size status=missing attempt_status_name=
   case "$phase" in
     launch) remote=/sdcard/kf-zns-after-launch.png; local_path="$REPORT_DIR/zns-after-launch.png" ;;
     dpad) remote=/sdcard/kf-zns-after-dpad.png; local_path="$REPORT_DIR/zns-after-dpad.png" ;;
     back) remote=/sdcard/kf-zns-after-back.png; local_path="$REPORT_DIR/zns-after-back.png" ;;
     failure) remote=/sdcard/kf-zns-after-failure.png; local_path="$REPORT_DIR/zns-after-failure.png" ;;
+    attempt-1-before) remote=/sdcard/kf-zns-attempt-1-before.png; local_path="$ATTEMPT_SCREENSHOT_DIR/zns-attempt-1-before.png"; attempt_status_name=TV_ATTEMPT1_BEFORE_SCREENSHOT ;;
+    attempt-1-after) remote=/sdcard/kf-zns-attempt-1-after.png; local_path="$ATTEMPT_SCREENSHOT_DIR/zns-attempt-1-after.png"; attempt_status_name=TV_ATTEMPT1_AFTER_SCREENSHOT ;;
+    attempt-2-before) remote=/sdcard/kf-zns-attempt-2-before.png; local_path="$ATTEMPT_SCREENSHOT_DIR/zns-attempt-2-before.png"; attempt_status_name=TV_ATTEMPT2_BEFORE_SCREENSHOT ;;
+    attempt-2-after) remote=/sdcard/kf-zns-attempt-2-after.png; local_path="$ATTEMPT_SCREENSHOT_DIR/zns-attempt-2-after.png"; attempt_status_name=TV_ATTEMPT2_AFTER_SCREENSHOT ;;
     *) return 0 ;;
   esac
   if timeout 8 adb shell screencap -p "$remote" >/dev/null 2>&1 \
@@ -64,9 +80,14 @@ capture_screenshot() {
   else
     rm -f "$local_path"
   fi
-  label=${label^^}
-  printf -v "TV_SCREENSHOT_${label}" '%s' "$status"
-  export "TV_SCREENSHOT_${label}"
+  if [[ -n "$attempt_status_name" ]]; then
+    printf -v "$attempt_status_name" '%s' "$status"
+    export "$attempt_status_name"
+  else
+    label=${label^^}
+    printf -v "TV_SCREENSHOT_${label}" '%s' "$status"
+    export "TV_SCREENSHOT_${label}"
+  fi
 }
 
 capture_app_state() {
@@ -113,7 +134,10 @@ check_app_state() {
 
 capture_player_observations() {
   local snapshot decoded
-  snapshot=$(python3 tools/player-lab/scripts/tv-zns-log-snapshot.py capture 2>/dev/null || true)
+  snapshot=$(timeout "${MAX_LOG_SNAPSHOT_SECONDS}s" python3 tools/player-lab/scripts/tv-zns-log-snapshot.py capture 2>/dev/null || true)
+  [[ "$snapshot" == \{*\} ]] || snapshot='{}'
+  TV_CURRENT_ZNS_SNAPSHOT="$snapshot"
+  export TV_CURRENT_ZNS_SNAPSHOT
   decoded=$(printf '%s' "$snapshot" | python3 -c '
 import json,re,sys
 try:
@@ -138,15 +162,21 @@ try:
  keys=("browser_session_configured","browser_view_attached","zns_navigation_requested","zns_navigation_started","zns_navigation_completed","zns_navigation_failed")
  launch_values=[launch.get(key,"unknown") for key in keys]
  launch_values=[value if value in {"yes","no","unknown"} else "unknown" for value in launch_values]
- values=[capture,",".join(phases) or "none",ready,boolean(state.get("paused")),boolean(state.get("muted")),volume,advanced,*launch_values]
+ lifecycle_keys=("iframe_load_watch_attached","iframe_load_event_after_watch","embedded_helper_active_observed")
+ lifecycle_values=[d.get(key,"unknown") for key in lifecycle_keys]
+ lifecycle_values=[value if value in {"yes","no","unknown"} else "unknown" for value in lifecycle_values]
+ official=d.get("official_frame_observed","unknown")
+ official=official if official in {"yes","no","unknown"} else "unknown"
+ values=[capture,",".join(phases) or "none",ready,boolean(state.get("paused")),boolean(state.get("muted")),volume,advanced,*launch_values,*lifecycle_values,official]
  allowed=set(values)
  print("\t".join(value if value in allowed else "unknown" for value in values))
 except Exception:
- print("incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown")
-' 2>/dev/null || printf 'incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown')
+ print("\t".join(["incomplete","none","unknown","unknown","unknown","unknown","no"]+["unknown"]*10))
+' 2>/dev/null || printf 'incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown')
   IFS=$'\t' read -r TV_LOG_CAPTURE TV_ZNS_PHASES TV_PLAYER_READY TV_PLAYER_PAUSED TV_PLAYER_MUTED TV_PLAYER_VOLUME TV_TIME_ADVANCED \
     TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED \
-    TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED <<< "$decoded"
+    TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED \
+    TV_IFRAME_LOAD_WATCH_ATTACHED TV_IFRAME_LOAD_EVENT_AFTER_WATCH TV_EMBEDDED_HELPER_ACTIVE TV_OFFICIAL_FRAME_OBSERVED <<< "$decoded"
   TV_LOG_CAPTURE=${TV_LOG_CAPTURE:-incomplete}
   [[ "$TV_ZNS_PHASES" == none ]] && TV_ZNS_PHASES=
   TV_PLAYER_READY=${TV_PLAYER_READY:-unknown}
@@ -154,7 +184,7 @@ except Exception:
   TV_PLAYER_MUTED=${TV_PLAYER_MUTED:-unknown}
   TV_PLAYER_VOLUME=${TV_PLAYER_VOLUME:-unknown}
   TV_TIME_ADVANCED=${TV_TIME_ADVANCED:-no}
-  for name in TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED; do
+  for name in TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED TV_IFRAME_LOAD_WATCH_ATTACHED TV_IFRAME_LOAD_EVENT_AFTER_WATCH TV_EMBEDDED_HELPER_ACTIVE TV_OFFICIAL_FRAME_OBSERVED; do
     [[ "${!name:-}" =~ ^(yes|no|unknown)$ ]] || printf -v "$name" '%s' unknown
   done
   TV_ZNS_MEDIA_DIAGNOSTICS=$(printf '%s' "$snapshot" | python3 -c '
@@ -197,7 +227,100 @@ except Exception:
   export TV_LOG_CAPTURE TV_ZNS_PHASES TV_PLAYER_READY TV_PLAYER_PAUSED TV_PLAYER_MUTED TV_PLAYER_VOLUME TV_TIME_ADVANCED
   export TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED
   export TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED
+  export TV_IFRAME_LOAD_WATCH_ATTACHED TV_IFRAME_LOAD_EVENT_AFTER_WATCH TV_EMBEDDED_HELPER_ACTIVE TV_OFFICIAL_FRAME_OBSERVED
   export TV_ZNS_MEDIA_DIAGNOSTICS
+}
+
+wait_for_navigation_phase() {
+  local polls=0 embed_first_poll=0 stop_observation= started_at=$SECONDS
+  while (( polls < MAX_NAVIGATION_POLLS && SECONDS - started_at < MAX_NAVIGATION_SECONDS_PER_ATTEMPT )); do
+    capture_player_observations
+    ((polls += 1))
+    if [[ "$TV_TIME_ADVANCED" == yes ]]; then
+      stop_observation=embedded_video_time_advanced
+      break
+    fi
+    if [[ "$TV_ZNS_NAVIGATION_FAILED" == yes ]]; then
+      stop_observation=top_level_navigation_failed
+      break
+    fi
+    if [[ ",$TV_ZNS_PHASES," == *,zns-embedded-observed,* ]]; then
+      (( embed_first_poll == 0 )) && embed_first_poll=$polls
+      if (( polls - embed_first_poll >= MIN_POST_EMBED_POLLS )); then
+        stop_observation=embedded_state_window_elapsed_without_time_advancement
+        break
+      fi
+    fi
+    if (( polls < MAX_NAVIGATION_POLLS )); then
+      sleep "$POLL_INTERVAL_SECONDS"
+    fi
+  done
+  if [[ -z "$stop_observation" ]]; then
+    if [[ ",$TV_ZNS_PHASES," == *,zns-embedded-observed,* ]]; then
+      stop_observation=embedded_state_poll_limit_without_time_advancement
+    elif [[ "$TV_EMBEDDED_HELPER_ACTIVE" == yes ]]; then
+      stop_observation=embedded_helper_active_without_video_state
+    elif [[ "$TV_OFFICIAL_FRAME_OBSERVED" == yes ]]; then
+      stop_observation=official_frame_seen_without_embedded_helper
+    elif [[ "$TV_ZNS_NAVIGATION_COMPLETED" == yes ]]; then
+      stop_observation=top_level_navigation_completed_without_player_state
+    elif [[ "$TV_ZNS_NAVIGATION_STARTED" == yes ]]; then
+      stop_observation=top_level_navigation_pending_at_poll_limit
+    else
+      stop_observation=navigation_start_not_observed_at_poll_limit
+    fi
+  fi
+  TV_ATTEMPT_POLL_COUNT="$polls"
+  TV_ATTEMPT_STOP_OBSERVATION="$stop_observation"
+}
+
+retry_reason_for_current_observation() {
+  [[ "$TV_EMBEDDED_HELPER_ACTIVE" != yes && ",$TV_ZNS_PHASES," != *,zns-embedded-observed,* ]] || return 0
+  if [[ "$TV_OFFICIAL_FRAME_OBSERVED" == yes ]]; then
+    printf '%s\n' 'official_frame_without_embedded_helper'
+  elif [[ "$TV_ZNS_NAVIGATION_STARTED" == yes && "$TV_ZNS_NAVIGATION_FAILED" == yes ]]; then
+    printf '%s\n' 'navigation_failed_after_start'
+  elif [[ "$TV_ZNS_NAVIGATION_STARTED" == yes && "$TV_ZNS_NAVIGATION_COMPLETED" == yes ]]; then
+    printf '%s\n' 'navigation_completed_without_player_state'
+  elif [[ "$TV_ZNS_NAVIGATION_STARTED" == yes ]]; then
+    printf '%s\n' 'navigation_pending_after_bounded_wait'
+  fi
+}
+
+record_navigation_attempt() {
+  local attempt_number="$1" recovery_reason="$2" stop_observation="$3" polls="$4"
+  local before_snapshot="$5" after_snapshot="$6" before_status="$7" after_status="$8"
+  export TV_RECORD_ATTEMPTS="$TV_NAVIGATION_ATTEMPTS_JSON"
+  export TV_RECORD_BEFORE="$before_snapshot" TV_RECORD_AFTER="$after_snapshot"
+  export TV_RECORD_ATTEMPT_NUMBER="$attempt_number" TV_RECORD_RECOVERY_REASON="$recovery_reason"
+  export TV_RECORD_STOP_OBSERVATION="$stop_observation" TV_RECORD_POLLS="$polls"
+  export TV_RECORD_BEFORE_SCREENSHOT="$before_status" TV_RECORD_AFTER_SCREENSHOT="$after_status"
+  TV_NAVIGATION_ATTEMPTS_JSON=$(python3 -c '
+import json,os
+allowed_reasons={"initial_navigation","official_frame_without_embedded_helper","navigation_failed_after_start","navigation_completed_without_player_state","navigation_pending_after_bounded_wait"}
+allowed_stops={"embedded_video_time_advanced","top_level_navigation_failed","embedded_state_window_elapsed_without_time_advancement","embedded_state_poll_limit_without_time_advancement","embedded_helper_active_without_video_state","official_frame_seen_without_embedded_helper","top_level_navigation_completed_without_player_state","top_level_navigation_pending_at_poll_limit","navigation_start_not_observed_at_poll_limit","recovery_launch_not_confirmed"}
+try:
+ records=json.loads(os.environ.get("TV_RECORD_ATTEMPTS","[]"))
+ if not isinstance(records,list): records=[]
+ number=int(os.environ.get("TV_RECORD_ATTEMPT_NUMBER","0"))
+ polls=int(os.environ.get("TV_RECORD_POLLS","0"))
+ reason=os.environ.get("TV_RECORD_RECOVERY_REASON","")
+ stop=os.environ.get("TV_RECORD_STOP_OBSERVATION","")
+ before=json.loads(os.environ.get("TV_RECORD_BEFORE","{}"))
+ after=json.loads(os.environ.get("TV_RECORD_AFTER","{}"))
+ if number not in (1,2) or not 0 <= polls <= 15 or reason not in allowed_reasons or stop not in allowed_stops: raise ValueError()
+ status=lambda value: value if value in {"captured","missing","oversize"} else "missing"
+ entry={"attempt_number":number,"recovery_reason":reason,"poll_count":polls,"stop_observation":stop,
+        "before":before,"after":after,
+        "screenshots":{"before":status(os.environ.get("TV_RECORD_BEFORE_SCREENSHOT")),"after":status(os.environ.get("TV_RECORD_AFTER_SCREENSHOT"))}}
+ records=[item for item in records if isinstance(item,dict) and item.get("attempt_number") in (1,2)]
+ records.append(entry)
+ records=sorted(records,key=lambda item:item["attempt_number"])[:2]
+ print(json.dumps(records,separators=(",",":")))
+except Exception:
+ print("[]")
+')
+  export TV_NAVIGATION_ATTEMPTS_JSON
 }
 
 finish() {
@@ -224,7 +347,29 @@ finish() {
     printf -- '- Classification: `%s`\n' "${classification:-INCONCLUSIVE}"
     printf -- '- Commit: `%s`\n' "${GITHUB_SHA:-unknown}"
     printf '%s\n' '- Selected profile: `zns`'
-    printf '%s\n' '- A green job means the bounded diagnostic harness completed; it does not verify live-stream playback, moving picture, audio output, or Bravia acceptance.'
+    python3 - "$RECEIPT" <<'PY'
+import json,sys
+try:
+    receipt=json.load(open(sys.argv[1],encoding="utf-8"))
+except (OSError,json.JSONDecodeError):
+    receipt={}
+yes_no=lambda value: "yes" if value is True else "no" if value is False else "unknown"
+print(f"- Harness success: `{yes_no(receipt.get('harness_completed'))}`")
+print(f"- Diagnostic success: `{yes_no(receipt.get('diagnostic_success'))}`; cause: `{receipt.get('diagnostic_cause','not_established')}`")
+print(f"- Playback progression: `{receipt.get('playback_progression','unknown')}` (actual bounded media-time advancement)")
+print(f"- Physical TV acceptance: `{receipt.get('device_acceptance','not_tested')}`")
+limits=receipt.get("harness_limits",{})
+print(f"- Navigation limits: `{limits.get('max_navigation_attempts',2)}` attempts, `{limits.get('max_recovery_attempts',1)}` recovery, `{limits.get('max_navigation_window_seconds_per_attempt',45)}s` window per attempt, `{limits.get('max_polls_per_attempt',15)}` polls")
+frame=receipt.get("frame_lifecycle",{})
+print("- Frame/helper observations: " + ", ".join(
+    f"{key}=`{frame.get(key,'unknown')}`" for key in (
+        "iframe_load_watch_attached","iframe_load_event_after_watch","embedded_helper_active_observed")))
+for attempt in receipt.get("navigation_attempts",[]):
+    print(f"- Navigation attempt {attempt.get('attempt_number','?')}: stop=`{attempt.get('stop_observation','unknown')}`, recovery=`{attempt.get('recovery_reason','unknown')}`, polls=`{attempt.get('poll_count','unknown')}`")
+if not receipt.get("navigation_attempts"):
+    print("- Navigation attempts: no attempt completed")
+PY
+    printf '%s\n' '- A green job means the bounded harness completed. It does not establish moving picture, audio output, or physical Bravia acceptance.'
     printf '%s\n' '- Machine-readable receipt: `zns-diagnostic-receipt.json`'
   } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
   cat "$RECEIPT"
@@ -272,9 +417,9 @@ unset launch_output
 [[ "$TV_LAUNCH_STATUS" == confirmed ]] || { echo "Activity launch outcome was not confirmed by am start -W" >&2; exit 1; }
 
 STAGE=required_app_state
-# Capture the earliest post-navigation frame before evaluating process/focus state.
-sleep 25
+# Keep the initial launch frame, then checkpoint each bounded navigation attempt.
 capture_screenshot launch
+capture_screenshot attempt-1-before
 if ! check_app_state LAUNCH; then
   if [[ "$TV_LAUNCH_PROCESS" == yes && "$TV_LAUNCH_FOREGROUND" == yes && "$TV_LAUNCH_FOCUS" == unknown ]]; then
     # Missing focus evidence is not evidence of lost focus. Collect one extra
@@ -293,6 +438,43 @@ if ! check_app_state LAUNCH; then
   fi
   echo "Required app process/foreground/focus check failed after launch" >&2
   exit 1
+fi
+
+capture_player_observations
+attempt1_before="$TV_CURRENT_ZNS_SNAPSHOT"
+wait_for_navigation_phase
+attempt1_polls="$TV_ATTEMPT_POLL_COUNT"
+attempt1_stop="$TV_ATTEMPT_STOP_OBSERVATION"
+capture_screenshot attempt-1-after
+attempt1_after="$TV_CURRENT_ZNS_SNAPSHOT"
+record_navigation_attempt 1 initial_navigation "$attempt1_stop" "$attempt1_polls" \
+  "$attempt1_before" "$attempt1_after" "$TV_ATTEMPT1_BEFORE_SCREENSHOT" "$TV_ATTEMPT1_AFTER_SCREENSHOT"
+
+retry_reason=$(retry_reason_for_current_observation)
+if [[ -n "$retry_reason" ]]; then
+  # onNewIntent loads this same explicitly selected official URL into the active GeckoSession.
+  capture_screenshot attempt-2-before
+  attempt2_before="$TV_CURRENT_ZNS_SNAPSHOT"
+  adb logcat -c
+  retry_started=no
+  if retry_output=$(adb shell am start -W -n "$ACTIVITY" -e url "$SOURCE_URL" 2>&1) \
+    && grep -Eq '^Status:[[:space:]]*ok[[:space:]]*$' <<< "$retry_output"; then
+    retry_started=yes
+  fi
+  unset retry_output
+  if [[ "$retry_started" == yes ]]; then
+    wait_for_navigation_phase
+    attempt2_polls="$TV_ATTEMPT_POLL_COUNT"
+    attempt2_stop="$TV_ATTEMPT_STOP_OBSERVATION"
+  else
+    capture_player_observations
+    attempt2_polls=0
+    attempt2_stop=recovery_launch_not_confirmed
+  fi
+  capture_screenshot attempt-2-after
+  attempt2_after="$TV_CURRENT_ZNS_SNAPSHOT"
+  record_navigation_attempt 2 "$retry_reason" "$attempt2_stop" "$attempt2_polls" \
+    "$attempt2_before" "$attempt2_after" "$TV_ATTEMPT2_BEFORE_SCREENSHOT" "$TV_ATTEMPT2_AFTER_SCREENSHOT"
 fi
 
 # Focus movement is not inferred from dispatched keys; process/activity/window are checked afterward.

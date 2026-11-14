@@ -46,6 +46,7 @@ test('only one visible official frame receives the bounded player-first layout',
     attrs: {src: 'https://player.streamcomedia.com/HTML5/znstv/?session=private', allow: 'fullscreen; picture-in-picture'},
     getAttribute(key) { return this.attrs[key] || null; },
     setAttribute(key, value) { this.attrs[key] = value; },
+    addEventListener(name, callback) { this[`on${name}`] = callback; },
     getBoundingClientRect() { return {width: 900, height: 500}; },
   };
   const other = {parentElement: body, style: style(events)};
@@ -62,14 +63,17 @@ test('only one visible official frame receives the bounded player-first layout',
     setTimeout(callback, delay) { timers.push({callback, delay}); },
   });
   timers.forEach(({callback}) => callback());
+  frame.onload();
 
   assert.deepEqual(timers.map(({delay}) => delay), [300, 900, 2000, 4000, 7000, 11000, 18000]);
   assert.equal(frame.attrs.allowfullscreen, 'true');
   assert.equal(frame.attrs.allow, 'fullscreen; picture-in-picture');
-  assert.equal(promptEvents.length, 1);
-  assert.match(promptEvents[0], /zns-outer-player-first/);
+  assert.equal(promptEvents.length, 3);
+  assert.match(promptEvents[0], /zns-outer-frame-load-watch-attached/);
+  assert.match(promptEvents[1], /zns-outer-player-first/);
+  assert.match(promptEvents[2], /zns-outer-frame-load-observed/);
   assert.match(promptEvents[0], /https:\/\/znsbahamas\.com\//);
-  assert.doesNotMatch(promptEvents[0], /secret|private|fragment/);
+  assert.doesNotMatch(promptEvents.join('\n'), /secret|private|fragment/);
   assert.ok(events.some(([property, value]) => property === 'position' && value === 'fixed'));
   assert.ok(events.some(([property, value]) => property === 'display' && value === 'none'));
 });
@@ -154,6 +158,7 @@ test('trusted player state and bounded time progression are reported without aud
   const retries = timers.splice(0);
   assert.deepEqual(retries.map(({delay}) => delay), [300, 900, 2000, 4000, 7000, 11000, 18000]);
   retries.forEach(({callback}) => callback());
+  assert.ok(prompts.some((value) => value.includes('zns-embedded-helper-active')));
   assert.equal(playCalls, 0);
   assert.equal(video.paused, true);
   assert.equal(video.muted, true);
@@ -218,6 +223,9 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.match(activity, /zns autoplay permission type=\$type requested=\$requested decision=\$decisionLabel/);
   assert.match(activity, /zns media event=\$mediaEvent/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first/);
+  assert.match(activity, /zns-outer-frame-load-watch-attached/);
+  assert.match(activity, /zns-outer-frame-load-observed/);
+  assert.match(activity, /zns-embedded-helper-active/);
   assert.match(activity, /zns browser-first candidate ignored/);
   assert.match(activity, /isZnsTvSiteUrl\(currentUrl\) \|\| isZnsStreamcomediaEmbedUrl\(currentUrl\)/);
 });
