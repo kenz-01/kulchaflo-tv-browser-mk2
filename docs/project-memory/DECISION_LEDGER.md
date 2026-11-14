@@ -29,3 +29,11 @@ Distinguish canonical WordPress Channel user destination, broadcaster official l
 ## Release boundary
 
 STAGING/candidate build is never a production/store release. Do not merge #16→#19 prematurely or silently add wildcards; maintain exact head CI and real Sony acceptance. Existing PRs hold transient SHA and test facts; this ledger holds only durable rationale.
+
+## TV-D007 — TV-local architect-direct delivery playbook (27 October 2026)
+
+Adopt the Events repo's implement → exact-head test → verify → repair/hold → continue discipline, without its STAGING WordPress approvals, automations, runners, paid workers, auto-merge or review-controller machinery. All TV jobs must read `docs/TV_ARCHITECT_DELIVERY_PLAYBOOK.md` via the top of `AGENTS.md` and compact `.ai/TASK.md`/`.ai/STATE.md`. The TV hardware and source/security gates still control acceptance. **Why:** avoid repeated planning-only loops and context loss without weakening on-device evidence or publisher protections.
+
+## TV-D008 — Security-challenge rendering is not stream or reputation proof (27 October 2026)
+
+On HGPTV's first-party Dacast live page, a human-verification checkbox rendered and was clickable on the owner's laptop, while the Bravia displayed a spinner and no checkbox. **Superseded during the same 27 Oct session:** a subsequent screenshot showed a fake human-check pane commanding a pasted `curl`-to-`bash` Terminal execution, terminal HTTP 403 and concurrent background-item notices (`runsvc.sh`, `bash`). Later Finder inspection established these refer to the existing GitHub runner at `~/kulchaflo-ai-supervisor/actions-runner/runsvc.sh` and standard `/bin/bash`, not evidence of malicious persistence. This remains a **potential ClickFix malware-delivery incident**, not ordinary publisher challenge incompatibility. Exact system compromise is unknown. **HOLD all direct HGPTV browsing/automation** until independent incident response and site/origin safety are established. Never run/simulate the payload or solve the challenge. Mac CI/deployment and any accessible credentials are security-held pending trusted assessment. **Why:** security containment supersedes playback diagnosis.

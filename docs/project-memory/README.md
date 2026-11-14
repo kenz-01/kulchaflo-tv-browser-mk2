@@ -22,3 +22,7 @@ No raw transcript or uploaded logs are claimed to be physically archived. The cu
 ## External broader history
 
 The Events repo `kenz-01/kulchaflo-events-engine/docs/project-memory/` documents Kulcha Flo's overall product history; this TV pack is narrower, for GeckoView/Bravia player implementation and acceptance. It does **not** alter Events Hub LIVE/STAGING permissions or invent new shared D-numbers.
+
+## Repeatable TV developer entry
+
+Every TV job begins with [TV Architect Delivery Playbook](../TV_ARCHITECT_DELIVERY_PLAYBOOK.md), [active task](../../.ai/TASK.md), [compact state](../../.ai/STATE.md), `AGENTS.md` and this memory chain before refreshing current GitHub checks. The TV playbook adopts Events' architect-direct throughput discipline, not Events' scheduling, WordPress publishing controls or self-hosted runner.
