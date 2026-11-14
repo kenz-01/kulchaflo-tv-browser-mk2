@@ -375,3 +375,47 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   assert.equal(JSON.parse(oversized.stdout).capture_status, 'truncated');
   assert.doesNotMatch(oversized.stdout, /hidden/);
 });
+
+test('ZNS navigation failures reported with GeckoView uri fields are detected without retaining URLs', () => {
+  const input = [
+    '11-14 12:00:00.000 1234 1234 E KfMkIIGV:GvNav: load error tabId=abc uri=https://znsbahamas.com/?session=secret category=3 code=-11',
+    '11-14 12:00:00.001 1234 1234 E KfMkIIGV:GvNav: load error tabId=abc uri=https://other.invalid/ category=3 code=-11',
+    '11-14 12:00:00.002 1234 1234 E/GvNav: load error tabId=abc uri=https://znsbahamas.com/private category=3 code=-11',
+  ].join('\n');
+  const result = spawnSync('python3', [logTool, '--parse'], {input, encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.launch_observations.zns_navigation_failed, 'yes');
+  assert.doesNotMatch(result.stdout, /znsbahamas|other\.invalid|secret/);
+});
+
+test('log capture keeps navigation evidence older than a fixed 500-line tail', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kf-log-tail-'));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const adb = join(bin, 'adb');
+  writeFileSync(adb, `#!/usr/bin/env bash
+set -eu
+case "$*" in
+  "shell pidof com.kulchaflo.tv.mk2.gv") printf '412\\n' ;;
+  "logcat -d --pid 412")
+    printf '%s\\n' '11-14 12:00:00.000 412 412 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/'
+    for i in {1..600}; do printf '%s\\n' "11-14 12:00:00.001 412 412 I KfMkIIGV:GvMedia: unrelated diagnostic $i"; done
+    ;;
+  "logcat -d -t 500 --pid 412")
+    for i in {1..500}; do printf '%s\\n' "11-14 12:00:00.001 412 412 I KfMkIIGV:GvMedia: unrelated diagnostic $i"; done
+    ;;
+  *) exit 2 ;;
+esac
+`);
+  chmodSync(adb, 0o755);
+  const result = spawnSync('python3', [logTool, 'capture'], {
+    encoding: 'utf8',
+    env: {...process.env, PATH: `${bin}:${process.env.PATH}`},
+  });
+  rmSync(root, {recursive: true, force: true});
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.capture_status, 'complete');
+  assert.equal(report.launch_observations.zns_navigation_started, 'yes');
+});

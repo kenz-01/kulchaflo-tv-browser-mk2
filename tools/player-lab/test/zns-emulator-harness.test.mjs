@@ -158,7 +158,7 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
 
   assert.ok(traceText.indexOf('shell screencap -p /sdcard/kf-zns-after-launch.png')
     < traceText.indexOf('shell dumpsys activity activities'), 'launch screenshot must precede first focus assertion');
-  assert.match(traceText, /logcat -d -t 500 --pid 1234/);
+  assert.match(traceText, /logcat -d --pid 1234/);
   assert.match(traceText, /shell screencap -p \/sdcard\/kf-zns-after-failure\.png/);
   assert.match(summaryText, /Classification: `INCONCLUSIVE`/);
   assert.match(summaryText, /Commit: `b{40}`/);

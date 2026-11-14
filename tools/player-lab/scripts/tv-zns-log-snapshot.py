@@ -27,9 +27,9 @@ STATE_PATTERN = re.compile(
     r"ready=([0-4]) paused=(true|false) muted=(true|false) "
     r"volume=(0(?:\.\d+)?|1(?:\.0+)?)"
 )
-APP_LOG_TAG = re.compile(r"\bI\s+KfMkIIGV:(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
-LEGACY_APP_LOG_TAG = re.compile(r"\bI/(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
-URL_PATTERN = re.compile(r"\burl=(https?://[^\s]+)")
+APP_LOG_TAG = re.compile(r"\b[VDIWEF]\s+KfMkIIGV:(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
+LEGACY_APP_LOG_TAG = re.compile(r"\b[VDIWEF]/(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
+URL_PATTERN = re.compile(r"\b(?:url|uri)=(https?://[^\s]+)")
 
 
 def zns_root_url_in(message):
@@ -131,7 +131,10 @@ def capture_logcat():
         return sanitize("", "incomplete")
     try:
         process = subprocess.Popen(
-            ["adb", "logcat", "-d", "-t", "500", "--pid", pid_text[0]],
+            # Read the retained app log from the earlier logcat clear. A
+            # fixed tail count could silently discard the initial navigation
+            # lines while still looking like a complete capture.
+            ["adb", "logcat", "-d", "--pid", pid_text[0]],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
