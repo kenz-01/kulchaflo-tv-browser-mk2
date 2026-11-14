@@ -17301,7 +17301,19 @@ return changed>0;
     }
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
-        return !isLiveMediaSurfaceUrl(url)
+        // Telesistema's official page owns its Dailymotion iframe. Keep its media
+        // in GeckoView; this helper only wakes the publisher-authored lazy frame.
+        return !isLiveMediaSurfaceUrl(url) && !isTelesistemaLivePageUrl(url)
+    }
+
+    private fun isTelesistemaLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https") return false
+        if (uri.port > 0 && uri.port != 443) return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "telesistema11.com.do") return false
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return path == "/en-vivo"
     }
 
     private fun isLiveMediaSurfaceUrl(url: String): Boolean {
