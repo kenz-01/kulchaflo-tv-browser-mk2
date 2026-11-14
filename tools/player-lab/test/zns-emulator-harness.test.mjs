@@ -41,7 +41,9 @@ if [[ "$1" == "logcat" ]]; then
   printf '%s\\n' '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvTabs: tab activated id=abc url=https://znsbahamas.com/ loading=true'
   printf '%s\\n' '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/'
   printf '%s\\n' '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/'
-  printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25'
+  printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=false controls=true'
+  printf '%s\\n' '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns media event=loadedmetadata ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=false controls=true'
+  printf '%s\\n' '11-14 12:00:00.006 1234 1234 I KfMkIIGV:GvMedia: zns autoplay permission type=inaudible requested=other decision=allow'
   printf '%s\\n' '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: private token=must-not-enter-receipt'
   exit 0
 fi
@@ -154,6 +156,14 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
     zns_navigation_failed: 'no',
   });
   assert.deepEqual(receipt.player_state, {ready: 4, paused: false, muted: true, volume: 0.25});
+  assert.equal(receipt.embed_observed, 'yes');
+  assert.equal(receipt.official_frame_observed, 'no');
+  assert.equal(receipt.media_diagnostics.source_present, true);
+  assert.equal(receipt.media_diagnostics.network_state, 2);
+  assert.deepEqual(receipt.media_diagnostics.events, ['loadedmetadata']);
+  assert.deepEqual(receipt.media_diagnostics.autoplay_permission_events, [
+    {type: 'inaudible', requested: 'other', decision: 'allow'},
+  ]);
   assert.doesNotMatch(JSON.stringify(receipt), /1234|GeckoBrowserActivity|android\.launcher|must-not-enter-receipt/);
 
   assert.ok(traceText.indexOf('shell screencap -p /sdcard/kf-zns-after-launch.png')

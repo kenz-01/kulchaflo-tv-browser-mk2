@@ -7,6 +7,11 @@
   });
   const RETRY_DELAYS_MS = Object.freeze([300, 900, 2000, 4000, 7000, 11000, 18000]);
   const PROGRESS_SAMPLE_MS = 4000;
+  const MAX_PROGRESS_SAMPLES = 3;
+  const MEDIA_EVENTS = Object.freeze([
+    "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
+    "pause", "waiting", "stalled", "error", "abort", "emptied",
+  ]);
 
   function route(raw) {
     try {
@@ -114,37 +119,94 @@
 
   if (ownRoute !== "embed" || window.top === window || route(document.referrer) !== "site") return;
   const observed = new WeakSet();
-  const progressSampled = new WeakSet();
+  const progressSampleCount = new WeakMap();
+  const progressPending = new WeakSet();
+  const progressReported = new WeakSet();
+  const reportedMediaEvents = new WeakMap();
+  const mediaEventNames = new Set(MEDIA_EVENTS);
+  const mediaSnapshot = (video) => {
+    const boundedInt = (value, min, max, fallback) => {
+      const number = Number(value);
+      return Number.isInteger(number) ? Math.max(min, Math.min(max, number)) : fallback;
+    };
+    let volume = -1;
+    let networkState = -1;
+    let mediaErrorCode = -1;
+    let sourcePresent = false;
+    let rendered = "unknown";
+    try {
+      const value = Number(video.volume);
+      if (Number.isFinite(value)) volume = Math.max(0, Math.min(1, value));
+    } catch (_) {}
+    try { networkState = boundedInt(video.networkState, 0, 3, -1); } catch (_) {}
+    try { mediaErrorCode = boundedInt(video.error?.code, 1, 4, video.error ? -1 : 0); } catch (_) {}
+    try {
+      sourcePresent = Boolean(video.currentSrc || video.getAttribute("src") || video.querySelector("source[src]"));
+    } catch (_) {}
+    try {
+      const style = window.getComputedStyle(video);
+      rendered = style && style.display !== "none" &&
+        style.visibility !== "hidden" && style.visibility !== "collapse" &&
+        Number(style.opacity || 1) >= 0.05 ? "yes" : "no";
+      for (let parent = video.parentElement; rendered === "yes" && parent; parent = parent.parentElement) {
+        const parentStyle = window.getComputedStyle(parent);
+        if (!parentStyle || parentStyle.display === "none" ||
+            parentStyle.visibility === "hidden" || parentStyle.visibility === "collapse" ||
+            Number(parentStyle.opacity || 1) < 0.05) rendered = "no";
+      }
+    } catch (_) {}
+    return {
+      readyState: boundedInt(video.readyState, 0, 4, 0),
+      paused: Boolean(video.paused),
+      muted: Boolean(video.muted),
+      volume,
+      networkState,
+      mediaErrorCode,
+      sourcePresent,
+      rendered,
+      autoplay: Boolean(video.autoplay),
+      controls: Boolean(video.controls),
+    };
+  };
+  const reportMediaEvent = (video, event) => {
+    if (!mediaEventNames.has(event)) return;
+    let reported = reportedMediaEvents.get(video);
+    if (!reported) {
+      reported = new Set();
+      reportedMediaEvents.set(video, reported);
+    }
+    if (reported.has(event)) return;
+    reported.add(event);
+    report("zns-media-event", { event, ...mediaSnapshot(video) });
+  };
   const attempt = () => {
     const video = oneVisible(Array.from(document.querySelectorAll("video")).slice(0, 8));
     if (!video) return;
     if (!observed.has(video)) {
       observed.add(video);
-      const playerState = () => {
-        let volume = -1;
-        try {
-          const value = Number(video.volume);
-          if (Number.isFinite(value)) volume = Math.max(0, Math.min(1, value));
-        } catch (_) {}
-        return {
-          readyState: Math.max(0, Math.min(4, Number(video.readyState) || 0)),
-          paused: Boolean(video.paused),
-          muted: Boolean(video.muted),
-          volume,
-        };
-      };
-      report("zns-embedded-observed", playerState());
-      video.addEventListener("playing", () => report("zns-embedded-playing", playerState()));
+      report("zns-embedded-observed", mediaSnapshot(video));
+      video.addEventListener("playing", () => {
+        report("zns-embedded-playing", mediaSnapshot(video));
+        reportMediaEvent(video, "playing");
+      });
+      MEDIA_EVENTS.filter((event) => event !== "playing").forEach((event) => {
+        video.addEventListener(event, () => reportMediaEvent(video, event));
+      });
       video.addEventListener("timeupdate", () => {
-        if (progressSampled.has(video)) return;
+        if (progressReported.has(video) || progressPending.has(video)) return;
+        const sampleCount = progressSampleCount.get(video) || 0;
+        if (sampleCount >= MAX_PROGRESS_SAMPLES) return;
         let startTime;
         try { startTime = Number(video.currentTime); } catch (_) { return; }
         if (!Number.isFinite(startTime) || startTime < 0) return;
-        progressSampled.add(video);
+        progressSampleCount.set(video, sampleCount + 1);
+        progressPending.add(video);
         setTimeout(() => {
+          progressPending.delete(video);
           let endTime;
           try { endTime = Number(video.currentTime); } catch (_) { return; }
           if (Number.isFinite(endTime) && endTime > startTime + 0.25) {
+            progressReported.add(video);
             report("zns-video-time-advanced", { sampleWindowMs: PROGRESS_SAMPLE_MS });
           }
         }, PROGRESS_SAMPLE_MS);

@@ -21,11 +21,24 @@ PHASES = (
     "zns-video-time-advanced",
 )
 PHASE_SET = set(PHASES)
+MEDIA_EVENTS = (
+    "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
+    "pause", "waiting", "stalled", "error", "abort", "emptied",
+)
 PHASE_PATTERN = re.compile(r"zns helper phase=([a-z0-9-]+) mode=browser-first")
 STATE_PATTERN = re.compile(
     r"zns helper phase=zns-embedded-observed mode=browser-first "
     r"ready=([0-4]) paused=(true|false) muted=(true|false) "
     r"volume=(0(?:\.\d+)?|1(?:\.0+)?)"
+)
+MEDIA_STATE_PATTERN = re.compile(
+    r"\bnetworkState=([0-3]) mediaError=(-1|[0-4]) sourcePresent=(true|false) "
+    r"rendered=(yes|no|unknown) autoplay=(true|false) controls=(true|false)"
+)
+MEDIA_EVENT_PATTERN = re.compile(r"\bzns media event=([a-z]+)\b")
+AUTOPLAY_PERMISSION_PATTERN = re.compile(
+    r"\bzns autoplay permission type=(audible|inaudible) "
+    r"requested=(allow|deny|other) decision=(allow|deny|other)\b"
 )
 APP_LOG_TAG = re.compile(r"\b[VDIWEF]\s+KfMkIIGV:(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
 LEGACY_APP_LOG_TAG = re.compile(r"\b[VDIWEF]/(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
@@ -55,6 +68,9 @@ def zns_root_url_in(message):
 def sanitize(text, capture_status="complete"):
     phases = []
     player_state = None
+    media_state = None
+    media_events = set()
+    autoplay_permissions = []
     observed = set()
     for line in text.splitlines():
         phase_match = PHASE_PATTERN.search(line)
@@ -69,6 +85,27 @@ def sanitize(text, capture_status="complete"):
                 "muted": state_match.group(3) == "true",
                 "volume": float(state_match.group(4)),
             }
+        media_match = MEDIA_STATE_PATTERN.search(line)
+        if media_match:
+            network_state, error_code, source_present, rendered, autoplay, controls = media_match.groups()
+            media_error_code = int(error_code)
+            media_state = {
+                "network_state": int(network_state),
+                "media_error_code": media_error_code if media_error_code in (1, 2, 3, 4) else None,
+                "error_observed": "yes" if media_error_code in (1, 2, 3, 4) else "no" if media_error_code == 0 else "unknown",
+                "source_present": source_present == "true",
+                "rendered": rendered,
+                "autoplay": autoplay == "true",
+                "controls": controls == "true",
+            }
+        event_match = MEDIA_EVENT_PATTERN.search(line)
+        if event_match and event_match.group(1) in MEDIA_EVENTS:
+            media_events.add(event_match.group(1))
+        permission_match = AUTOPLAY_PERMISSION_PATTERN.search(line)
+        if permission_match:
+            permission = dict(zip(("type", "requested", "decision"), permission_match.groups()))
+            if permission not in autoplay_permissions and len(autoplay_permissions) < 8:
+                autoplay_permissions.append(permission)
         tag_match = APP_LOG_TAG.search(line) or LEGACY_APP_LOG_TAG.search(line)
         if not tag_match:
             continue
@@ -94,6 +131,23 @@ def sanitize(text, capture_status="complete"):
             if "load error " in message and zns_root_url_in(message):
                 observed.add("zns_navigation_failed")
     phases = [phase for phase in PHASES if phase in phases]
+    capture_complete = capture_status == "complete"
+    media_observed = "yes" if media_state is not None else "no" if capture_complete else "unknown"
+    events_observed = "yes" if media_events else "no" if media_state is not None and capture_complete else "unknown"
+    media_diagnostics = {
+        "observed": media_observed,
+        "network_state": media_state["network_state"] if media_state else None,
+        "media_error_code": media_state["media_error_code"] if media_state else None,
+        "error_observed": media_state["error_observed"] if media_state else "unknown",
+        "source_present": media_state["source_present"] if media_state else None,
+        "rendered": media_state["rendered"] if media_state else "unknown",
+        "autoplay": media_state["autoplay"] if media_state else None,
+        "controls": media_state["controls"] if media_state else None,
+        "events_observed": events_observed,
+        "events": [event for event in MEDIA_EVENTS if event in media_events],
+        "autoplay_permission_observed": "yes" if autoplay_permissions else "no" if media_state is not None and capture_complete else "unknown",
+        "autoplay_permission_events": autoplay_permissions,
+    }
     launch_observations = {
         name: ("yes" if name in observed else "no")
         if capture_status == "complete" else ("yes" if name in observed else "unknown")
@@ -109,7 +163,10 @@ def sanitize(text, capture_status="complete"):
     return {
         "capture_status": capture_status if capture_status in ("complete", "truncated", "incomplete") else "incomplete",
         "observation_phases": phases,
+        "official_frame_observed": "yes" if "zns-outer-player-first" in phases else "no" if capture_complete else "unknown",
+        "embed_observed": "yes" if "zns-embedded-observed" in phases else "no" if capture_complete else "unknown",
         "player_state": player_state,
+        "media_diagnostics": media_diagnostics,
         "video_time_advanced_observed": "yes" if "zns-video-time-advanced" in phases else "no",
         "launch_observations": launch_observations,
     }

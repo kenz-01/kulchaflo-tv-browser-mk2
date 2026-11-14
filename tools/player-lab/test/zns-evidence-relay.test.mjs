@@ -75,12 +75,14 @@ function sanitize(receipt, extraEnv = {}) {
 }
 
 test('relay recomputes a bounded report and drops arbitrary strings, paths, phases, and invalid player values', () => {
-  const result = sanitize(fixtureReceipt());
+  const result = sanitize(fixtureReceipt({official_frame_observed: [], embed_observed: {}}));
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.classification, 'INCONCLUSIVE');
   assert.equal(report.classification_consistent, false);
   assert.equal(report.source_observed, false);
+  assert.equal(report.official_frame_observed, 'no');
+  assert.equal(report.embed_observed, 'no');
   assert.equal(report.failure_stage, 'required_app_state');
   assert.equal(report.app_state.after_launch.window_focus, 'unknown');
   assert.equal(report.app_state_diagnostics.after_launch.window_focus, 'entry_missing');
@@ -113,6 +115,42 @@ test('relay bounds focus diagnostics and rejects arbitrary service output', () =
   assert.equal(report.app_state_diagnostics.after_launch.input_focus, 'unavailable');
   assert.equal(report.app_state_diagnostics.after_launch.focus_source, 'unknown');
   assert.doesNotMatch(result.stdout, /secret|raw InputDispatcher|window name/);
+});
+
+test('relay independently allowlists media and autoplay permission observations', () => {
+  const result = sanitize(fixtureReceipt({
+    observation_phases: ['zns-outer-player-first', 'zns-embedded-observed'],
+    official_frame_observed: 'yes',
+    embed_observed: 'yes',
+    media_diagnostics: {
+      observed: 'yes',
+      network_state: 3,
+      media_error_code: 4,
+      error_observed: 'yes',
+      source_present: true,
+      rendered: 'yes',
+      autoplay: true,
+      controls: false,
+      events_observed: 'yes',
+      events: ['waiting', 'error', 'error', 'private token=secret'],
+      autoplay_permission_observed: 'yes',
+      autoplay_permission_events: [
+        {type: 'inaudible', requested: 'other', decision: 'allow', uri: 'https://private.invalid/?token=secret'},
+        {type: 'untrusted', requested: 'allow', decision: 'allow'},
+      ],
+    },
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.official_frame_observed, 'yes');
+  assert.equal(report.embed_observed, 'yes');
+  assert.equal(report.media_diagnostics.network_state, 3);
+  assert.equal(report.media_diagnostics.media_error_code, 4);
+  assert.deepEqual(report.media_diagnostics.events, ['waiting', 'error']);
+  assert.deepEqual(report.media_diagnostics.autoplay_permission_events, [
+    {type: 'inaudible', requested: 'other', decision: 'allow'},
+  ]);
+  assert.doesNotMatch(result.stdout, /private\.invalid|secret|untrusted/);
 });
 
 test('relay keeps launch observations allowlisted and passive focus continuation inconclusive', () => {

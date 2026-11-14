@@ -39,6 +39,8 @@ test('classifies actual bounded current-time advancement without claiming live v
   assert.equal(receipt.commit, 'a'.repeat(40));
   assert.equal(receipt.selected_profile, 'zns');
   assert.equal(receipt.source.observed, true);
+  assert.equal(receipt.official_frame_observed, 'yes');
+  assert.equal(receipt.embed_observed, 'yes');
   assert.equal(receipt.player_state.muted, true);
   assert.equal(receipt.player_state.volume, 0.35);
   assert.deepEqual(receipt.screenshots.after_dpad, {file: 'zns-after-dpad.png', status: 'captured'});
@@ -214,6 +216,39 @@ test('receipt whitelists log phases and never copies arbitrary diagnostic string
   assert.equal(receipt.classification, 'INCONCLUSIVE');
   assert.deepEqual(receipt.observation_phases, []);
   assert.doesNotMatch(JSON.stringify(receipt), /private|secret/);
+});
+
+test('media diagnostics are bounded and do not change no-progression classification', () => {
+  const receipt = classifyZnsFeedback(completeEvidence({
+    observation_phases: ['zns-outer-player-first', 'zns-embedded-observed'],
+    player_state: {ready: '0', paused: 'true', muted: 'false', volume: '1'},
+    media_diagnostics: {
+      observed: 'yes',
+      network_state: 3,
+      media_error_code: 4,
+      error_observed: 'yes',
+      source_present: false,
+      rendered: 'no',
+      autoplay: true,
+      controls: false,
+      events_observed: 'yes',
+      events: ['waiting', 'error', 'error', 'attacker token=secret'],
+      autoplay_permission_observed: 'yes',
+      autoplay_permission_events: [
+        {type: 'audible', requested: 'other', decision: 'allow', uri: 'https://private.invalid/?token=secret'},
+        {type: 'attacker', requested: 'allow', decision: 'allow'},
+      ],
+    },
+  }));
+
+  assert.equal(receipt.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
+  assert.deepEqual(receipt.media_diagnostics.events, ['waiting', 'error']);
+  assert.deepEqual(receipt.media_diagnostics.autoplay_permission_events, [
+    {type: 'audible', requested: 'other', decision: 'allow'},
+  ]);
+  assert.equal(receipt.media_diagnostics.source_present, false);
+  assert.equal(receipt.media_diagnostics.media_error_code, 4);
+  assert.doesNotMatch(JSON.stringify(receipt), /attacker|private\.invalid|secret/);
 });
 
 test('passive continuation with withheld remote keys cannot be reported as completed playback', () => {
