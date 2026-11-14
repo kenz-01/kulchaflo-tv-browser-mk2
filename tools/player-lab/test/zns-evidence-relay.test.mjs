@@ -48,6 +48,8 @@ function fixtureReceipt(overrides = {}) {
       after_failure: {file: 'bad', status: 'captured'},
     },
     actions: {dpad_down_up_dispatched: 'no', back_dispatched: 'no'},
+    launch_observations: {},
+    diagnostic_continuation: {mode: 'not_used', additional_passive_observation: 'no', remote_keys_withheld: 'no'},
     log_capture: 'complete',
     observation_phases: ['untrusted phase token=secret'],
     player_state: {ready: 9, paused: 'no', muted: 'no', volume: 3},
@@ -111,6 +113,36 @@ test('relay bounds focus diagnostics and rejects arbitrary service output', () =
   assert.equal(report.app_state_diagnostics.after_launch.input_focus, 'unavailable');
   assert.equal(report.app_state_diagnostics.after_launch.focus_source, 'unknown');
   assert.doesNotMatch(result.stdout, /secret|raw InputDispatcher|window name/);
+});
+
+test('relay keeps launch observations allowlisted and passive focus continuation inconclusive', () => {
+  const result = sanitize(fixtureReceipt({
+    classification: 'INCONCLUSIVE',
+    launch_observations: {
+      browser_session_configured: 'yes',
+      browser_view_attached: 'yes',
+      zns_navigation_requested: 'yes',
+      zns_navigation_started: 'no',
+      zns_navigation_completed: 'secret-token',
+      zns_navigation_failed: 'no',
+      raw_url: 'https://private.invalid/?token=secret',
+    },
+    diagnostic_continuation: {
+      mode: 'passive_focus_unknown',
+      additional_passive_observation: 'yes',
+      remote_keys_withheld: 'yes',
+      reason: 'untrusted arbitrary details',
+    },
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.launch_observations.browser_session_configured, 'yes');
+  assert.equal(report.launch_observations.zns_navigation_started, 'no');
+  assert.equal(report.launch_observations.zns_navigation_completed, 'unknown');
+  assert.equal(report.diagnostic_continuation.mode, 'passive_focus_unknown');
+  assert.equal(report.classification, 'INCONCLUSIVE');
+  assert.equal(report.classification_consistent, true);
+  assert.doesNotMatch(result.stdout, /private\.invalid|secret|untrusted|raw_url/);
 });
 
 test('relay rejects wrong profile, SHA, and unfinalized receipts', () => {

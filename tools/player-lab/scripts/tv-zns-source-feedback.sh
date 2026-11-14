@@ -18,6 +18,11 @@ export TV_EMULATOR_BOOT=no TV_APK_INSTALL=unknown TV_APP_LAUNCH=unknown
 export TV_LAUNCH_STATUS=unknown TV_FAILURE_STAGE=
 export TV_LOG_CAPTURE=incomplete TV_ZNS_PHASES= TV_TIME_ADVANCED=no
 export TV_PLAYER_READY=unknown TV_PLAYER_PAUSED=unknown TV_PLAYER_MUTED=unknown TV_PLAYER_VOLUME=unknown
+export TV_BROWSER_SESSION_CONFIGURED=unknown TV_BROWSER_VIEW_ATTACHED=unknown
+export TV_ZNS_NAVIGATION_REQUESTED=unknown TV_ZNS_NAVIGATION_STARTED=unknown
+export TV_ZNS_NAVIGATION_COMPLETED=unknown TV_ZNS_NAVIGATION_FAILED=unknown
+export TV_CONTINUATION_MODE=not_used TV_CONTINUATION_WAIT=no TV_CONTINUATION_KEYS_WITHHELD=no
+export TV_FAILURE_CAPTURED=no
 for checkpoint in LAUNCH DPAD BACK FAILURE; do
   printf -v "TV_${checkpoint}_PROCESS" '%s' unknown
   printf -v "TV_${checkpoint}_FOREGROUND" '%s' unknown
@@ -75,7 +80,7 @@ try:
  details=[diag.get("pidof","unavailable"),diag.get("activity_foreground","command_unavailable"),diag.get("window_focus","command_unavailable"),diag.get("window_manager_focus","command_unavailable"),diag.get("input_focus","command_unavailable")]
  source=diag.get("focus_source","unknown")
  statuses={"yes","no","unknown"}
- allowed={"target_process","process_absent","unavailable","unparseable","output_truncated","too_many_entries","target_component","other_component","input_target_window","input_other_window","focus_signal_conflict","entry_missing","entry_unparsed","ambiguous_components","command_unavailable"}
+ allowed={"target_process","process_absent","unavailable","unparseable","output_truncated","too_many_entries","target_component","other_component","input_target_window","input_other_window","focus_signal_conflict","entry_missing","entry_unparsed","ambiguous_components","command_timeout","command_unavailable"}
  sources={"window_manager","input_dispatcher","both","conflict","unknown"}
  values=[value if isinstance(value,str) and value in statuses else "unknown" for value in state]
  values += [value if isinstance(value,str) and value in allowed else "unavailable" for value in details]
@@ -128,13 +133,19 @@ try:
  volume=volume if re.fullmatch(r"(?:0(?:\.[0-9]+)?|1(?:\.0+)?)",volume) else "unknown"
  advanced=d.get("video_time_advanced_observed","no")
  advanced=advanced if advanced in {"yes","no"} else "no"
- values=[capture,",".join(phases) or "none",ready,boolean(state.get("paused")),boolean(state.get("muted")),volume,advanced]
+ launch=d.get("launch_observations") or {}
+ keys=("browser_session_configured","browser_view_attached","zns_navigation_requested","zns_navigation_started","zns_navigation_completed","zns_navigation_failed")
+ launch_values=[launch.get(key,"unknown") for key in keys]
+ launch_values=[value if value in {"yes","no","unknown"} else "unknown" for value in launch_values]
+ values=[capture,",".join(phases) or "none",ready,boolean(state.get("paused")),boolean(state.get("muted")),volume,advanced,*launch_values]
  allowed=set(values)
  print("\t".join(value if value in allowed else "unknown" for value in values))
 except Exception:
- print("incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno")
-' 2>/dev/null || printf 'incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno')
-  IFS=$'\t' read -r TV_LOG_CAPTURE TV_ZNS_PHASES TV_PLAYER_READY TV_PLAYER_PAUSED TV_PLAYER_MUTED TV_PLAYER_VOLUME TV_TIME_ADVANCED <<< "$decoded"
+ print("incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown")
+' 2>/dev/null || printf 'incomplete\tnone\tunknown\tunknown\tunknown\tunknown\tno\tunknown\tunknown\tunknown\tunknown\tunknown\tunknown')
+  IFS=$'\t' read -r TV_LOG_CAPTURE TV_ZNS_PHASES TV_PLAYER_READY TV_PLAYER_PAUSED TV_PLAYER_MUTED TV_PLAYER_VOLUME TV_TIME_ADVANCED \
+    TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED \
+    TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED <<< "$decoded"
   TV_LOG_CAPTURE=${TV_LOG_CAPTURE:-incomplete}
   [[ "$TV_ZNS_PHASES" == none ]] && TV_ZNS_PHASES=
   TV_PLAYER_READY=${TV_PLAYER_READY:-unknown}
@@ -142,7 +153,12 @@ except Exception:
   TV_PLAYER_MUTED=${TV_PLAYER_MUTED:-unknown}
   TV_PLAYER_VOLUME=${TV_PLAYER_VOLUME:-unknown}
   TV_TIME_ADVANCED=${TV_TIME_ADVANCED:-no}
+  for name in TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED; do
+    [[ "${!name:-}" =~ ^(yes|no|unknown)$ ]] || printf -v "$name" '%s' unknown
+  done
   export TV_LOG_CAPTURE TV_ZNS_PHASES TV_PLAYER_READY TV_PLAYER_PAUSED TV_PLAYER_MUTED TV_PLAYER_VOLUME TV_TIME_ADVANCED
+  export TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED
+  export TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED
 }
 
 finish() {
@@ -151,7 +167,7 @@ finish() {
   set +e
   if (( original_status != 0 )); then
     export TV_FAILURE_STAGE="$STAGE"
-    if [[ "$TV_EMULATOR_BOOT" == yes ]]; then
+    if [[ "$TV_EMULATOR_BOOT" == yes && "$TV_FAILURE_CAPTURED" != yes ]]; then
       capture_app_state FAILURE
       capture_screenshot failure
     fi
@@ -220,7 +236,25 @@ STAGE=required_app_state
 # Capture the earliest post-navigation frame before evaluating process/focus state.
 sleep 25
 capture_screenshot launch
-check_app_state LAUNCH || { echo "Required app process/foreground/focus check failed after launch" >&2; exit 1; }
+if ! check_app_state LAUNCH; then
+  if [[ "$TV_LAUNCH_PROCESS" == yes && "$TV_LAUNCH_FOREGROUND" == yes && "$TV_LAUNCH_FOCUS" == unknown ]]; then
+    # Missing focus evidence is not evidence of lost focus. Collect one extra
+    # passive observation, withhold remote keys, and retain an inconclusive result.
+    TV_CONTINUATION_MODE=passive_focus_unknown
+    STAGE=diagnostic_continuation
+    sleep 8
+    TV_CONTINUATION_WAIT=yes
+    TV_CONTINUATION_KEYS_WITHHELD=yes
+    capture_screenshot failure
+    capture_app_state FAILURE
+    TV_FAILURE_CAPTURED=yes
+    export TV_CONTINUATION_MODE TV_CONTINUATION_WAIT TV_CONTINUATION_KEYS_WITHHELD TV_FAILURE_CAPTURED
+    echo "Focus is unknown; captured one passive follow-up and withheld remote keys" >&2
+    exit 1
+  fi
+  echo "Required app process/foreground/focus check failed after launch" >&2
+  exit 1
+fi
 
 # Focus movement is not inferred from dispatched keys; process/activity/window are checked afterward.
 STAGE=interaction_capture

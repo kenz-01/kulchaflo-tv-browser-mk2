@@ -46,6 +46,7 @@ DIAGNOSTICS = {
     "target_component", "other_component", "entry_missing", "entry_unparsed",
     "ambiguous_components", "too_many_entries", "command_unavailable",
     "input_target_window", "input_other_window", "focus_signal_conflict",
+    "command_timeout",
 }
 FOCUS_SOURCES = {"window_manager", "input_dispatcher", "both", "conflict", "unknown"}
 CLASSIFICATIONS = {
@@ -54,12 +55,16 @@ CLASSIFICATIONS = {
 }
 FAILURE_STAGES = {
     "preflight", "workflow_setup", "kvm_preflight", "apk_assembly", "emulator_boot",
-    "apk_install", "launch", "required_app_state", "interaction_capture",
+    "apk_install", "launch", "required_app_state", "diagnostic_continuation", "interaction_capture",
     "evidence_capture", "log_capture", "emulator_step", "complete",
 }
 INFRA_STAGES = {
     "preflight", "workflow_setup", "kvm_preflight", "apk_assembly", "emulator_boot", "apk_install", "interaction_capture",
 }
+LAUNCH_OBSERVATIONS = (
+    "browser_session_configured", "browser_view_attached", "zns_navigation_requested",
+    "zns_navigation_started", "zns_navigation_completed", "zns_navigation_failed",
+)
 
 
 class RelayError(Exception):
@@ -148,6 +153,7 @@ def classify_sanitized(report):
         and report["screenshots"]["after_back"] == "captured"
         and report["actions"]["dpad_down_up_dispatched"] == "yes"
         and report["actions"]["back_dispatched"] == "yes"
+        and report["diagnostic_continuation"]["mode"] != "passive_focus_unknown"
         and report["log_capture"] == "complete"
     )
     if not base_complete or not report["phases_valid"]:
@@ -219,6 +225,16 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
     failure_state = safe_checkpoint(receipt.get("failure_state"))
     log_capture = receipt.get("log_capture")
     log_capture = log_capture if isinstance(log_capture, str) and log_capture in {"complete", "incomplete", "truncated"} else "incomplete"
+    launch_raw = receipt.get("launch_observations") if isinstance(receipt.get("launch_observations"), dict) else {}
+    launch_observations = {name: status(launch_raw.get(name)) for name in LAUNCH_OBSERVATIONS}
+    continuation_raw = receipt.get("diagnostic_continuation")
+    continuation_raw = continuation_raw if isinstance(continuation_raw, dict) else {}
+    continuation_mode = continuation_raw.get("mode")
+    continuation = {
+        "mode": continuation_mode if continuation_mode in {"not_used", "passive_focus_unknown"} else "not_used",
+        "additional_passive_observation": status(continuation_raw.get("additional_passive_observation")),
+        "remote_keys_withheld": status(continuation_raw.get("remote_keys_withheld")),
+    }
 
     report = {
         "schema_version": 1,
@@ -230,6 +246,8 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
         "source_observed": any(phase in phases for phase in ("zns-outer-player-first", "zns-embedded-observed")),
         "infrastructure": infra,
         "launch_status": receipt.get("launch_status") if isinstance(receipt.get("launch_status"), str) and receipt.get("launch_status") in {"confirmed", "failed", "unconfirmed"} else "unknown",
+        "launch_observations": launch_observations,
+        "diagnostic_continuation": continuation,
         "app_state": checkpoints,
         "app_state_diagnostics": app_diagnostics,
         "failure_state": failure_state,

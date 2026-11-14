@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {resolve} from 'node:path';
+import {chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
 
 const scripts = resolve(process.cwd(), 'scripts');
 const stateTool = resolve(scripts, 'tv-emulator-state.py');
@@ -28,6 +30,36 @@ function focusedWindow(packageName = 'com.kulchaflo.tv.mk2.gv', displayId = 0) {
     ].join('\n'),
     returncode: 0,
   };
+}
+
+function captureWithStreamedInput(inputDump) {
+  const root = mkdtempSync(join(tmpdir(), 'kf-input-dump-'));
+  const bin = join(root, 'bin');
+  const fixture = join(root, 'input-dump.txt');
+  mkdirSync(bin);
+  writeFileSync(fixture, inputDump);
+  const adb = `#!/usr/bin/env bash
+set -eu
+case "$*" in
+  "shell pidof com.kulchaflo.tv.mk2.gv") printf '412\\n' ;;
+  "shell dumpsys activity activities") printf '%s\\n' 'topResumedActivity=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity t5}' ;;
+  "shell dumpsys window windows") printf '%s\\n' 'mCurrentFocus=Window{b com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}' ;;
+  "shell dumpsys input") cat "$TV_INPUT_FIXTURE" ;;
+esac
+`;
+  writeFileSync(join(bin, 'adb'), adb);
+  chmodSync(join(bin, 'adb'), 0o755);
+  const result = spawnSync('python3', [stateTool, 'capture'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      TV_INPUT_FIXTURE: fixture,
+    },
+  });
+  rmSync(root, {recursive: true, force: true});
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
 }
 
 test('Android state reports only redacted target/other/unknown parser outcomes', () => {
@@ -166,7 +198,7 @@ test('conflicting, malformed, unavailable, and non-TV-display input evidence sta
   const malformed = parseState({input: {stdout: [
     'Input Dispatcher State:', '  FocusedWindows:', "    displayId=0, name='secret-window-without-component'",
   ].join('\n'), returncode: 0}});
-  const unavailable = parseState({input: {error: 'timeout'}});
+  const unavailable = parseState({input: {error: 'unavailable'}});
   const otherDisplay = parseState({input: focusedWindow(packageName, 1)});
   const truncatedOther = parseState({input: {...focusedWindow('com.android.launcher'), truncated: true}});
 
@@ -204,6 +236,79 @@ test('InputDispatcher with no FocusedWindows header fails closed without parser 
   assert.equal(independentWindow.diagnostics.focus_source, 'window_manager');
 });
 
+test('InputDispatcher finds a complete late section while streaming without retaining the dump', () => {
+  const result = captureWithStreamedInput([
+    'Input Dispatcher State:',
+    'x'.repeat(100_000),
+    '  FocusedWindows:',
+    `    displayId=0, name='Window{abc u0 ${packageName}/.app.GeckoBrowserActivity}', token=private-token`,
+    '  FocusedApplications:',
+    '    displayId=0, name=private-application',
+  ].join('\n'));
+  assert.equal(result.window_focus, 'yes');
+  assert.equal(result.diagnostics.input_focus, 'input_target_window');
+  assert.equal(result.diagnostics.focus_source, 'both');
+  assert.doesNotMatch(JSON.stringify(result), /private-token|private-application|x{100}/);
+
+  const unclosed = captureWithStreamedInput([
+    'Input Dispatcher State:',
+    '  FocusedWindows:',
+    `    displayId=0, name='Window{abc u0 ${packageName}/.app.GeckoBrowserActivity}'`,
+  ].join('\n'));
+  assert.equal(unclosed.window_focus, 'yes');
+  assert.equal(unclosed.diagnostics.input_focus, 'output_truncated');
+  assert.equal(unclosed.diagnostics.focus_source, 'window_manager');
+});
+
+test('InputDispatcher incomplete, duplicate, malformed, unavailable, and timed-out evidence is unknown', () => {
+  const target = focusedWindow();
+  const incomplete = parseState({input: {...target, section_complete: false}});
+  const duplicateSection = parseState({input: {...target, section_count: 2}});
+  const duplicateDisplay = parseState({input: {
+    stdout: [
+      'Input Dispatcher State:', '  FocusedWindows:',
+      `    displayId=0, name='Window{abc ${packageName}/.app.GeckoBrowserActivity}'`,
+      `    displayId=0, name='Window{def ${packageName}/.app.GeckoBrowserActivity}'`,
+      '  FocusedApplications:',
+    ].join('\n'), returncode: 0,
+  }});
+  const longMalformed = parseState({input: {
+    stdout: `Input Dispatcher State:\n  FocusedWindows:\n    displayId=0, name='${'x'.repeat(9000)}`, returncode: 0,
+  }});
+  const unavailable = parseState({input: {error: 'unavailable'}});
+  const timeout = parseState({input: {error: 'timeout'}});
+  for (const result of [incomplete, duplicateSection, duplicateDisplay, longMalformed, unavailable, timeout]) {
+    assert.equal(result.window_focus, 'unknown');
+  }
+  assert.equal(incomplete.diagnostics.input_focus, 'output_truncated');
+  assert.equal(duplicateSection.diagnostics.input_focus, 'ambiguous_components');
+  assert.equal(duplicateDisplay.diagnostics.input_focus, 'ambiguous_components');
+  assert.equal(longMalformed.diagnostics.input_focus, 'entry_unparsed');
+  assert.equal(unavailable.diagnostics.input_focus, 'command_unavailable');
+  assert.equal(timeout.diagnostics.input_focus, 'command_timeout');
+  assert.doesNotMatch(JSON.stringify(longMalformed), /x{100}/);
+});
+
+test('streamed InputDispatcher timeout terminates the command and preserves an unknown result', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kf-input-timeout-'));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const adb = join(bin, 'adb');
+  writeFileSync(adb, '#!/bin/sh\nexec sleep 5\n');
+  chmodSync(adb, 0o755);
+  const probe = 'import json,runpy,sys; m=runpy.run_path(sys.argv[1]); c=m["run_input_dispatcher"](timeout=0.1); print(json.dumps(m["parse_capture"]({"input": c})))';
+  const result = spawnSync('python3', ['-c', probe, stateTool], {
+    encoding: 'utf8',
+    env: {...process.env, PATH: `${bin}:${process.env.PATH}`},
+    timeout: 3000,
+  });
+  rmSync(root, {recursive: true, force: true});
+  assert.equal(result.status, 0, result.stderr);
+  const state = JSON.parse(result.stdout);
+  assert.equal(state.window_focus, 'unknown');
+  assert.equal(state.diagnostics.input_focus, 'command_timeout');
+});
+
 test('truncated InputDispatcher dumps cannot establish focus from a retained prefix', () => {
   const target = focusedWindow();
   const other = focusedWindow('com.android.launcher');
@@ -235,10 +340,14 @@ test('truncated InputDispatcher dumps cannot establish focus from a retained pre
 
 test('log snapshot retains only bounded allowlisted phases and player scalars', () => {
   const input = [
-    'I/GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',
-    'I/GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25',
-    'I/GvMedia: zns helper phase=zns-video-time-advanced mode=browser-first ready=4 paused=false muted=true volume=0.25',
-    'I/GvMedia: private token=never-copy https://example.invalid/?session=secret',
+    '11-14 12:00:00.000 1234 1234 I KfMkIIGV:GvTabs: session configured tabId=abc url=https://znsbahamas.com/',
+    '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvTabs: tab activated id=abc url=https://znsbahamas.com/',
+    '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/?session=secret',
+    '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/',
+    '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',
+    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25',
+    '11-14 12:00:00.006 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-video-time-advanced mode=browser-first ready=4 paused=false muted=true volume=0.25',
+    '11-14 12:00:00.007 1234 1234 I KfMkIIGV:GvMedia: private token=never-copy https://example.invalid/?session=secret',
   ].join('\n');
   const result = spawnSync('python3', [logTool, '--parse'], {input, encoding: 'utf8'});
   assert.equal(result.status, 0, result.stderr);
@@ -249,6 +358,14 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   ]);
   assert.deepEqual(report.player_state, {ready: 4, paused: false, muted: true, volume: 0.25});
   assert.equal(report.video_time_advanced_observed, 'yes');
+  assert.deepEqual(report.launch_observations, {
+    browser_session_configured: 'yes',
+    browser_view_attached: 'yes',
+    zns_navigation_requested: 'yes',
+    zns_navigation_started: 'yes',
+    zns_navigation_completed: 'yes',
+    zns_navigation_failed: 'no',
+  });
   assert.doesNotMatch(result.stdout, /private|secret|example\.invalid/);
 
   const oversized = spawnSync('python3', [logTool, '--parse'], {
@@ -257,4 +374,48 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   });
   assert.equal(JSON.parse(oversized.stdout).capture_status, 'truncated');
   assert.doesNotMatch(oversized.stdout, /hidden/);
+});
+
+test('ZNS navigation failures reported with GeckoView uri fields are detected without retaining URLs', () => {
+  const input = [
+    '11-14 12:00:00.000 1234 1234 E KfMkIIGV:GvNav: load error tabId=abc uri=https://znsbahamas.com/?session=secret category=3 code=-11',
+    '11-14 12:00:00.001 1234 1234 E KfMkIIGV:GvNav: load error tabId=abc uri=https://other.invalid/ category=3 code=-11',
+    '11-14 12:00:00.002 1234 1234 E/GvNav: load error tabId=abc uri=https://znsbahamas.com/private category=3 code=-11',
+  ].join('\n');
+  const result = spawnSync('python3', [logTool, '--parse'], {input, encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.launch_observations.zns_navigation_failed, 'yes');
+  assert.doesNotMatch(result.stdout, /znsbahamas|other\.invalid|secret/);
+});
+
+test('log capture keeps navigation evidence older than a fixed 500-line tail', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kf-log-tail-'));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const adb = join(bin, 'adb');
+  writeFileSync(adb, `#!/usr/bin/env bash
+set -eu
+case "$*" in
+  "shell pidof com.kulchaflo.tv.mk2.gv") printf '412\\n' ;;
+  "logcat -d --pid 412")
+    printf '%s\\n' '11-14 12:00:00.000 412 412 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/'
+    for i in {1..600}; do printf '%s\\n' "11-14 12:00:00.001 412 412 I KfMkIIGV:GvMedia: unrelated diagnostic $i"; done
+    ;;
+  "logcat -d -t 500 --pid 412")
+    for i in {1..500}; do printf '%s\\n' "11-14 12:00:00.001 412 412 I KfMkIIGV:GvMedia: unrelated diagnostic $i"; done
+    ;;
+  *) exit 2 ;;
+esac
+`);
+  chmodSync(adb, 0o755);
+  const result = spawnSync('python3', [logTool, 'capture'], {
+    encoding: 'utf8',
+    env: {...process.env, PATH: `${bin}:${process.env.PATH}`},
+  });
+  rmSync(root, {recursive: true, force: true});
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.capture_status, 'complete');
+  assert.equal(report.launch_observations.zns_navigation_started, 'yes');
 });

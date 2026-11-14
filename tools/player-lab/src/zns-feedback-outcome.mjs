@@ -21,6 +21,7 @@ const FAILURE_STAGES = new Set([
   ...INFRA_FAILURE_STAGES,
   'launch',
   'required_app_state',
+  'diagnostic_continuation',
   'emulator_step',
   'evidence_capture',
   'log_capture',
@@ -31,8 +32,17 @@ const APP_DIAGNOSTICS = new Set([
   'target_component', 'other_component', 'entry_missing', 'entry_unparsed',
   'ambiguous_components', 'too_many_entries', 'command_unavailable',
   'input_target_window', 'input_other_window', 'focus_signal_conflict',
+  'command_timeout',
 ]);
 const FOCUS_SOURCES = new Set(['window_manager', 'input_dispatcher', 'both', 'conflict', 'unknown']);
+const LAUNCH_OBSERVATIONS = [
+  'browser_session_configured',
+  'browser_view_attached',
+  'zns_navigation_requested',
+  'zns_navigation_started',
+  'zns_navigation_completed',
+  'zns_navigation_failed',
+];
 
 const isStatus = (value) => value === 'yes' || value === 'no';
 const asBoolean = (value) => value === true || value === 'true';
@@ -112,6 +122,23 @@ function safePlayerState(state) {
   };
 }
 
+function safeLaunchObservations(value = {}) {
+  return Object.fromEntries(LAUNCH_OBSERVATIONS.map((key) => [
+    key,
+    isStatus(value?.[key]) ? value[key] : 'unknown',
+  ]));
+}
+
+function safeContinuation(value = {}) {
+  return {
+    mode: value?.mode === 'passive_focus_unknown' ? 'passive_focus_unknown' : 'not_used',
+    additional_passive_observation: isStatus(value?.additional_passive_observation)
+      ? value.additional_passive_observation
+      : 'no',
+    remote_keys_withheld: isStatus(value?.remote_keys_withheld) ? value.remote_keys_withheld : 'no',
+  };
+}
+
 /** Classify only bounded, sanitized ZNS observations; this never claims live playback. */
 export function classifyZnsFeedback(evidence = {}) {
   const phasesAreValid = Array.isArray(evidence.observation_phases)
@@ -126,6 +153,8 @@ export function classifyZnsFeedback(evidence = {}) {
   const screenshots = safeScreenshots(evidence.screenshots);
   const actions = safeActions(evidence.actions);
   const playerState = safePlayerState(evidence.player_state);
+  const launchObservations = safeLaunchObservations(evidence.launch_observations);
+  const diagnosticContinuation = safeContinuation(evidence.diagnostic_continuation);
   const infra = evidence.infrastructure ?? {};
   const failureStage = FAILURE_STAGES.has(evidence.failure_stage)
     ? evidence.failure_stage
@@ -159,7 +188,9 @@ export function classifyZnsFeedback(evidence = {}) {
     const identityComplete = /^[a-f\d]{40}$/i.test(String(evidence.commit ?? ''))
       && evidence.profile === 'zns'
       && evidence.source_url === SOURCE_URL;
-    const baseComplete = appStateComplete && infrastructureComplete && evidenceCaptureComplete && interactionsComplete && identityComplete;
+    const baseComplete = appStateComplete && infrastructureComplete && evidenceCaptureComplete
+      && interactionsComplete && identityComplete
+      && diagnosticContinuation.mode !== 'passive_focus_unknown';
     const progressionFlag = evidence.video_time_advanced_observed === 'yes'
       || evidence.video_time_advanced_observed === true;
     const progressionPhase = phases.includes('zns-video-time-advanced');
@@ -193,7 +224,8 @@ export function classifyZnsFeedback(evidence = {}) {
     && screenshots.after_dpad.status === 'captured'
     && screenshots.after_back.status === 'captured'
     && actions.dpad_down_up_dispatched === 'yes'
-    && actions.back_dispatched === 'yes';
+    && actions.back_dispatched === 'yes'
+    && diagnosticContinuation.mode !== 'passive_focus_unknown';
 
   return {
     schema_version: 1,
@@ -216,7 +248,11 @@ export function classifyZnsFeedback(evidence = {}) {
     failure_state: failureState,
     screenshots,
     actions,
-    log_capture: evidence.log_capture === 'complete' ? 'complete' : 'incomplete',
+    launch_observations: launchObservations,
+    diagnostic_continuation: diagnosticContinuation,
+    log_capture: ['complete', 'incomplete', 'truncated'].includes(evidence.log_capture)
+      ? evidence.log_capture
+      : 'incomplete',
     observation_phases: phases,
     player_state: playerState,
     video_time_advanced_observed: evidence.video_time_advanced_observed === 'yes' ? 'yes' : 'no',
@@ -279,6 +315,15 @@ function evidenceFromEnvironment(env) {
     actions: {
       dpad_down_up_dispatched: env.TV_DPAD_DISPATCH,
       back_dispatched: env.TV_BACK_DISPATCH,
+    },
+    launch_observations: Object.fromEntries(LAUNCH_OBSERVATIONS.map((key) => [
+      key,
+      env[`TV_${key.replaceAll(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}`] || 'unknown',
+    ])),
+    diagnostic_continuation: {
+      mode: env.TV_CONTINUATION_MODE,
+      additional_passive_observation: env.TV_CONTINUATION_WAIT,
+      remote_keys_withheld: env.TV_CONTINUATION_KEYS_WITHHELD,
     },
     log_capture: env.TV_LOG_CAPTURE,
     observation_phases: phases,

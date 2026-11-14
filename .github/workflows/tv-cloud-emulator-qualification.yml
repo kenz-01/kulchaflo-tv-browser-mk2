@@ -34,6 +34,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/tv-emulator-qualification"
           python3 - <<'PY'
           import json, os
+          launch_names = ("browser_session_configured", "browser_view_attached", "zns_navigation_requested", "zns_navigation_started", "zns_navigation_completed", "zns_navigation_failed")
           receipt = {
               "schema_version": 1,
               "receipt_finalized": False,
@@ -47,6 +48,8 @@ jobs:
               "failure_state": {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"},
               "screenshots": {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}},
               "actions": {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"},
+              "launch_observations": {name: "unknown" for name in launch_names},
+              "diagnostic_continuation": {"mode": "not_used", "additional_passive_observation": "no", "remote_keys_withheld": "no"},
               "log_capture": "incomplete",
               "observation_phases": [],
               "player_state": None,
@@ -123,6 +126,7 @@ jobs:
           if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
           python3 - <<'PY'
           import json, os
+          launch_names = ("browser_session_configured", "browser_view_attached", "zns_navigation_requested", "zns_navigation_started", "zns_navigation_completed", "zns_navigation_failed")
           path = os.path.join(os.environ["RUNNER_TEMP"], "tv-emulator-qualification", "zns-diagnostic-receipt.json")
           try:
               with open(path, encoding="utf-8") as stream:
@@ -139,6 +143,8 @@ jobs:
           receipt.setdefault("failure_state", {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"})
           receipt.setdefault("screenshots", {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}})
           receipt.setdefault("actions", {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"})
+          receipt.setdefault("launch_observations", {name: "unknown" for name in launch_names})
+          receipt.setdefault("diagnostic_continuation", {"mode": "not_used", "additional_passive_observation": "no", "remote_keys_withheld": "no"})
           receipt.setdefault("log_capture", "incomplete")
           receipt.setdefault("observation_phases", [])
           receipt.setdefault("player_state", None)

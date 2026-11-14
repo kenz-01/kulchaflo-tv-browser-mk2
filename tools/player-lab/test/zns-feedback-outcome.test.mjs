@@ -62,6 +62,24 @@ test('classifies a complete run with no ZNS observation separately from a player
   assert.equal(noProgress.video_time_advanced_observed, 'no');
 });
 
+test('foreground app launch does not imply GeckoView readiness or ZNS navigation', () => {
+  const receipt = classifyZnsFeedback(completeEvidence({
+    launch_observations: {
+      browser_session_configured: 'no',
+      browser_view_attached: 'no',
+      zns_navigation_requested: 'no',
+      zns_navigation_started: 'no',
+      zns_navigation_completed: 'no',
+      zns_navigation_failed: 'no',
+    },
+  }));
+  assert.equal(receipt.app_state.after_launch.activity_foreground, 'yes');
+  assert.equal(receipt.launch_observations.browser_session_configured, 'no');
+  assert.equal(receipt.launch_observations.zns_navigation_started, 'no');
+  assert.equal(receipt.classification, 'SOURCE_NOT_OBSERVED');
+  assert.equal(receipt.source.observed, false);
+});
+
 test('classifies missing or contradictory evidence as inconclusive, never as progression', () => {
   const screenshotMissing = classifyZnsFeedback(completeEvidence({
     screenshots: {after_dpad: 'captured', after_back: 'missing'},
@@ -196,4 +214,22 @@ test('receipt whitelists log phases and never copies arbitrary diagnostic string
   assert.equal(receipt.classification, 'INCONCLUSIVE');
   assert.deepEqual(receipt.observation_phases, []);
   assert.doesNotMatch(JSON.stringify(receipt), /private|secret/);
+});
+
+test('passive continuation with withheld remote keys cannot be reported as completed playback', () => {
+  const receipt = classifyZnsFeedback(completeEvidence({
+    observation_phases: ['zns-outer-player-first', 'zns-embedded-observed', 'zns-video-time-advanced'],
+    player_state: {ready: '4', paused: 'false', muted: 'true', volume: '0.35'},
+    video_time_advanced_observed: 'yes',
+    diagnostic_continuation: {
+      mode: 'passive_focus_unknown',
+      additional_passive_observation: 'yes',
+      remote_keys_withheld: 'yes',
+    },
+  }));
+  assert.equal(receipt.classification, 'INCONCLUSIVE');
+  assert.equal(receipt.harness_completed, false);
+  assert.equal(receipt.video_time_advanced_observed, 'yes');
+  assert.equal(receipt.diagnostic_continuation.remote_keys_withheld, 'yes');
+  assert.equal(receipt.moving_picture_verified, false);
 });
