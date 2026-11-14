@@ -345,7 +345,10 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
     '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/?session=secret',
     '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/',
     '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',
-    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25',
+    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=true controls=false',
+    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns media event=waiting ready=0 paused=true muted=false volume=1.0 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=true controls=false',
+    '11-14 12:00:00.005 1234 1234 E KfMkIIGV:GvMedia: zns media event=error ready=0 paused=true muted=false volume=1.0 networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
+    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns autoplay permission type=audible requested=other decision=allow',
     '11-14 12:00:00.006 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-video-time-advanced mode=browser-first ready=4 paused=false muted=true volume=0.25',
     '11-14 12:00:00.007 1234 1234 I KfMkIIGV:GvMedia: private token=never-copy https://example.invalid/?session=secret',
   ].join('\n');
@@ -357,6 +360,22 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
     'zns-outer-player-first', 'zns-embedded-observed', 'zns-video-time-advanced',
   ]);
   assert.deepEqual(report.player_state, {ready: 4, paused: false, muted: true, volume: 0.25});
+  assert.equal(report.official_frame_observed, 'yes');
+  assert.equal(report.embed_observed, 'yes');
+  assert.deepEqual(report.media_diagnostics, {
+    observed: 'yes',
+    network_state: 3,
+    media_error_code: 4,
+    error_observed: 'yes',
+    source_present: true,
+    rendered: 'yes',
+    autoplay: true,
+    controls: false,
+    events_observed: 'yes',
+    events: ['waiting', 'error'],
+    autoplay_permission_observed: 'yes',
+    autoplay_permission_events: [{type: 'audible', requested: 'other', decision: 'allow'}],
+  });
   assert.equal(report.video_time_advanced_observed, 'yes');
   assert.deepEqual(report.launch_observations, {
     browser_session_configured: 'yes',
@@ -368,12 +387,39 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   });
   assert.doesNotMatch(result.stdout, /private|secret|example\.invalid/);
 
+  const incomplete = spawnSync('python3', [logTool, '--parse'], {
+    input: 'x'.repeat(70 * 1024),
+    encoding: 'utf8',
+  });
+  assert.equal(incomplete.status, 0, incomplete.stderr);
+  const incompleteReport = JSON.parse(incomplete.stdout);
+  assert.equal(incompleteReport.capture_status, 'truncated');
+  assert.equal(incompleteReport.embed_observed, 'unknown');
+  assert.equal(incompleteReport.media_diagnostics.observed, 'unknown');
+
   const oversized = spawnSync('python3', [logTool, '--parse'], {
     input: `token=hidden\n${'x'.repeat(70 * 1024)}`,
     encoding: 'utf8',
   });
   assert.equal(JSON.parse(oversized.stdout).capture_status, 'truncated');
   assert.doesNotMatch(oversized.stdout, /hidden/);
+});
+
+test('log snapshot accepts ZNS evidence only from exact GvMedia message prefixes', () => {
+  const spoofed = [
+    '11-14 12:00:00.000 1234 1234 I KfMkIIGV:GvNav: zns helper phase=zns-video-time-advanced mode=browser-first ready=4 paused=false muted=true volume=0.25',
+    '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvNav: zns media event=error networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
+    '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: zns autoplay permission type=audible requested=other decision=allow',
+    '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: unrelated prefix zns media event=error networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
+  ].join('\n');
+  const result = spawnSync('python3', [logTool, '--parse'], {input: spoofed, encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.observation_phases, []);
+  assert.equal(report.player_state, null);
+  assert.deepEqual(report.media_diagnostics.events, []);
+  assert.equal(report.media_diagnostics.observed, 'no');
+  assert.equal(report.media_diagnostics.autoplay_permission_observed, 'unknown');
 });
 
 test('ZNS navigation failures reported with GeckoView uri fields are detected without retaining URLs', () => {

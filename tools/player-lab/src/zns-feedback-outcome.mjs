@@ -7,6 +7,11 @@ const PHASES = new Set([
   'zns-embedded-playing',
   'zns-video-time-advanced',
 ]);
+const MEDIA_EVENTS = new Set([
+  'loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'play', 'playing',
+  'pause', 'waiting', 'stalled', 'error', 'abort', 'emptied',
+]);
+const AUTOPLAY_TYPES = new Set(['audible', 'inaudible']);
 const APP_CHECKPOINTS = ['after_launch', 'after_dpad', 'after_back'];
 const INFRA_FAILURE_STAGES = new Set([
   'preflight',
@@ -122,6 +127,37 @@ function safePlayerState(state) {
   };
 }
 
+function safeMediaDiagnostics(value = {}) {
+  const state = value && typeof value === 'object' ? value : {};
+  const integer = (number, allowed) => Number.isInteger(number) && allowed.includes(number) ? number : null;
+  const boolean = (input) => typeof input === 'boolean' ? input : null;
+  const events = Array.isArray(state.events)
+    ? [...new Set(state.events.filter((event) => MEDIA_EVENTS.has(event)))].slice(0, MEDIA_EVENTS.size)
+    : [];
+  const permissionEvents = Array.isArray(state.autoplay_permission_events)
+    ? state.autoplay_permission_events.slice(0, 8).flatMap((entry) => {
+      if (!entry || !AUTOPLAY_TYPES.has(entry.type)) return [];
+      const label = (input) => ['allow', 'deny', 'other'].includes(input) ? input : 'unknown';
+      return [{type: entry.type, requested: label(entry.requested), decision: label(entry.decision)}];
+    })
+    : [];
+  const status = (input) => isStatus(input) ? input : 'unknown';
+  return {
+    observed: status(state.observed),
+    network_state: integer(state.network_state, [0, 1, 2, 3]),
+    media_error_code: integer(state.media_error_code, [1, 2, 3, 4]),
+    error_observed: status(state.error_observed),
+    source_present: boolean(state.source_present),
+    rendered: ['yes', 'no', 'unknown'].includes(state.rendered) ? state.rendered : 'unknown',
+    autoplay: boolean(state.autoplay),
+    controls: boolean(state.controls),
+    events_observed: status(state.events_observed),
+    events,
+    autoplay_permission_observed: status(state.autoplay_permission_observed),
+    autoplay_permission_events: permissionEvents,
+  };
+}
+
 function safeLaunchObservations(value = {}) {
   return Object.fromEntries(LAUNCH_OBSERVATIONS.map((key) => [
     key,
@@ -153,6 +189,7 @@ export function classifyZnsFeedback(evidence = {}) {
   const screenshots = safeScreenshots(evidence.screenshots);
   const actions = safeActions(evidence.actions);
   const playerState = safePlayerState(evidence.player_state);
+  const mediaDiagnostics = safeMediaDiagnostics(evidence.media_diagnostics);
   const launchObservations = safeLaunchObservations(evidence.launch_observations);
   const diagnosticContinuation = safeContinuation(evidence.diagnostic_continuation);
   const infra = evidence.infrastructure ?? {};
@@ -238,6 +275,12 @@ export function classifyZnsFeedback(evidence = {}) {
       identification: evidence.source_url === SOURCE_URL ? 'official_zns_bahamas_route_requested' : 'unknown',
       observed: phases.includes('zns-outer-player-first') || phases.includes('zns-embedded-observed'),
     },
+    official_frame_observed: isStatus(evidence.official_frame_observed)
+      ? evidence.official_frame_observed
+      : phases.includes('zns-outer-player-first') ? 'yes' : evidence.log_capture === 'complete' ? 'no' : 'unknown',
+    embed_observed: isStatus(evidence.embed_observed)
+      ? evidence.embed_observed
+      : phases.includes('zns-embedded-observed') ? 'yes' : evidence.log_capture === 'complete' ? 'no' : 'unknown',
     infrastructure: {
       emulator_boot: isStatus(infra.emulator_boot) ? infra.emulator_boot : 'unknown',
       apk_install: isStatus(infra.apk_install) ? infra.apk_install : 'unknown',
@@ -255,6 +298,7 @@ export function classifyZnsFeedback(evidence = {}) {
       : 'incomplete',
     observation_phases: phases,
     player_state: playerState,
+    media_diagnostics: mediaDiagnostics,
     video_time_advanced_observed: evidence.video_time_advanced_observed === 'yes' ? 'yes' : 'no',
     classification,
     reason,
@@ -333,6 +377,9 @@ function evidenceFromEnvironment(env) {
       muted: env.TV_PLAYER_MUTED,
       volume: env.TV_PLAYER_VOLUME,
     },
+    media_diagnostics: (() => {
+      try { return JSON.parse(env.TV_ZNS_MEDIA_DIAGNOSTICS || '{}'); } catch { return {}; }
+    })(),
     video_time_advanced_observed: env.TV_TIME_ADVANCED,
     failure_stage: env.TV_FAILURE_STAGE,
     launch_status: env.TV_LAUNCH_STATUS,

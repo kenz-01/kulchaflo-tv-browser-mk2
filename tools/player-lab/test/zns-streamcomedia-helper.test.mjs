@@ -122,11 +122,17 @@ test('trusted player state and bounded time progression are reported without aud
   let playCalls = 0;
   const video = {
     readyState: 4,
+    networkState: 2,
+    error: null,
     paused: true,
     muted: true,
     volume: 0.35,
+    currentSrc: 'https://cdn.invalid/live.m3u8?token=private',
+    autoplay: true,
+    controls: false,
     currentTime: 1,
     addEventListener(name, callback) { this[`on${name}`] = callback; },
+    querySelector() { return null; },
     getBoundingClientRect() { return {width: 900, height: 500}; },
     play() { playCalls += 1; return {catch() {}}; },
   };
@@ -134,6 +140,7 @@ test('trusted player state and bounded time progression are reported without aud
     location: {href: 'https://player.streamcomedia.com/HTML5/znstv/?token=private'},
     top: {},
     prompt(value) { prompts.push(value); },
+    getComputedStyle() { return {display: 'block', visibility: 'visible', opacity: '1'}; },
   };
   runInNewContext(helperSource, {
     URL,
@@ -156,10 +163,18 @@ test('trusted player state and bounded time progression are reported without aud
   assert.match(observed, /"paused":true/);
   assert.match(observed, /"muted":true/);
   assert.match(observed, /"volume":0\.35/);
+  assert.match(observed, /"networkState":2/);
+  assert.match(observed, /"mediaErrorCode":0/);
+  assert.match(observed, /"sourcePresent":true/);
+  assert.match(observed, /"rendered":"yes"/);
+  assert.match(observed, /"autoplay":true/);
+  assert.doesNotMatch(observed, /cdn\.invalid|token|private/);
 
   // Simulate site-owned playback events; the helper only observes them.
   video.paused = false;
   video.onplaying();
+  video.onwaiting();
+  video.onwaiting();
   video.ontimeupdate();
   assert.equal(playCalls, 0);
   assert.equal(video.muted, true);
@@ -169,6 +184,8 @@ test('trusted player state and bounded time progression are reported without aud
   video.currentTime = 2;
   timers[0].callback();
   assert.ok(prompts.some((value) => value.includes('zns-embedded-playing')));
+  assert.ok(prompts.some((value) => value.includes('"event":"waiting"')));
+  assert.equal(prompts.filter((value) => value.includes('"event":"waiting"')).length, 1);
   const progression = prompts.find((value) => value.includes('zns-video-time-advanced'));
   assert.ok(progression);
   assert.match(progression, /"sampleWindowMs":4000/);
@@ -193,12 +210,63 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.deepEqual(manifest.content_scripts[0].js, ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js']);
   assert.match(activity, /private fun isZnsTvSiteUrl[\s\S]*?host == "znsbahamas\.com" && path == "\/"/);
   assert.match(activity, /private fun isZnsStreamcomediaEmbedUrl[\s\S]*?host == "player\.streamcomedia\.com" && path == "\/html5\/znstv"/);
-  assert.doesNotMatch(activity, /znsAutoplayScoped|zns autoplay permission/);
+  assert.doesNotMatch(activity, /znsAutoplayScoped/);
   assert.doesNotMatch(helperSource, /video\.muted\s*=|video\.volume\s*=|video\.play\s*\(/);
   assert.match(helperSource, /addEventListener\("playing"/);
   assert.match(helperSource, /addEventListener\("timeupdate"/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first ready=\$readyState paused=\$paused muted=\$muted volume=\$volume/);
+  assert.match(activity, /zns autoplay permission type=\$type requested=\$requested decision=\$decisionLabel/);
+  assert.match(activity, /zns media event=\$mediaEvent/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first/);
   assert.match(activity, /zns browser-first candidate ignored/);
   assert.match(activity, /isZnsTvSiteUrl\(currentUrl\) \|\| isZnsStreamcomediaEmbedUrl\(currentUrl\)/);
+});
+
+test('a stalled first progression sample can retry and remains bounded', () => {
+  const timers = [];
+  const prompts = [];
+  const video = {
+    readyState: 1,
+    networkState: 2,
+    error: null,
+    paused: false,
+    muted: false,
+    volume: 1,
+    currentSrc: '',
+    autoplay: false,
+    controls: true,
+    currentTime: 0,
+    addEventListener(name, callback) { this[`on${name}`] = callback; },
+    querySelector() { return null; },
+    getBoundingClientRect() { return {width: 900, height: 500}; },
+  };
+  const window = {
+    location: {href: 'https://player.streamcomedia.com/HTML5/znstv'},
+    top: {},
+    prompt(value) { prompts.push(value); },
+    getComputedStyle() { return {display: 'block', visibility: 'visible', opacity: '1'}; },
+  };
+  runInNewContext(helperSource, {
+    URL,
+    window,
+    document: {
+      referrer: 'https://znsbahamas.com/',
+      querySelectorAll(selector) { return selector === 'video' ? [video] : []; },
+    },
+    setTimeout(callback, delay) { timers.push({callback, delay}); },
+  });
+  timers.splice(0).forEach(({callback}) => callback());
+  video.ontimeupdate();
+  assert.equal(timers.length, 1);
+  timers.shift().callback(); // The initial four-second sample sees no movement.
+  assert.equal(prompts.some((value) => value.includes('zns-video-time-advanced')), false);
+
+  video.ontimeupdate();
+  assert.equal(timers.length, 1);
+  video.currentTime = 1;
+  timers.shift().callback();
+  assert.equal(prompts.filter((value) => value.includes('zns-video-time-advanced')).length, 1);
+
+  video.ontimeupdate();
+  assert.equal(timers.length, 0);
 });

@@ -9844,6 +9844,31 @@ return changed>0;
                         ) -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 else -> permission.value
             }
+            val znsAutoplayRequest =
+                permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
+            val znsPermissionContext = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
+                .any { isZnsTvSiteUrl(it) || isZnsStreamcomediaEmbedUrl(it) }
+            if (znsAutoplayRequest && znsTopContext && znsPermissionContext) {
+                val type = if (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE) {
+                    "audible"
+                } else "inaudible"
+                val requested = when (permission.value) {
+                    GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW -> "allow"
+                    GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY -> "deny"
+                    else -> "other"
+                }
+                val decisionLabel = when (decision) {
+                    GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW -> "allow"
+                    GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY -> "deny"
+                    else -> "other"
+                }
+                GvLogger.i(
+                    "GvMedia",
+                    "zns autoplay permission type=$type requested=$requested decision=$decisionLabel"
+                )
+            }
             val tabId = tabController.findTabBySession(session)?.id ?: "unknown"
             GvLogger.i(
                 "GvNav",
@@ -13382,7 +13407,15 @@ return changed>0;
             if (!isZnsTvSiteUrl(currentUrl) ||
                 !(isZnsTvSiteUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(pageUrl))
             ) return
-            if (phase !in setOf(
+            val mediaEvent = if (phase == "zns-media-event") {
+                payload.optString("event").takeIf {
+                    it in setOf(
+                        "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
+                        "pause", "waiting", "stalled", "error", "abort", "emptied",
+                    )
+                } ?: return
+            } else null
+            if (mediaEvent == null && phase !in setOf(
                     "zns-outer-player-first",
                     "zns-embedded-observed",
                     "zns-embedded-playing",
@@ -13394,9 +13427,28 @@ return changed>0;
             val muted = payload.optBoolean("muted", true)
             val observedVolume = payload.optDouble("volume", -1.0)
             val volume = if (observedVolume.isFinite() && observedVolume in 0.0..1.0) observedVolume else -1.0
+            val hasMediaSnapshot = payload.has("networkState") && payload.has("mediaErrorCode") &&
+                payload.has("sourcePresent") && payload.has("rendered") &&
+                payload.has("autoplay") && payload.has("controls")
+            val networkState = payload.optInt("networkState", -1).takeIf { it in 0..3 } ?: -1
+            val mediaErrorCode = payload.optInt("mediaErrorCode", -1).takeIf { it in 0..4 } ?: -1
+            val sourcePresent = payload.optBoolean("sourcePresent", false)
+            val rendered = payload.optString("rendered").takeIf { it in setOf("yes", "no", "unknown") } ?: "unknown"
+            val autoplay = payload.optBoolean("autoplay", false)
+            val controls = payload.optBoolean("controls", false)
+            val mediaDetails = if (hasMediaSnapshot) {
+                " networkState=$networkState mediaError=$mediaErrorCode sourcePresent=$sourcePresent rendered=$rendered autoplay=$autoplay controls=$controls"
+            } else ""
+            if (mediaEvent != null) {
+                GvLogger.i(
+                    "GvMedia",
+                    "zns media event=$mediaEvent ready=$readyState paused=$paused muted=$muted volume=$volume$mediaDetails"
+                )
+                return
+            }
             GvLogger.i(
                 "GvMedia",
-                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume"
+                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume$mediaDetails"
             )
             if (phase == "zns-embedded-playing") {
                 enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")

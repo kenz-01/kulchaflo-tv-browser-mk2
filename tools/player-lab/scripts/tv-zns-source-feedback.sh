@@ -18,6 +18,7 @@ export TV_EMULATOR_BOOT=no TV_APK_INSTALL=unknown TV_APP_LAUNCH=unknown
 export TV_LAUNCH_STATUS=unknown TV_FAILURE_STAGE=
 export TV_LOG_CAPTURE=incomplete TV_ZNS_PHASES= TV_TIME_ADVANCED=no
 export TV_PLAYER_READY=unknown TV_PLAYER_PAUSED=unknown TV_PLAYER_MUTED=unknown TV_PLAYER_VOLUME=unknown
+export TV_ZNS_MEDIA_DIAGNOSTICS='{}'
 export TV_BROWSER_SESSION_CONFIGURED=unknown TV_BROWSER_VIEW_ATTACHED=unknown
 export TV_ZNS_NAVIGATION_REQUESTED=unknown TV_ZNS_NAVIGATION_STARTED=unknown
 export TV_ZNS_NAVIGATION_COMPLETED=unknown TV_ZNS_NAVIGATION_FAILED=unknown
@@ -156,9 +157,47 @@ except Exception:
   for name in TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED; do
     [[ "${!name:-}" =~ ^(yes|no|unknown)$ ]] || printf -v "$name" '%s' unknown
   done
+  TV_ZNS_MEDIA_DIAGNOSTICS=$(printf '%s' "$snapshot" | python3 -c '
+import json,sys
+events={"loadstart","loadedmetadata","loadeddata","canplay","play","playing","pause","waiting","stalled","error","abort","emptied"}
+statuses={"yes","no","unknown"}
+try:
+ d=json.load(sys.stdin)
+ raw=d.get("media_diagnostics") or {}
+ def status(value): return value if isinstance(value,str) and value in statuses else "unknown"
+ def boolean(value): return value if isinstance(value,bool) else None
+ def integer(value,allowed): return value if isinstance(value,int) and not isinstance(value,bool) and value in allowed else None
+ rendered=raw.get("rendered")
+ rendered=rendered if rendered in {"yes","no","unknown"} else "unknown"
+ safe_events=[value for value in raw.get("events",[]) if isinstance(value,str) and value in events] if isinstance(raw.get("events"),list) else []
+ permissions=[]
+ for item in raw.get("autoplay_permission_events",[])[:8] if isinstance(raw.get("autoplay_permission_events"),list) else []:
+  if not isinstance(item,dict) or item.get("type") not in {"audible","inaudible"}: continue
+  label=lambda value: value if value in {"allow","deny","other"} else "unknown"
+  permissions.append({"type":item["type"],"requested":label(item.get("requested")),"decision":label(item.get("decision"))})
+ report={
+  "observed":status(raw.get("observed")),
+  "network_state":integer(raw.get("network_state"),{0,1,2,3}),
+  "media_error_code":integer(raw.get("media_error_code"),{1,2,3,4}),
+  "error_observed":status(raw.get("error_observed")),
+  "source_present":boolean(raw.get("source_present")),
+  "rendered":rendered,
+  "autoplay":boolean(raw.get("autoplay")),
+  "controls":boolean(raw.get("controls")),
+  "events_observed":status(raw.get("events_observed")),
+  "events":list(dict.fromkeys(safe_events))[:12],
+  "autoplay_permission_observed":status(raw.get("autoplay_permission_observed")),
+  "autoplay_permission_events":permissions,
+ }
+ print(json.dumps(report,separators=(",",":"),sort_keys=True))
+except Exception:
+ print("{}")
+' 2>/dev/null || printf '{}')
+  [[ "$TV_ZNS_MEDIA_DIAGNOSTICS" == \{*\} ]] || TV_ZNS_MEDIA_DIAGNOSTICS='{}'
   export TV_LOG_CAPTURE TV_ZNS_PHASES TV_PLAYER_READY TV_PLAYER_PAUSED TV_PLAYER_MUTED TV_PLAYER_VOLUME TV_TIME_ADVANCED
   export TV_BROWSER_SESSION_CONFIGURED TV_BROWSER_VIEW_ATTACHED TV_ZNS_NAVIGATION_REQUESTED TV_ZNS_NAVIGATION_STARTED
   export TV_ZNS_NAVIGATION_COMPLETED TV_ZNS_NAVIGATION_FAILED
+  export TV_ZNS_MEDIA_DIAGNOSTICS
 }
 
 finish() {

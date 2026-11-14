@@ -40,6 +40,10 @@ PHASES = (
     "zns-embedded-playing",
     "zns-video-time-advanced",
 )
+MEDIA_EVENTS = (
+    "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
+    "pause", "waiting", "stalled", "error", "abort", "emptied",
+)
 STATUSES = {"yes", "no", "unknown"}
 DIAGNOSTICS = {
     "target_process", "process_absent", "unavailable", "unparseable", "output_truncated",
@@ -135,6 +139,45 @@ def safe_player(value):
     return {"ready": ready, "paused": value["paused"], "muted": value["muted"], "volume": float(volume)}
 
 
+def safe_media_diagnostics(value):
+    state = value if isinstance(value, dict) else {}
+    media_error = state.get("media_error_code")
+    media_error = media_error if type(media_error) is int and media_error in (1, 2, 3, 4) else None
+    network_state = state.get("network_state")
+    network_state = network_state if type(network_state) is int and network_state in (0, 1, 2, 3) else None
+    boolean = lambda item: item if isinstance(item, bool) else None
+    rendered = state.get("rendered")
+    rendered = rendered if isinstance(rendered, str) and rendered in STATUSES else "unknown"
+    raw_events = state.get("events") if isinstance(state.get("events"), list) else []
+    events = list(dict.fromkeys(event for event in raw_events if isinstance(event, str) and event in MEDIA_EVENTS))[:12]
+    permissions = []
+    raw_permissions = state.get("autoplay_permission_events")
+    if isinstance(raw_permissions, list):
+        for entry in raw_permissions[:8]:
+            if not isinstance(entry, dict) or entry.get("type") not in ("audible", "inaudible"):
+                continue
+            label = lambda item: item if isinstance(item, str) and item in ("allow", "deny", "other") else "unknown"
+            permissions.append({
+                "type": entry["type"],
+                "requested": label(entry.get("requested")),
+                "decision": label(entry.get("decision")),
+            })
+    return {
+        "observed": status(state.get("observed")),
+        "network_state": network_state,
+        "media_error_code": media_error,
+        "error_observed": status(state.get("error_observed")),
+        "source_present": boolean(state.get("source_present")),
+        "rendered": rendered,
+        "autoplay": boolean(state.get("autoplay")),
+        "controls": boolean(state.get("controls")),
+        "events_observed": status(state.get("events_observed")),
+        "events": events,
+        "autoplay_permission_observed": status(state.get("autoplay_permission_observed")),
+        "autoplay_permission_events": permissions,
+    }
+
+
 def classify_sanitized(report):
     infrastructure = report["infrastructure"]
     checkpoints = report["app_state"]
@@ -215,6 +258,7 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
     time_advanced = receipt.get("video_time_advanced_observed")
     time_advanced = time_advanced if isinstance(time_advanced, str) and time_advanced in {"yes", "no"} else "unknown"
     player = safe_player(receipt.get("player_state"))
+    media_diagnostics = safe_media_diagnostics(receipt.get("media_diagnostics"))
     infra = {
         "emulator_boot": status(infrastructure_raw.get("emulator_boot")),
         "apk_install": status(infrastructure_raw.get("apk_install")),
@@ -235,6 +279,10 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
         "additional_passive_observation": status(continuation_raw.get("additional_passive_observation")),
         "remote_keys_withheld": status(continuation_raw.get("remote_keys_withheld")),
     }
+    official_frame_observed = receipt.get("official_frame_observed")
+    official_frame_observed = status(official_frame_observed) if isinstance(official_frame_observed, str) and official_frame_observed in STATUSES else "yes" if "zns-outer-player-first" in phases else "no" if log_capture == "complete" else "unknown"
+    embed_observed = receipt.get("embed_observed")
+    embed_observed = status(embed_observed) if isinstance(embed_observed, str) and embed_observed in STATUSES else "yes" if "zns-embedded-observed" in phases else "no" if log_capture == "complete" else "unknown"
 
     report = {
         "schema_version": 1,
@@ -244,6 +292,8 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
         "head_sha": head_sha.lower(),
         "selected_profile": "zns",
         "source_observed": any(phase in phases for phase in ("zns-outer-player-first", "zns-embedded-observed")),
+        "official_frame_observed": official_frame_observed,
+        "embed_observed": embed_observed,
         "infrastructure": infra,
         "launch_status": receipt.get("launch_status") if isinstance(receipt.get("launch_status"), str) and receipt.get("launch_status") in {"confirmed", "failed", "unconfirmed"} else "unknown",
         "launch_observations": launch_observations,
@@ -261,6 +311,7 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
         "observation_phases": phases,
         "phases_valid": phases_valid,
         "player_state": player,
+        "media_diagnostics": media_diagnostics,
         "video_time_advanced_observed": time_advanced,
         "failure_stage": failure_stage,
         "helper_initiated_playback": False,
