@@ -37,8 +37,12 @@ if [[ "$1" == "install" ]]; then exit 0; fi
 if [[ "$1" == "pull" ]]; then printf '\\211PNG\\r\\n\\032\\n' > "$3"; exit 0; fi
 if [[ "$1" == "logcat" ]]; then
   if [[ "$2" == "-c" ]]; then exit 0; fi
-  printf '%s\\n' 'I/GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25'
-  printf '%s\\n' 'I/GvMedia: private token=must-not-enter-receipt'
+  printf '%s\\n' '11-14 12:00:00.000 1234 1234 I KfMkIIGV:GvTabs: session configured tabId=abc url=https://znsbahamas.com/'
+  printf '%s\\n' '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvTabs: tab activated id=abc url=https://znsbahamas.com/ loading=true'
+  printf '%s\\n' '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/'
+  printf '%s\\n' '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/'
+  printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25'
+  printf '%s\\n' '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: private token=must-not-enter-receipt'
   exit 0
 fi
 if [[ "$1" == "shell" ]]; then
@@ -64,10 +68,10 @@ if [[ "$1" == "shell" ]]; then
         esac
       elif [[ "$3" == "input" ]]; then
         case "$TV_FOCUS_MODE" in
-          target) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=secret" ;;
-          input-target) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=secret" ;;
-          other) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.android.launcher/.Launcher}', token=secret" ;;
-          missing) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" ;;
+          target) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=secret" "  FocusedApplications:" ;;
+          input-target) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=secret" "  FocusedApplications:" ;;
+          other) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "    displayId=0, name='Window{b u0 com.android.launcher/.Launcher}', token=secret" "  FocusedApplications:" ;;
+          missing) printf '%s\\n' "Input Dispatcher State:" "  FocusedWindows:" "  FocusedApplications:" ;;
         esac
       fi
       ;;
@@ -122,7 +126,7 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
   const {result, receipt, traceText, summaryText, snapshot} = runHarness('missing');
   assert.equal(result.status, 1, result.stderr);
   assert.ok(receipt);
-  assert.equal(receipt.failure_stage, 'required_app_state');
+  assert.equal(receipt.failure_stage, 'diagnostic_continuation');
   assert.equal(receipt.classification, 'INCONCLUSIVE');
   assert.equal(receipt.app_state.after_launch.window_focus, 'unknown');
   assert.equal(receipt.app_state_diagnostics.after_launch.window_focus, 'entry_missing');
@@ -134,17 +138,32 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
   assert.equal(receipt.screenshots.after_launch.status, 'captured');
   assert.equal(receipt.screenshots.after_failure.status, 'captured');
   assert.equal(receipt.screenshots.after_dpad.status, 'missing');
+  assert.deepEqual(receipt.diagnostic_continuation, {
+    mode: 'passive_focus_unknown',
+    additional_passive_observation: 'yes',
+    remote_keys_withheld: 'yes',
+  });
   assert.equal(receipt.log_capture, 'complete', `${JSON.stringify(receipt)}\n${snapshot.stdout}\n${snapshot.stderr}`);
   assert.deepEqual(receipt.observation_phases, ['zns-embedded-observed']);
+  assert.deepEqual(receipt.launch_observations, {
+    browser_session_configured: 'yes',
+    browser_view_attached: 'yes',
+    zns_navigation_requested: 'yes',
+    zns_navigation_started: 'yes',
+    zns_navigation_completed: 'yes',
+    zns_navigation_failed: 'no',
+  });
   assert.deepEqual(receipt.player_state, {ready: 4, paused: false, muted: true, volume: 0.25});
   assert.doesNotMatch(JSON.stringify(receipt), /1234|GeckoBrowserActivity|android\.launcher|must-not-enter-receipt/);
 
   assert.ok(traceText.indexOf('shell screencap -p /sdcard/kf-zns-after-launch.png')
     < traceText.indexOf('shell dumpsys activity activities'), 'launch screenshot must precede first focus assertion');
+  assert.match(traceText, /logcat -d -t 500 --pid 1234/);
   assert.match(traceText, /shell screencap -p \/sdcard\/kf-zns-after-failure\.png/);
   assert.match(summaryText, /Classification: `INCONCLUSIVE`/);
   assert.match(summaryText, /Commit: `b{40}`/);
   assert.doesNotMatch(result.stderr, /command not found/);
+  assert.doesNotMatch(traceText, /shell input keyevent/);
 });
 
 test('a parsed other focused component is a real negative state, not parser uncertainty', () => {

@@ -12,6 +12,10 @@ import time
 PACKAGE = "com.kulchaflo.tv.mk2.gv"
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_FIXTURE_BYTES = 256 * 1024
+MAX_INPUT_SCAN_BYTES = 8 * 1024 * 1024
+MAX_INPUT_SECTION_BYTES = 64 * 1024
+MAX_INPUT_LINE_BYTES = 8 * 1024
+INPUT_SCAN_TIMEOUT_SECONDS = 12
 COMPONENT = re.compile(
     r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)/"
     r"([A-Za-z_$.][A-Za-z0-9_.$]*)"
@@ -88,7 +92,9 @@ def component_status(stdout, marker, truncated=False, error=None):
 def input_window_status(capture):
     """Read only InputDispatcher's focused window for the Android TV display."""
     capture = capture if isinstance(capture, dict) else {}
-    if capture.get("error") or capture.get("returncode") is None or capture.get("returncode") != 0:
+    if capture.get("error") == "timeout":
+        return "unknown", "command_timeout"
+    if capture.get("error") or capture.get("returncode") is None:
         return "unknown", "command_unavailable"
 
     text, was_truncated = bounded_text(capture.get("stdout", ""))
@@ -96,6 +102,13 @@ def input_window_status(capture):
     # dump cannot rule out a later conflicting display-0 window. Fail closed.
     if capture.get("truncated") or was_truncated:
         return "unknown", "output_truncated"
+    if capture.get("returncode") != 0:
+        return "unknown", "command_unavailable"
+    if capture.get("section_complete") is False:
+        return "unknown", "output_truncated"
+    section_count = capture.get("section_count")
+    if isinstance(section_count, int) and section_count > 1:
+        return "unknown", "ambiguous_components"
     lines = text.splitlines()
     headers = [index for index, line in enumerate(lines) if FOCUSED_WINDOWS_HEADER.search(line)]
     if not headers:
@@ -245,8 +258,124 @@ def capture_android_state():
         "pidof": run_adb(["shell", "pidof", PACKAGE]),
         "activity": run_adb(["shell", "dumpsys", "activity", "activities"]),
         "window": run_adb(["shell", "dumpsys", "window", "windows"]),
-        "input": run_adb(["shell", "dumpsys", "input"]),
+        "input": run_input_dispatcher(),
     })
+
+
+def run_input_dispatcher(timeout=INPUT_SCAN_TIMEOUT_SECONDS):
+    """Stream the full input dump, retaining only bounded FocusedWindows evidence."""
+    try:
+        process = subprocess.Popen(
+            ["adb", "shell", "dumpsys", "input"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return {"stdout": "", "returncode": None, "error": "unavailable", "section_count": 0}
+
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    pending = bytearray()
+    discarding_long_line = False
+    section_lines = []
+    section_bytes = 0
+    section_indent = None
+    section_count = 0
+    section_terminated = False
+    in_focused_section = False
+    truncated = False
+    scanned_bytes = 0
+    timed_out = False
+
+    def consume_line(raw_line):
+        nonlocal section_indent, section_count, section_terminated, in_focused_section, section_bytes, truncated
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r")
+        if FOCUSED_WINDOWS_HEADER.fullmatch(line):
+            section_count += 1
+            if section_count == 1:
+                in_focused_section = True
+                section_indent = len(line) - len(line.lstrip())
+                section_lines.append(line)
+                section_bytes = len(raw_line) + 1
+            else:
+                in_focused_section = False
+                section_terminated = True
+            return
+        if not in_focused_section:
+            return
+        if not line.strip():
+            candidate = line
+        else:
+            indent = len(line) - len(line.lstrip())
+            if indent <= section_indent:
+                in_focused_section = False
+                section_terminated = True
+                return
+            candidate = line
+        candidate_bytes = len(raw_line) + 1
+        if section_bytes + candidate_bytes > MAX_INPUT_SECTION_BYTES:
+            truncated = True
+            in_focused_section = False
+            return
+        section_lines.append(candidate)
+        section_bytes += candidate_bytes
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not selector.select(remaining):
+            process.kill()
+            process.wait()
+            timed_out = True
+            break
+        chunk = os.read(process.stdout.fileno(), 8192)
+        if not chunk:
+            break
+        scanned_bytes += len(chunk)
+        if scanned_bytes > MAX_INPUT_SCAN_BYTES:
+            truncated = True
+            process.kill()
+            process.wait()
+            break
+        for byte in chunk:
+            if byte == 10:
+                if not discarding_long_line:
+                    consume_line(bytes(pending))
+                pending.clear()
+                discarding_long_line = False
+                continue
+            if discarding_long_line:
+                continue
+            pending.append(byte)
+            if len(pending) > MAX_INPUT_LINE_BYTES:
+                if in_focused_section:
+                    truncated = True
+                pending.clear()
+                discarding_long_line = True
+
+    if pending and not discarding_long_line and not timed_out and not truncated:
+        consume_line(bytes(pending))
+    selector.close()
+    process.stdout.close()
+    try:
+        returncode = process.wait(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        timed_out = True
+        returncode = None
+
+    capture = {
+        "stdout": "\n".join(section_lines),
+        "returncode": returncode,
+        "truncated": truncated,
+        "section_count": section_count,
+        "section_complete": not truncated and not timed_out and returncode == 0
+        and (section_count == 0 or section_terminated),
+    }
+    if timed_out:
+        capture["error"] = "timeout"
+    return capture
 
 
 def read_fixture():
