@@ -13417,6 +13417,9 @@ return changed>0;
             } else null
             if (mediaEvent == null && phase !in setOf(
                     "zns-outer-player-first",
+                    "zns-outer-frame-load-watch-attached",
+                    "zns-outer-frame-load-observed",
+                    "zns-embedded-helper-active",
                     "zns-embedded-observed",
                     "zns-embedded-playing",
                     "zns-video-time-advanced",

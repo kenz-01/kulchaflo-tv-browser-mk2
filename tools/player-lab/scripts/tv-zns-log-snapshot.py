@@ -25,6 +25,11 @@ MEDIA_EVENTS = (
     "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
     "pause", "waiting", "stalled", "error", "abort", "emptied",
 )
+LIFECYCLE_PHASES = {
+    "zns-outer-frame-load-watch-attached": "iframe_load_watch_attached",
+    "zns-outer-frame-load-observed": "iframe_load_event_after_watch",
+    "zns-embedded-helper-active": "embedded_helper_active_observed",
+}
 PHASE_PATTERN = re.compile(r"^zns helper phase=([a-z0-9-]+) mode=browser-first")
 STATE_PATTERN = re.compile(
     r"^zns helper phase=zns-embedded-observed mode=browser-first "
@@ -77,6 +82,7 @@ def sanitize(text, capture_status="complete"):
     media_events = set()
     autoplay_permissions = []
     observed = set()
+    lifecycle = set()
     for line in text.splitlines():
         tag_match = APP_LOG_TAG.search(line) or LEGACY_APP_LOG_TAG.search(line)
         if not tag_match:
@@ -84,8 +90,12 @@ def sanitize(text, capture_status="complete"):
         tag, message = tag_match.groups()
         if tag == "GvMedia":
             phase_match = PHASE_PATTERN.match(message)
-            if phase_match and phase_match.group(1) in PHASE_SET and phase_match.group(1) not in phases:
-                phases.append(phase_match.group(1))
+            if phase_match:
+                phase = phase_match.group(1)
+                if phase in PHASE_SET and phase not in phases:
+                    phases.append(phase)
+                if phase in LIFECYCLE_PHASES:
+                    lifecycle.add(LIFECYCLE_PHASES[phase])
             state_match = STATE_PATTERN.match(message)
             if state_match:
                 phases.append("zns-embedded-observed") if "zns-embedded-observed" not in phases else None
@@ -138,6 +148,10 @@ def sanitize(text, capture_status="complete"):
                 observed.add("zns_navigation_failed")
     phases = [phase for phase in PHASES if phase in phases]
     capture_complete = capture_status == "complete"
+    lifecycle_observations = {
+        name: ("yes" if name in lifecycle else "no") if capture_complete else ("yes" if name in lifecycle else "unknown")
+        for name in LIFECYCLE_PHASES.values()
+    }
     media_observed = "yes" if media_state is not None else "no" if capture_complete else "unknown"
     events_observed = "yes" if media_events else "no" if media_state is not None and capture_complete else "unknown"
     media_diagnostics = {
@@ -171,6 +185,9 @@ def sanitize(text, capture_status="complete"):
         "observation_phases": phases,
         "official_frame_observed": "yes" if "zns-outer-player-first" in phases else "no" if capture_complete else "unknown",
         "embed_observed": "yes" if "zns-embedded-observed" in phases else "no" if capture_complete else "unknown",
+        "iframe_load_watch_attached": lifecycle_observations["iframe_load_watch_attached"],
+        "iframe_load_event_after_watch": lifecycle_observations["iframe_load_event_after_watch"],
+        "embedded_helper_active_observed": lifecycle_observations["embedded_helper_active_observed"],
         "player_state": player_state,
         "media_diagnostics": media_diagnostics,
         "video_time_advanced_observed": "yes" if "zns-video-time-advanced" in phases else "no",

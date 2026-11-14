@@ -36,11 +36,33 @@ if [[ "$1" == "wait-for-device" ]]; then exit 0; fi
 if [[ "$1" == "install" ]]; then exit 0; fi
 if [[ "$1" == "pull" ]]; then printf '\\211PNG\\r\\n\\032\\n' > "$3"; exit 0; fi
 if [[ "$1" == "logcat" ]]; then
-  if [[ "$2" == "-c" ]]; then exit 0; fi
+  if [[ "$2" == "-c" ]]; then
+    exit 0
+  fi
+  if [[ "\${TV_FAKE_RECOVERY:-no}" == retry ]]; then
+    count=$(cat "$TV_AM_START_COUNT" 2>/dev/null || printf '0')
+    printf '%s\\n' '11-14 12:00:00.000 1234 1234 I KfMkIIGV:GvTabs: session configured tabId=abc url=https://znsbahamas.com/'
+    printf '%s\\n' '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvTabs: tab activated id=abc url=https://znsbahamas.com/ loading=true'
+    printf '%s\\n' '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/'
+    printf '%s\\n' '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/'
+    if (( count >= 2 )); then
+      printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-helper-active mode=browser-first ready=-1 paused=true muted=true volume=-1.0'
+      printf '%s\\n' '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=2 paused=true muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=false controls=true'
+    else
+      printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-watch-attached mode=browser-first ready=-1 paused=true muted=true volume=-1.0'
+      printf '%s\\n' '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-observed mode=browser-first ready=-1 paused=true muted=true volume=-1.0'
+      printf '%s\\n' '11-14 12:00:00.006 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0'
+    fi
+    exit 0
+  fi
   printf '%s\\n' '11-14 12:00:00.000 1234 1234 I KfMkIIGV:GvTabs: session configured tabId=abc url=https://znsbahamas.com/'
   printf '%s\\n' '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvTabs: tab activated id=abc url=https://znsbahamas.com/ loading=true'
   printf '%s\\n' '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/'
   printf '%s\\n' '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/'
+  printf '%s\\n' '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-watch-attached mode=browser-first ready=-1 paused=true muted=true volume=-1.0'
+  printf '%s\\n' '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-observed mode=browser-first ready=-1 paused=true muted=true volume=-1.0'
+  printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0'
+  printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-helper-active mode=browser-first ready=-1 paused=true muted=true volume=-1.0'
   printf '%s\\n' '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=false controls=true'
   printf '%s\\n' '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns media event=loadedmetadata ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=false controls=true'
   printf '%s\\n' '11-14 12:00:00.006 1234 1234 I KfMkIIGV:GvMedia: zns autoplay permission type=inaudible requested=other decision=allow'
@@ -57,7 +79,13 @@ if [[ "$1" == "shell" ]]; then
       ;;
     pm) printf 'feature:android.software.leanback\\n' ;;
     pidof) printf '1234\\n' ;;
-    am) printf 'Status: ok\\n' ;;
+    am)
+      if [[ "\${TV_FAKE_RECOVERY:-no}" == retry ]]; then
+        count=$(cat "$TV_AM_START_COUNT" 2>/dev/null || printf '0')
+        printf '%s\\n' "$((count + 1))" > "$TV_AM_START_COUNT"
+      fi
+      printf 'Status: ok\\n'
+      ;;
     dumpsys)
       if [[ "$3" == "activity" ]]; then
         printf '%s\\n' 'topResumedActivity=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity t5}'
@@ -90,7 +118,7 @@ exit 0
   return {root, scriptPath: join(scriptDir, 'tv-zns-source-feedback.sh'), bin, apk};
 }
 
-function runHarness(focusMode) {
+function runHarness(focusMode, recoveryMode = 'no') {
   const sandbox = createSandbox(focusMode);
   const summary = join(sandbox.root, 'step-summary.md');
   const trace = join(sandbox.root, 'adb-trace.txt');
@@ -106,6 +134,8 @@ function runHarness(focusMode) {
       GITHUB_SHA: 'b'.repeat(40),
       TV_ADB_TRACE: trace,
       TV_FOCUS_MODE: focusMode,
+      TV_FAKE_RECOVERY: recoveryMode,
+      TV_AM_START_COUNT: join(sandbox.root, 'activity-start-count.txt'),
     },
   });
   const snapshot = spawnSync('python3', [join(sandbox.root, 'tools/player-lab/scripts/tv-zns-log-snapshot.py'), 'capture'], {
@@ -145,8 +175,8 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
     additional_passive_observation: 'yes',
     remote_keys_withheld: 'yes',
   });
-  assert.equal(receipt.log_capture, 'complete', `${JSON.stringify(receipt)}\n${snapshot.stdout}\n${snapshot.stderr}`);
-  assert.deepEqual(receipt.observation_phases, ['zns-embedded-observed']);
+  assert.equal(receipt.log_capture, 'complete', `${JSON.stringify(receipt)}\n${snapshot.stdout}\n${snapshot.stderr}\n${traceText}`);
+  assert.deepEqual(receipt.observation_phases, ['zns-outer-player-first', 'zns-embedded-observed']);
   assert.deepEqual(receipt.launch_observations, {
     browser_session_configured: 'yes',
     browser_view_attached: 'yes',
@@ -157,21 +187,33 @@ test('failure captures an early frame, bounded state, failure frame, and safe su
   });
   assert.deepEqual(receipt.player_state, {ready: 4, paused: false, muted: true, volume: 0.25});
   assert.equal(receipt.embed_observed, 'yes');
-  assert.equal(receipt.official_frame_observed, 'no');
+  assert.equal(receipt.official_frame_observed, 'yes');
+  assert.deepEqual(receipt.frame_lifecycle, {
+    iframe_load_watch_attached: 'yes',
+    iframe_load_event_after_watch: 'yes',
+    embedded_helper_active_observed: 'yes',
+  });
   assert.equal(receipt.media_diagnostics.source_present, true);
   assert.equal(receipt.media_diagnostics.network_state, 2);
   assert.deepEqual(receipt.media_diagnostics.events, ['loadedmetadata']);
   assert.deepEqual(receipt.media_diagnostics.autoplay_permission_events, [
     {type: 'inaudible', requested: 'other', decision: 'allow'},
   ]);
+  assert.equal(receipt.diagnostic_success, false);
+  assert.equal(receipt.diagnostic_cause, 'not_established');
+  assert.equal(receipt.playback_progression, 'no');
+  assert.equal(receipt.device_acceptance, 'not_tested');
   assert.doesNotMatch(JSON.stringify(receipt), /1234|GeckoBrowserActivity|android\.launcher|must-not-enter-receipt/);
 
   assert.ok(traceText.indexOf('shell screencap -p /sdcard/kf-zns-after-launch.png')
     < traceText.indexOf('shell dumpsys activity activities'), 'launch screenshot must precede first focus assertion');
   assert.match(traceText, /logcat -d --pid 1234/);
   assert.match(traceText, /shell screencap -p \/sdcard\/kf-zns-after-failure\.png/);
+  assert.match(traceText, /shell screencap -p \/sdcard\/kf-zns-attempt-1-before\.png/);
   assert.match(summaryText, /Classification: `INCONCLUSIVE`/);
   assert.match(summaryText, /Commit: `b{40}`/);
+  assert.match(summaryText, /Diagnostic success: `no`; cause: `not_established`/);
+  assert.match(summaryText, /Navigation attempts: no attempt completed/);
   assert.doesNotMatch(result.stderr, /command not found/);
   assert.doesNotMatch(traceText, /shell input keyevent/);
 });
@@ -193,6 +235,32 @@ test('the harness accepts verified InputDispatcher focus when API 36 omits mCurr
   assert.equal(receipt.app_state_diagnostics.after_launch.input_focus, 'input_target_window');
   assert.equal(receipt.app_state_diagnostics.after_launch.window_focus, 'input_target_window');
   assert.equal(receipt.app_state_diagnostics.after_launch.focus_source, 'input_dispatcher');
+  assert.equal(receipt.navigation_attempts.length, 1);
+  assert.equal(receipt.navigation_attempts[0].attempt_number, 1);
+  assert.equal(receipt.navigation_attempts[0].stop_observation, 'embedded_state_window_elapsed_without_time_advancement');
+  assert.deepEqual(receipt.navigation_attempts[0].screenshots, {
+    before: {file: 'zns-attempt-1-before.png', status: 'captured'},
+    after: {file: 'zns-attempt-1-after.png', status: 'captured'},
+  });
   assert.match(traceText, /shell dumpsys input/);
   assert.doesNotMatch(JSON.stringify(receipt), /secret|GeckoBrowserActivity|kulchaflo/);
+});
+
+test('one bounded fresh navigation recovers from a loaded outer frame without child-helper evidence', () => {
+  const {result, receipt, traceText} = runHarness('target', 'retry');
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(receipt.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
+  assert.equal(receipt.navigation_attempts.length, 2);
+  assert.equal(receipt.navigation_attempts[0].stop_observation, 'official_frame_seen_without_embedded_helper');
+  assert.equal(receipt.navigation_attempts[0].after.iframe_load_event_after_watch, 'yes');
+  assert.equal(receipt.navigation_attempts[0].after.embedded_helper_active_observed, 'no');
+  assert.equal(receipt.navigation_attempts[1].recovery_reason, 'official_frame_without_embedded_helper');
+  assert.equal(receipt.navigation_attempts[1].after.embedded_helper_active_observed, 'yes');
+  assert.equal(receipt.navigation_attempts[1].after.embed_observed, 'yes');
+  assert.equal(receipt.navigation_attempts[1].screenshots.before.status, 'captured');
+  assert.equal(receipt.navigation_attempts[1].screenshots.after.status, 'captured');
+  assert.match(traceText, /shell screencap -p \/sdcard\/kf-zns-attempt-1-after\.png/);
+  assert.equal((traceText.match(/shell am start -W/g) || []).length, 2);
+  assert.equal((traceText.match(/logcat -c/g) || []).length, 2);
+  assert.doesNotMatch(JSON.stringify(receipt), /streamcomedia|znsbahamas\.com\?/);
 });

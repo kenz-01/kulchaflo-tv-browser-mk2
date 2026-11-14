@@ -21,6 +21,9 @@ test('ZNS remains a separate explicitly selected manual profile on standard free
   assert.doesNotMatch(workflow, /^\s*(pull_request|push|schedule):/m);
   assert.match(workflow, /runs-on:\s+ubuntu-latest/);
   assert.doesNotMatch(workflow, /larger runner|self-hosted|schedule:/i);
+  assert.match(workflow, /timeout-minutes:\s+45/);
+  assert.match(workflow, /!.*navigation-attempts/);
+  assert.match(workflow, /name: tv-cloud-emulator-\$\{\{ inputs\.test_profile \}\}-navigation-attempts/);
 });
 
 test('the neutral infrastructure qualification remains generic and does not navigate to a broadcaster', () => {
@@ -33,7 +36,12 @@ test('the neutral infrastructure qualification remains generic and does not navi
 test('the ZNS profile uses only the official route and never dispatches play or center actions', () => {
   assert.match(script, /SOURCE_URL="https:\/\/znsbahamas\.com\/"/);
   assert.match(script, /am start -W -n "\$ACTIVITY" -e url "\$SOURCE_URL"/);
-  assert.match(script, /sleep 25/);
+  assert.match(script, /MAX_NAVIGATION_POLLS=15/);
+  assert.match(script, /MAX_NAVIGATION_SECONDS_PER_ATTEMPT=45/);
+  assert.match(script, /MAX_LOG_SNAPSHOT_SECONDS=6/);
+  assert.match(script, /SECONDS - started_at/);
+  assert.match(script, /retry_reason_for_current_observation/);
+  assert.match(script, /navigation_pending_after_bounded_wait/);
   assert.match(script, /KEYCODE_DPAD_DOWN/);
   assert.match(script, /KEYCODE_DPAD_UP/);
   assert.doesNotMatch(script, /KEYCODE_DPAD_CENTER|example\.com|curl |wget |getopts|shift/i);
@@ -43,10 +51,14 @@ test('the machine-readable receipt records exact identity, phases, app state, sc
   assert.match(script, /zns-diagnostic-receipt\.json/);
   assert.match(logSnapshot, /zns-outer-player-first/);
   assert.match(logSnapshot, /zns-embedded-observed/);
+  assert.match(logSnapshot, /iframe_load_event_after_watch/);
+  assert.match(logSnapshot, /embedded_helper_active_observed/);
   assert.match(script, /check_app_state LAUNCH/);
   assert.match(script, /capture_screenshot dpad/);
   assert.match(script, /capture_screenshot back/);
   assert.match(script, /TV_SCREENSHOT_FAILURE/);
+  assert.match(script, /TV_ATTEMPT1_BEFORE_SCREENSHOT/);
+  assert.match(script, /TV_ATTEMPT2_AFTER_SCREENSHOT/);
   assert.match(script, /TV_LAUNCH_STATUS=confirmed/);
   assert.match(script, /TV_DPAD_DISPATCH=yes/);
   assert.match(script, /TV_BACK_DISPATCH=yes/);
@@ -58,7 +70,10 @@ test('the machine-readable receipt records exact identity, phases, app state, sc
   assert.match(classifier, /moving_picture_verified: false/);
   assert.match(classifier, /audio_output_verified: false/);
   assert.match(classifier, /physical_bravia_verified: false/);
-  assert.match(script, /A green job means the bounded diagnostic harness completed/);
+  assert.match(classifier, /diagnostic_success:/);
+  assert.match(classifier, /playback_progression:/);
+  assert.match(classifier, /device_acceptance: 'not_tested'/);
+  assert.match(script, /A green job means the bounded harness completed/);
 });
 
 test('earliest and interaction screenshots are captured before assertions and again at failure', () => {

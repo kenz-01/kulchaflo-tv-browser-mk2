@@ -145,6 +145,9 @@ jobs:
           receipt.setdefault("actions", {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"})
           receipt.setdefault("launch_observations", {name: "unknown" for name in launch_names})
           receipt.setdefault("diagnostic_continuation", {"mode": "not_used", "additional_passive_observation": "no", "remote_keys_withheld": "no"})
+          receipt.setdefault("navigation_attempts", [])
+          receipt.setdefault("frame_lifecycle", {"iframe_load_watch_attached": "unknown", "iframe_load_event_after_watch": "unknown", "embedded_helper_active_observed": "unknown"})
+          receipt.setdefault("harness_limits", {"max_navigation_attempts": 2, "max_recovery_attempts": 1, "max_navigation_window_seconds_per_attempt": 45, "max_log_snapshot_seconds": 6, "max_polls_per_attempt": 15, "poll_interval_seconds": 2, "post_embed_observation_polls": 5})
           receipt.setdefault("log_capture", "incomplete")
           receipt.setdefault("observation_phases", [])
           receipt.setdefault("player_state", None)
@@ -180,6 +183,10 @@ jobs:
               "moving_picture_verified": False,
               "audio_output_verified": False,
               "physical_bravia_verified": False,
+              "diagnostic_success": False,
+              "diagnostic_cause": "not_established",
+              "playback_progression": "unknown",
+              "device_acceptance": "not_tested",
           })
           with open(path, "w", encoding="utf-8") as stream:
               json.dump(receipt, stream, indent=2)
@@ -190,6 +197,9 @@ jobs:
                   stream.write("## ZNS diagnostic harness report\n\n")
                   stream.write(f"- Classification: `{receipt['classification']}`\n")
                   stream.write(f"- Commit: `{receipt['commit']}`\n")
+                  stream.write(f"- Harness success: `{str(receipt.get('harness_completed', False)).lower()}`\n")
+                  stream.write(f"- Diagnostic success: `{str(receipt.get('diagnostic_success', False)).lower()}`; cause: `{receipt.get('diagnostic_cause', 'not_established')}`\n")
+                  stream.write(f"- Playback progression: `{receipt.get('playback_progression', 'unknown')}`; physical TV acceptance: `{receipt.get('device_acceptance', 'not_tested')}`\n")
                   stream.write("- The bounded diagnostic harness did not complete; this receipt does not verify live playback.\n")
           PY
 
@@ -198,6 +208,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tv-cloud-emulator-${{ inputs.test_profile }}
-          path: ${{ runner.temp }}/tv-emulator-qualification/
+          path: |
+            ${{ runner.temp }}/tv-emulator-qualification/
+            !${{ runner.temp }}/tv-emulator-qualification/navigation-attempts/**
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Upload bounded navigation-attempt screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-cloud-emulator-${{ inputs.test_profile }}-navigation-attempts
+          path: ${{ runner.temp }}/tv-emulator-qualification/navigation-attempts/*.png
           if-no-files-found: ignore
           retention-days: 1

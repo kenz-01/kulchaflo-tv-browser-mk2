@@ -344,7 +344,10 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
     '11-14 12:00:00.001 1234 1234 I KfMkIIGV:GvTabs: tab activated id=abc url=https://znsbahamas.com/',
     '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://znsbahamas.com/?session=secret',
     '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://znsbahamas.com/',
+    '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-watch-attached mode=browser-first ready=-1 paused=true muted=true volume=-1.0',
+    '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-observed mode=browser-first ready=-1 paused=true muted=true volume=-1.0',
     '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',
+    '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-helper-active mode=browser-first ready=-1 paused=true muted=true volume=-1.0',
     '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=true controls=false',
     '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns media event=waiting ready=0 paused=true muted=false volume=1.0 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=true controls=false',
     '11-14 12:00:00.005 1234 1234 E KfMkIIGV:GvMedia: zns media event=error ready=0 paused=true muted=false volume=1.0 networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
@@ -362,6 +365,9 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   assert.deepEqual(report.player_state, {ready: 4, paused: false, muted: true, volume: 0.25});
   assert.equal(report.official_frame_observed, 'yes');
   assert.equal(report.embed_observed, 'yes');
+  assert.equal(report.iframe_load_watch_attached, 'yes');
+  assert.equal(report.iframe_load_event_after_watch, 'yes');
+  assert.equal(report.embedded_helper_active_observed, 'yes');
   assert.deepEqual(report.media_diagnostics, {
     observed: 'yes',
     network_state: 3,

@@ -104,10 +104,16 @@
   const ownRoute = route(window.location.href);
   if (ownRoute === "site" && window.top === window) {
     let applied = false;
+    const watchedFrames = new WeakSet();
     const attempt = () => {
       if (applied || route(window.location.href) !== "site") return;
       const frame = officialFrame(document);
       if (!frame) return;
+      if (!watchedFrames.has(frame)) {
+        watchedFrames.add(frame);
+        frame.addEventListener("load", () => report("zns-outer-frame-load-observed"), { once: true });
+        report("zns-outer-frame-load-watch-attached");
+      }
       frame.setAttribute("allowfullscreen", "true");
       if (!applyPlayerFirst(frame, document)) return;
       applied = true;
@@ -118,6 +124,7 @@
   }
 
   if (ownRoute !== "embed" || window.top === window || route(document.referrer) !== "site") return;
+  report("zns-embedded-helper-active");
   const observed = new WeakSet();
   const progressSampleCount = new WeakMap();
   const progressPending = new WeakSet();

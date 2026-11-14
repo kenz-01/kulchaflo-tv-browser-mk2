@@ -62,6 +62,78 @@ test('classifies a complete run with no ZNS observation separately from a player
   assert.equal(noSource.source.observed, false);
   assert.equal(noProgress.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
   assert.equal(noProgress.video_time_advanced_observed, 'no');
+  assert.equal(noProgress.diagnostic_success, false);
+  assert.equal(noProgress.diagnostic_cause, 'not_established');
+  assert.equal(noProgress.playback_progression, 'no');
+  assert.equal(noProgress.device_acceptance, 'not_tested');
+});
+
+test('records bounded attempt comparisons and reports only allowlisted lifecycle and media causes', () => {
+  const receipt = classifyZnsFeedback(completeEvidence({
+    log_capture: 'complete',
+    iframe_load_watch_attached: 'yes',
+    iframe_load_event_after_watch: 'yes',
+    embedded_helper_active_observed: 'no',
+    media_diagnostics: {
+      observed: 'yes',
+      error_observed: 'yes',
+      media_error_code: 2,
+      events: ['error'],
+    },
+    navigation_attempts: [{
+      attempt_number: 1,
+      recovery_reason: 'initial_navigation',
+      poll_count: 15,
+      stop_observation: 'official_frame_seen_without_embedded_helper',
+      before: {
+        capture_status: 'complete',
+        official_frame_observed: 'no',
+        iframe_load_event_after_watch: 'no',
+      },
+      after: {
+        capture_status: 'complete',
+        official_frame_observed: 'yes',
+        iframe_load_event_after_watch: 'yes',
+        embedded_helper_active_observed: 'no',
+        leaked: 'https://player.streamcomedia.com/HTML5/znstv/?token=private',
+      },
+      screenshots: {before: 'captured', after: 'captured'},
+    }, {
+      attempt_number: 2,
+      recovery_reason: 'navigation_pending_after_bounded_wait',
+      poll_count: 99,
+      stop_observation: 'made-up-cause',
+    }, {
+      attempt_number: 3,
+      recovery_reason: 'initial_navigation',
+    }],
+  }));
+
+  assert.equal(receipt.diagnostic_success, true);
+  assert.equal(receipt.diagnostic_cause, 'media_network_error');
+  assert.equal(receipt.playback_progression, 'no');
+  assert.deepEqual(receipt.frame_lifecycle, {
+    iframe_load_watch_attached: 'yes',
+    iframe_load_event_after_watch: 'yes',
+    embedded_helper_active_observed: 'no',
+  });
+  assert.equal(receipt.navigation_attempts.length, 2);
+  assert.equal(receipt.navigation_attempts[1].poll_count, 15);
+  assert.equal(receipt.navigation_attempts[1].stop_observation, 'navigation_start_not_observed_at_poll_limit');
+  assert.deepEqual(receipt.navigation_attempts[1].screenshots, {
+    before: {file: 'zns-attempt-2-before.png', status: 'missing'},
+    after: {file: 'zns-attempt-2-after.png', status: 'missing'},
+  });
+  assert.doesNotMatch(JSON.stringify(receipt), /player\.streamcomedia|token=private|made-up-cause/);
+  assert.deepEqual(receipt.harness_limits, {
+    max_navigation_attempts: 2,
+    max_recovery_attempts: 1,
+    max_navigation_window_seconds_per_attempt: 45,
+    max_log_snapshot_seconds: 6,
+    max_polls_per_attempt: 15,
+    poll_interval_seconds: 2,
+    post_embed_observation_polls: 5,
+  });
 });
 
 test('foreground app launch does not imply GeckoView readiness or ZNS navigation', () => {
