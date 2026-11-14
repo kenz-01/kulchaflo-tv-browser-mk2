@@ -45,7 +45,9 @@ DIAGNOSTICS = {
     "target_process", "process_absent", "unavailable", "unparseable", "output_truncated",
     "target_component", "other_component", "entry_missing", "entry_unparsed",
     "ambiguous_components", "too_many_entries", "command_unavailable",
+    "input_target_window", "input_other_window", "focus_signal_conflict",
 }
+FOCUS_SOURCES = {"window_manager", "input_dispatcher", "both", "conflict", "unknown"}
 CLASSIFICATIONS = {
     "INFRA_FAILURE", "SOURCE_NOT_OBSERVED", "PLAYER_OBSERVED_NO_PROGRESS",
     "PROGRESSION_OBSERVED", "INCONCLUSIVE",
@@ -97,6 +99,12 @@ def diagnostics(value, key):
     state = value if isinstance(value, dict) else {}
     result = state.get(key)
     return result if isinstance(result, str) and result in DIAGNOSTICS else "unavailable"
+
+
+def focus_source(value):
+    state = value if isinstance(value, dict) else {}
+    result = state.get("focus_source")
+    return result if isinstance(result, str) and result in FOCUS_SOURCES else "unknown"
 
 
 def safe_checkpoint(value):
@@ -182,6 +190,9 @@ def sanitize_receipt(receipt, head_sha, run_id, attempt, conclusion):
             "pidof": diagnostics(diag_raw.get(name), "pidof"),
             "activity_foreground": diagnostics(diag_raw.get(name), "activity_foreground"),
             "window_focus": diagnostics(diag_raw.get(name), "window_focus"),
+            "window_manager_focus": diagnostics(diag_raw.get(name), "window_manager_focus"),
+            "input_focus": diagnostics(diag_raw.get(name), "input_focus"),
+            "focus_source": focus_source(diag_raw.get(name)),
         }
         for name in ("after_launch", "after_dpad", "after_back", "after_failure")
     }

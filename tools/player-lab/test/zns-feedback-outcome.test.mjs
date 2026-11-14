@@ -139,6 +139,36 @@ test('an unparseable focus entry stays inconclusive while a parsed other window 
   assert.equal(otherWindow.app_state_diagnostics.after_launch.window_focus, 'other_component');
 });
 
+test('focus service evidence is allowlisted and missing diagnostics remain unknown', () => {
+  const receipt = classifyZnsFeedback(completeEvidence({
+    app_state: {
+      ...allAppState(),
+      after_launch: {process: 'yes', activity_foreground: 'yes', window_focus: 'unknown'},
+    },
+    app_state_diagnostics: {
+      after_launch: {
+        pidof: 'target_process',
+        activity_foreground: 'target_component',
+        window_focus: 'entry_missing',
+        window_manager_focus: 'entry_missing',
+        input_focus: 'entry_missing',
+        focus_source: 'untrusted token=secret',
+      },
+    },
+  }));
+
+  assert.equal(receipt.classification, 'INCONCLUSIVE');
+  assert.deepEqual(receipt.app_state_diagnostics.after_launch, {
+    pidof: 'target_process',
+    activity_foreground: 'target_component',
+    window_focus: 'entry_missing',
+    window_manager_focus: 'entry_missing',
+    input_focus: 'entry_missing',
+    focus_source: 'unknown',
+  });
+  assert.doesNotMatch(JSON.stringify(receipt), /secret|untrusted/);
+});
+
 test('install, launch, profile, and commit prerequisites fail closed', () => {
   const installFailure = classifyZnsFeedback(completeEvidence({
     infrastructure: {emulator_boot: 'yes', apk_install: 'no', app_launch: 'unknown'},

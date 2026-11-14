@@ -43,7 +43,7 @@ jobs:
               "source": {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False},
               "infrastructure": {"emulator_boot": "unknown", "apk_install": "unknown", "app_launch": "unknown"},
               "app_state": {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")},
-              "app_state_diagnostics": {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")},
+              "app_state_diagnostics": {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable", "window_manager_focus": "command_unavailable", "input_focus": "command_unavailable", "focus_source": "unknown"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")},
               "failure_state": {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"},
               "screenshots": {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}},
               "actions": {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"},
@@ -135,7 +135,7 @@ jobs:
           receipt.setdefault("source", {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False})
           receipt.setdefault("infrastructure", {"emulator_boot": "unknown", "apk_install": "unknown", "app_launch": "unknown"})
           receipt.setdefault("app_state", {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")})
-          receipt.setdefault("app_state_diagnostics", {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")})
+          receipt.setdefault("app_state_diagnostics", {name: {"pidof": "unavailable", "activity_foreground": "command_unavailable", "window_focus": "command_unavailable", "window_manager_focus": "command_unavailable", "input_focus": "command_unavailable", "focus_source": "unknown"} for name in ("after_launch", "after_dpad", "after_back", "after_failure")})
           receipt.setdefault("failure_state", {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"})
           receipt.setdefault("screenshots", {"after_launch": {"file": "zns-after-launch.png", "status": "missing"}, "after_dpad": {"file": "zns-after-dpad.png", "status": "missing"}, "after_back": {"file": "zns-after-back.png", "status": "missing"}, "after_failure": {"file": "zns-after-failure.png", "status": "missing"}})
           receipt.setdefault("actions", {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"})

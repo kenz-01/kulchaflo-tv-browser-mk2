@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture bounded, redacted Android process/activity/window state for TV diagnostics."""
+"""Capture bounded, redacted Android process/activity/window/input-focus state."""
 
 import json
 import os
@@ -16,6 +16,8 @@ COMPONENT = re.compile(
     r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)/"
     r"([A-Za-z_$.][A-Za-z0-9_.$]*)"
 )
+FOCUSED_WINDOWS_HEADER = re.compile(r"^\s*FocusedWindows:\s*$")
+INPUT_FOCUSED_WINDOW = re.compile(r"^\s*displayId\s*=\s*(\d+)\s*,\s*name='([^']*)'")
 
 
 def bounded_text(value):
@@ -83,11 +85,84 @@ def component_status(stdout, marker, truncated=False, error=None):
     return "unknown", "output_truncated"
 
 
+def input_window_status(capture):
+    """Read only InputDispatcher's focused window for the Android TV display."""
+    capture = capture if isinstance(capture, dict) else {}
+    if capture.get("error") or capture.get("returncode") is None or capture.get("returncode") != 0:
+        return "unknown", "command_unavailable"
+
+    text, was_truncated = bounded_text(capture.get("stdout", ""))
+    # InputDispatcher can contain multiple focused-window entries; a partial
+    # dump cannot rule out a later conflicting display-0 window. Fail closed.
+    if capture.get("truncated") or was_truncated:
+        return "unknown", "output_truncated"
+    lines = text.splitlines()
+    headers = [index for index, line in enumerate(lines) if FOCUSED_WINDOWS_HEADER.search(line)]
+    if not headers:
+        return "unknown", "entry_missing"
+    if len(headers) != 1:
+        return "unknown", "ambiguous_components"
+
+    header = lines[headers[0]]
+    section_indent = len(header) - len(header.lstrip())
+    outcomes = []
+    unparsed = False
+    relevant_entries = 0
+    for line in lines[headers[0] + 1:]:
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= section_indent:
+            break
+        if "displayId" not in line:
+            continue
+        match = INPUT_FOCUSED_WINDOW.search(line)
+        if not match:
+            if re.search(r"\bdisplayId\s*=\s*0\b", line):
+                unparsed = True
+            continue
+        if int(match.group(1)) != 0:
+            continue
+        relevant_entries += 1
+        if relevant_entries > 32:
+            return "unknown", "too_many_entries"
+        component = COMPONENT.search(match.group(2))
+        if not component:
+            unparsed = True
+            continue
+        outcomes.append("yes" if component.group(1) == PACKAGE else "no")
+
+    if unparsed:
+        return "unknown", "entry_unparsed"
+    if len(outcomes) > 1:
+        return "unknown", "ambiguous_components"
+    if outcomes == ["yes"]:
+        return "yes", "input_target_window"
+    if outcomes == ["no"]:
+        return "no", "input_other_window"
+    return "unknown", "entry_missing"
+
+
+def resolve_focus(window_status, window_detail, input_status, input_detail):
+    window_known = window_status in {"yes", "no"}
+    input_known = input_status in {"yes", "no"}
+    if window_known and input_known:
+        if window_status != input_status:
+            return "unknown", "focus_signal_conflict", "conflict"
+        return window_status, window_detail, "both"
+    if window_known:
+        return window_status, window_detail, "window_manager"
+    if input_known:
+        return input_status, input_detail, "input_dispatcher"
+    return "unknown", window_detail, "unknown"
+
+
 def parse_capture(capture):
     capture = capture if isinstance(capture, dict) else {}
     pid = capture.get("pidof") if isinstance(capture.get("pidof"), dict) else {}
     activity = capture.get("activity") if isinstance(capture.get("activity"), dict) else {}
     window = capture.get("window") if isinstance(capture.get("window"), dict) else {}
+    input_state = capture.get("input") if isinstance(capture.get("input"), dict) else {}
 
     process, pidof_detail = process_status(
         pid.get("stdout", ""), pid.get("returncode"), pid.get("error"), pid.get("truncated", False)
@@ -96,11 +171,15 @@ def parse_capture(capture):
         activity.get("stdout", ""), re.compile(r"(?:topResumedActivity|mResumedActivity)"),
         activity.get("truncated", False), activity.get("error")
     )
-    # mFocusedApp describes an app/activity; only mCurrentFocus proves the
-    # input-focused window and can determine the reported window-focus state.
-    focus, focus_detail = component_status(
+    # mFocusedApp and resumed-activity lines describe activity state. Only the
+    # current window or InputDispatcher's focused window can verify input focus.
+    window_focus, window_focus_detail = component_status(
         window.get("stdout", ""), re.compile(r"^\s*mCurrentFocus\s*="),
         window.get("truncated", False), window.get("error")
+    )
+    input_focus, input_focus_detail = input_window_status(input_state)
+    focus, focus_detail, focus_source = resolve_focus(
+        window_focus, window_focus_detail, input_focus, input_focus_detail
     )
     return {
         "process": process,
@@ -110,6 +189,9 @@ def parse_capture(capture):
             "pidof": pidof_detail,
             "activity_foreground": activity_detail,
             "window_focus": focus_detail,
+            "window_manager_focus": window_focus_detail,
+            "input_focus": input_focus_detail,
+            "focus_source": focus_source,
         },
     }
 
@@ -163,6 +245,7 @@ def capture_android_state():
         "pidof": run_adb(["shell", "pidof", PACKAGE]),
         "activity": run_adb(["shell", "dumpsys", "activity", "activities"]),
         "window": run_adb(["shell", "dumpsys", "window", "windows"]),
+        "input": run_adb(["shell", "dumpsys", "input"]),
     })
 
 
@@ -191,6 +274,9 @@ def main():
                 "pidof": "unparseable",
                 "activity_foreground": "unparseable",
                 "window_focus": "unparseable",
+                "window_manager_focus": "unparseable",
+                "input_focus": "unparseable",
+                "focus_source": "unknown",
             },
         }
     print(json.dumps(output, separators=(",", ":"), sort_keys=True))

@@ -30,7 +30,9 @@ const APP_DIAGNOSTICS = new Set([
   'target_process', 'process_absent', 'unavailable', 'unparseable', 'output_truncated',
   'target_component', 'other_component', 'entry_missing', 'entry_unparsed',
   'ambiguous_components', 'too_many_entries', 'command_unavailable',
+  'input_target_window', 'input_other_window', 'focus_signal_conflict',
 ]);
+const FOCUS_SOURCES = new Set(['window_manager', 'input_dispatcher', 'both', 'conflict', 'unknown']);
 
 const isStatus = (value) => value === 'yes' || value === 'no';
 const asBoolean = (value) => value === true || value === 'true';
@@ -84,6 +86,9 @@ function safeAppDiagnostics(diagnostics = {}) {
       pidof: safe(state.pidof),
       activity_foreground: safe(state.activity_foreground),
       window_focus: safe(state.window_focus),
+      window_manager_focus: safe(state.window_manager_focus),
+      input_focus: safe(state.input_focus),
+      focus_source: FOCUS_SOURCES.has(state.focus_source) ? state.focus_source : 'unknown',
     }];
   }));
 }
@@ -240,6 +245,9 @@ function evidenceFromEnvironment(env) {
     pidof: env[`TV_${name}_PIDOF_DIAGNOSTIC`] || 'unavailable',
     activity_foreground: env[`TV_${name}_ACTIVITY_DIAGNOSTIC`] || 'command_unavailable',
     window_focus: env[`TV_${name}_FOCUS_DIAGNOSTIC`] || 'command_unavailable',
+    window_manager_focus: env[`TV_${name}_WINDOW_MANAGER_FOCUS_DIAGNOSTIC`] || 'command_unavailable',
+    input_focus: env[`TV_${name}_INPUT_FOCUS_DIAGNOSTIC`] || 'command_unavailable',
+    focus_source: env[`TV_${name}_FOCUS_SOURCE`] || 'unknown',
   });
   return {
     commit: env.GITHUB_SHA,

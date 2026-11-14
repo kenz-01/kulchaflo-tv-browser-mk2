@@ -35,7 +35,7 @@ function fixtureReceipt(overrides = {}) {
       after_back: allState(),
     },
     app_state_diagnostics: {
-      after_launch: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing'},
+      after_launch: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing', window_manager_focus: 'entry_missing', input_focus: 'input_other_window', focus_source: 'input_dispatcher'},
       after_dpad: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing'},
       after_back: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing'},
       after_failure: {pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing'},
@@ -82,6 +82,9 @@ test('relay recomputes a bounded report and drops arbitrary strings, paths, phas
   assert.equal(report.failure_stage, 'required_app_state');
   assert.equal(report.app_state.after_launch.window_focus, 'unknown');
   assert.equal(report.app_state_diagnostics.after_launch.window_focus, 'entry_missing');
+  assert.equal(report.app_state_diagnostics.after_launch.window_manager_focus, 'entry_missing');
+  assert.equal(report.app_state_diagnostics.after_launch.input_focus, 'input_other_window');
+  assert.equal(report.app_state_diagnostics.after_launch.focus_source, 'input_dispatcher');
   assert.equal(report.screenshots.after_launch, 'captured');
   assert.equal(report.screenshots.after_failure, 'captured');
   assert.deepEqual(report.observation_phases, []);
@@ -89,6 +92,25 @@ test('relay recomputes a bounded report and drops arbitrary strings, paths, phas
   assert.equal(report.helper_initiated_playback, false);
   assert.equal(report.audio_output_verified, false);
   assert.doesNotMatch(result.stdout, /attacker-controlled|untrusted\.invalid|secret|\.\.\//);
+});
+
+test('relay bounds focus diagnostics and rejects arbitrary service output', () => {
+  const receipt = fixtureReceipt({
+    app_state_diagnostics: {
+      after_launch: {
+        pidof: 'target_process', activity_foreground: 'target_component', window_focus: 'entry_missing',
+        window_manager_focus: 'window name token=secret', input_focus: 'other package=secret',
+        focus_source: 'raw InputDispatcher dump secret',
+      },
+    },
+  });
+  const result = sanitize(receipt);
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.app_state_diagnostics.after_launch.window_manager_focus, 'unavailable');
+  assert.equal(report.app_state_diagnostics.after_launch.input_focus, 'unavailable');
+  assert.equal(report.app_state_diagnostics.after_launch.focus_source, 'unknown');
+  assert.doesNotMatch(result.stdout, /secret|raw InputDispatcher|window name/);
 });
 
 test('relay rejects wrong profile, SHA, and unfinalized receipts', () => {
