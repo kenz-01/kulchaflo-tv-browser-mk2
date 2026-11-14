@@ -20,6 +20,16 @@
       ],
       "requiredProtocol": "https:",
       "defaultProfileId": "sony-bravia"
+    },
+    "telesistema-11": {
+      "providerId": "telesistema-11",
+      "initialUrl": "https://telesistema11.com.do/en-vivo/",
+      "allowedMainFrameHosts": [
+        "telesistema11.com.do",
+        "www.telesistema11.com.do"
+      ],
+      "requiredProtocol": "https:",
+      "defaultProfileId": "sony-bravia"
     }
   }
 }
