@@ -155,7 +155,7 @@ test('trusted player state and bounded time progression are reported without aud
     },
     setTimeout(callback, delay) { timers.push({callback, delay}); },
   });
-  const retries = timers.splice(0);
+  const retries = timers.splice(0).filter(({delay}) => delay <= 18000);
   assert.deepEqual(retries.map(({delay}) => delay), [300, 900, 2000, 4000, 7000, 11000, 18000]);
   retries.forEach(({callback}) => callback());
   assert.ok(prompts.some((value) => value.includes('zns-embedded-helper-active')));
@@ -277,6 +277,83 @@ test('ZNS mute transitions report before/after state and recent trusted input wi
   assert.doesNotMatch(prompts.join('\n'), /opaque-id|secret|private/);
 });
 
+test('late ZNS video insertion is observed by a bounded DOM watcher with helper-relative timing', () => {
+  const timers = [];
+  const prompts = [];
+  let now = 1000;
+  let videos = [];
+  let mutationCallback;
+  let observedOptions;
+  let disconnected = false;
+  class FakeMutationObserver {
+    constructor(callback) { mutationCallback = callback; }
+    observe(_target, options) { observedOptions = options; }
+    disconnect() { disconnected = true; }
+  }
+  const document = {
+    referrer: 'https://znsbahamas.com/',
+    documentElement: {},
+    addEventListener() {},
+    querySelectorAll(selector) { return selector === 'video' ? videos : []; },
+  };
+  const window = {
+    location: {href: 'https://player.streamcomedia.com/HTML5/znstv/'},
+    top: {},
+    prompt(value) { prompts.push(JSON.parse(value.slice('__GV_MEDIA__'.length))); },
+    getComputedStyle() { return {display: 'block', visibility: 'visible', opacity: '1'}; },
+  };
+  runInNewContext(helperSource, {
+    URL,
+    Date: {now: () => now},
+    MutationObserver: FakeMutationObserver,
+    window,
+    document,
+    setTimeout(callback, delay) { timers.push({callback, delay}); },
+  });
+
+  assert.equal(JSON.stringify(observedOptions), JSON.stringify({
+    attributes: true,
+    attributeFilter: ['class', 'hidden', 'src', 'style'],
+    childList: true,
+    subtree: true,
+  }));
+  assert.ok(prompts.some(({phase, initialVideoCount}) => phase === 'zns-embedded-helper-active' && initialVideoCount === 0));
+
+  now += 39000;
+  const video = {
+    readyState: 1,
+    networkState: 2,
+    error: null,
+    paused: true,
+    muted: true,
+    volume: 1,
+    currentSrc: '',
+    autoplay: false,
+    controls: true,
+    currentTime: 0,
+    addEventListener(name, callback) { this[`on${name}`] = callback; },
+    querySelector() { return null; },
+    matches(selector) { return selector === 'video'; },
+    getBoundingClientRect() { return {width: 900, height: 500}; },
+  };
+  videos = [video];
+  mutationCallback([{type: 'childList', addedNodes: [video]}]);
+
+  const discovery = prompts.find(({phase}) => phase === 'zns-video-discovery');
+  assert.deepEqual(
+    {age: discovery.helperAgeMs, count: discovery.videoCount, visible: discovery.visibleVideoCount, trigger: discovery.trigger},
+    {age: 39000, count: 1, visible: 1, trigger: 'video_inserted'},
+  );
+  const observed = prompts.find(({phase}) => phase === 'zns-embedded-observed');
+  assert.equal(observed.helperAgeMs, 39000);
+  assert.equal(observed.discoveryTrigger, 'mutation');
+  assert.equal(observed.autoplay, false);
+  assert.equal(video.muted, true);
+  assert.equal(video.volume, 1);
+  assert.equal(disconnected, false);
+  assert.equal(timers.find(({delay}) => delay === 60000) !== undefined, true);
+});
+
 test('the embedded player helper does not run without the official site referrer', () => {
   const timers = [];
   runInNewContext(helperSource, {
@@ -295,7 +372,10 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.match(activity, /private fun isZnsTvSiteUrl[\s\S]*?host == "znsbahamas\.com" && path == "\/"/);
   assert.match(activity, /private fun isZnsStreamcomediaEmbedUrl[\s\S]*?host == "player\.streamcomedia\.com" && path == "\/html5\/znstv"/);
   assert.match(activity, /private const val ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW = true/);
-  assert.match(activity, /val znsPermissionContext = listOf\(permission\.uri\.orEmpty\(\), permission\.thirdPartyOrigin\.orEmpty\(\)\)[\s\S]*?\.any \{ isZnsStreamcomediaEmbedUrl\(it\) \}/);
+  assert.match(activity, /private fun isZnsTvPermissionOriginUrl[\s\S]*?removePrefix\("www\."\) == "znsbahamas\.com"/);
+  assert.match(activity, /val znsTopContext = isZnsTvSiteUrl\(activeSessionUrl\)/);
+  assert.match(activity, /val znsPermissionOrigin = listOf\(permission\.uri\.orEmpty\(\), permission\.thirdPartyOrigin\.orEmpty\(\)\)[\s\S]*?isZnsTvPermissionOriginUrl\(origin\) -> "publisher"[\s\S]*?isZnsStreamcomediaEmbedUrl\(origin\) -> "streamcomedia"/);
+  assert.match(activity, /val znsPermissionContext = znsPermissionOrigin != null/);
   assert.match(activity, /val znsAutoplayScoped = ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW &&[\s\S]*?autoplayPermissionRequest && znsTopContext && znsPermissionContext/);
   assert.match(activity, /znsAutoplayScoped -> GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_ALLOW/);
   assert.doesNotMatch(helperSource, /video\.muted\s*=|video\.volume\s*=|video\.play\s*\(/);
@@ -314,7 +394,9 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.match(activity, /if \(phase == "zns-audio-state"\)/);
   assert.match(activity, /zns audio state event=volumechange mutedBefore=/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first ready=\$readyState paused=\$paused muted=\$muted volume=\$volume/);
-  assert.match(activity, /zns autoplay permission type=\$type requested=\$requested decision=\$decisionLabel/);
+  assert.match(activity, /zns autoplay permission type=\$type requested=\$requested decision=\$decisionLabel " \+[\s\S]*?origin=\$\{znsPermissionOrigin \?: "other"\} scopeMatched=\$znsPermissionContext/);
+  assert.match(activity, /zns video discovery phase=\$phase ageMs=\$helperAgeMs videoCount=\$videoCount/);
+  assert.match(activity, /content permission tabId=\$tabId uriHost=\$\{uriHost \?: "unknown"\}/);
   assert.match(activity, /zns media event=\$mediaEvent/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first/);
   assert.match(activity, /zns-outer-frame-load-watch-attached/);

@@ -347,11 +347,12 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
     '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-watch-attached mode=browser-first ready=-1 paused=true muted=true volume=-1.0',
     '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-frame-load-observed mode=browser-first ready=-1 paused=true muted=true volume=-1.0',
     '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-outer-player-first mode=browser-first ready=0 paused=true muted=true volume=0.0',
-    '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-helper-active mode=browser-first ready=-1 paused=true muted=true volume=-1.0',
+    '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-helper-active mode=browser-first ready=-1 paused=true muted=true volume=-1.0 helperAgeMs=0 discoveryTrigger=none initialVideoCount=0 initialVisibleVideoCount=0',
+    '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvMedia: zns video discovery phase=zns-video-discovery ageMs=39000 videoCount=1 visibleVideoCount=1 trigger=video_inserted reason=none videoEverObserved=false',
     '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-embedded-observed mode=browser-first ready=4 paused=false muted=true volume=0.25 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=true controls=false',
     '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns media event=waiting ready=0 paused=true muted=false volume=1.0 networkState=2 mediaError=0 sourcePresent=true rendered=yes autoplay=true controls=false',
     '11-14 12:00:00.005 1234 1234 E KfMkIIGV:GvMedia: zns media event=error ready=0 paused=true muted=false volume=1.0 networkState=3 mediaError=4 sourcePresent=true rendered=yes autoplay=true controls=false',
-    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns autoplay permission type=audible requested=other decision=allow',
+    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvMedia: zns autoplay permission type=audible requested=other decision=allow origin=publisher scopeMatched=true',
     '11-14 12:00:00.006 1234 1234 I KfMkIIGV:GvMedia: zns helper phase=zns-video-time-advanced mode=browser-first ready=4 paused=false muted=true volume=0.25',
     '11-14 12:00:00.007 1234 1234 I KfMkIIGV:GvMedia: private token=never-copy https://example.invalid/?session=secret',
   ].join('\n');
@@ -368,6 +369,16 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
   assert.equal(report.iframe_load_watch_attached, 'yes');
   assert.equal(report.iframe_load_event_after_watch, 'yes');
   assert.equal(report.embedded_helper_active_observed, 'yes');
+  assert.deepEqual(report.helper_initial_state, {video_count: 0, visible_video_count: 0});
+  assert.deepEqual(report.video_discovery_events, [{
+    phase: 'zns-video-discovery',
+    helper_age_ms: 39000,
+    video_count: 1,
+    visible_video_count: 1,
+    trigger: 'video_inserted',
+    reason: 'none',
+    video_ever_observed: false,
+  }]);
   assert.deepEqual(report.media_diagnostics, {
     observed: 'yes',
     network_state: 3,
@@ -380,7 +391,7 @@ test('log snapshot retains only bounded allowlisted phases and player scalars', 
     events_observed: 'yes',
     events: ['waiting', 'error'],
     autoplay_permission_observed: 'yes',
-    autoplay_permission_events: [{type: 'audible', requested: 'other', decision: 'allow'}],
+    autoplay_permission_events: [{type: 'audible', requested: 'other', decision: 'allow', origin: 'publisher', scope_matched: true}],
   });
   assert.equal(report.video_time_advanced_observed, 'yes');
   assert.deepEqual(report.launch_observations, {

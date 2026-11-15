@@ -9824,9 +9824,17 @@ return changed>0;
             val autoplayPermissionRequest =
                 permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
                     permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
-            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
-            val znsPermissionContext = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
-                .any { isZnsStreamcomediaEmbedUrl(it) }
+            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl)
+            val znsPermissionOrigin = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
+                .mapNotNull { origin ->
+                    when {
+                        isZnsTvPermissionOriginUrl(origin) -> "publisher"
+                        isZnsStreamcomediaEmbedUrl(origin) -> "streamcomedia"
+                        else -> null
+                    }
+                }
+                .firstOrNull()
+            val znsPermissionContext = znsPermissionOrigin != null
             val znsAutoplayScoped = ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW &&
                 autoplayPermissionRequest && znsTopContext && znsPermissionContext
             val telesistemaTopContext = isTelesistemaLivePageUrl(activeSessionUrl) || isTelesistemaLivePageUrl(currentRootUrl)
@@ -9859,7 +9867,7 @@ return changed>0;
                         ) -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 else -> permission.value
             }
-            if (znsAutoplayScoped || telesistemaAutoplayScoped) {
+            if ((znsTopContext && autoplayPermissionRequest) || telesistemaAutoplayScoped) {
                 val type = if (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE) {
                     "audible"
                 } else "inaudible"
@@ -9873,10 +9881,11 @@ return changed>0;
                     GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY -> "deny"
                     else -> "other"
                 }
-                if (znsAutoplayScoped) {
+                if (znsTopContext && autoplayPermissionRequest) {
                     GvLogger.i(
                         "GvMedia",
-                        "zns autoplay permission type=$type requested=$requested decision=$decisionLabel"
+                        "zns autoplay permission type=$type requested=$requested decision=$decisionLabel " +
+                            "origin=${znsPermissionOrigin ?: "other"} scopeMatched=$znsPermissionContext"
                     )
                 }
                 if (telesistemaAutoplayScoped) {
@@ -9889,7 +9898,10 @@ return changed>0;
             val tabId = tabController.findTabBySession(session)?.id ?: "unknown"
             GvLogger.i(
                 "GvNav",
-                "content permission tabId=$tabId uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision facebookScoped=$facebookScoped googleVideoScoped=$googleVideoScoped"
+                "content permission tabId=$tabId uriHost=${uriHost ?: "unknown"} " +
+                    "thirdPartyHost=${thirdPartyHost ?: "unknown"} permission=${permission.permission} " +
+                    "requestedValue=${permission.value} decision=$decision " +
+                    "facebookScoped=$facebookScoped googleVideoScoped=$googleVideoScoped"
             )
             if (cvmAutoplayScoped) {
                 GvLogger.i(
@@ -13462,8 +13474,29 @@ return changed>0;
                     "zns-embedded-observed",
                     "zns-embedded-playing",
                     "zns-video-time-advanced",
+                    "zns-video-discovery",
+                    "zns-video-discovery-window-ended",
                 )
             ) return
+            if (phase == "zns-video-discovery" || phase == "zns-video-discovery-window-ended") {
+                val rawAgeMs = payload.optInt("helperAgeMs", -1)
+                val helperAgeMs = rawAgeMs.takeIf { it in 0..60_000 } ?: -1
+                val videoCount = payload.optInt("videoCount", -1).takeIf { it in 0..32 } ?: -1
+                val visibleVideoCount = payload.optInt("visibleVideoCount", -1).takeIf { it in 0..32 } ?: -1
+                val trigger = payload.optString("trigger").takeIf {
+                    it in setOf("video_inserted", "video_changed", "observer_unavailable")
+                } ?: "none"
+                val reason = payload.optString("reason").takeIf {
+                    it in setOf("deadline", "pagehide")
+                } ?: "none"
+                GvLogger.i(
+                    "GvMedia",
+                    "zns video discovery phase=$phase ageMs=$helperAgeMs videoCount=$videoCount " +
+                        "visibleVideoCount=$visibleVideoCount trigger=$trigger reason=$reason " +
+                        "videoEverObserved=${payload.optBoolean("videoEverObserved", false)}"
+                )
+                return
+            }
             val readyState = payload.optInt("readyState", -1).coerceIn(-1, 4)
             val paused = payload.optBoolean("paused", true)
             val muted = payload.optBoolean("muted", true)
@@ -13478,6 +13511,18 @@ return changed>0;
             val rendered = payload.optString("rendered").takeIf { it in setOf("yes", "no", "unknown") } ?: "unknown"
             val autoplay = payload.optBoolean("autoplay", false)
             val controls = payload.optBoolean("controls", false)
+            val helperAgeMs = payload.optInt("helperAgeMs", -1).takeIf { it in 0..60_000 } ?: -1
+            val initialVideoCount = payload.optInt("initialVideoCount", -1).takeIf { it in 0..32 } ?: -1
+            val initialVisibleVideoCount = payload.optInt("initialVisibleVideoCount", -1).takeIf { it in 0..32 } ?: -1
+            val discoveryTrigger = payload.optString("discoveryTrigger").takeIf {
+                it in setOf("initial", "scheduled", "mutation")
+            } ?: "none"
+            val discoveryDetails = if (helperAgeMs >= 0) {
+                " helperAgeMs=$helperAgeMs discoveryTrigger=$discoveryTrigger" +
+                    if (phase == "zns-embedded-helper-active") {
+                        " initialVideoCount=$initialVideoCount initialVisibleVideoCount=$initialVisibleVideoCount"
+                    } else ""
+            } else ""
             val mediaDetails = if (hasMediaSnapshot) {
                 " networkState=$networkState mediaError=$mediaErrorCode sourcePresent=$sourcePresent rendered=$rendered autoplay=$autoplay controls=$controls"
             } else ""
@@ -13490,7 +13535,7 @@ return changed>0;
             }
             GvLogger.i(
                 "GvMedia",
-                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume$mediaDetails"
+                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume$mediaDetails$discoveryDetails"
             )
             if (phase == "zns-embedded-playing") {
                 enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")
@@ -17280,6 +17325,13 @@ return changed>0;
         val host = uri.host?.lowercase()?.removePrefix("www.") ?: return false
         val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
         return host == "znsbahamas.com" && path == "/"
+    }
+
+    private fun isZnsTvPermissionOriginUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https" || !uri.encodedUserInfo.isNullOrEmpty()) return false
+        if (uri.port != -1 && uri.port != 443) return false
+        return uri.host?.lowercase()?.removePrefix("www.") == "znsbahamas.com"
     }
 
     private fun isZnsStreamcomediaEmbedUrl(url: String): Boolean {

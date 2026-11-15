@@ -6,6 +6,8 @@
     embed: "player.streamcomedia.com",
   });
   const RETRY_DELAYS_MS = Object.freeze([300, 900, 2000, 4000, 7000, 11000, 18000]);
+  const VIDEO_DISCOVERY_WINDOW_MS = 60000;
+  const MAX_VIDEO_DISCOVERY_EVENTS = 8;
   const PROGRESS_SAMPLE_MS = 4000;
   const MAX_PROGRESS_SAMPLES = 3;
   const TRUSTED_INPUT_WINDOW_MS = 5000;
@@ -126,7 +128,17 @@
   }
 
   if (ownRoute !== "embed" || window.top === window || route(document.referrer) !== "site") return;
-  report("zns-embedded-helper-active");
+  const helperStartedAtMs = Date.now();
+  const videoElements = () => {
+    try { return Array.from(document.querySelectorAll("video")).slice(0, 32); } catch (_) { return []; }
+  };
+  const initialVideos = videoElements();
+  const initialVisibleVideoCount = initialVideos.filter(visible).length;
+  report("zns-embedded-helper-active", {
+    helperAgeMs: 0,
+    initialVideoCount: initialVideos.length,
+    initialVisibleVideoCount,
+  });
   const observed = new WeakSet();
   const progressSampleCount = new WeakMap();
   const progressPending = new WeakSet();
@@ -217,14 +229,25 @@
     reported.add(event);
     report("zns-media-event", { event, ...mediaSnapshot(video) });
   };
-  const attempt = () => {
-    const video = oneVisible(Array.from(document.querySelectorAll("video")).slice(0, 8));
+  let lastDiscoveryVideoCount = initialVideos.length;
+  let lastDiscoveryVisibleCount = initialVisibleVideoCount;
+  let discoveryEventCount = 0;
+  let discoveryStopped = false;
+  let videoEverObserved = false;
+  const discoveryAgeMs = () => Math.max(0, Math.min(VIDEO_DISCOVERY_WINDOW_MS, Date.now() - helperStartedAtMs));
+  const attempt = (trigger = "scheduled") => {
+    const video = oneVisible(videoElements().slice(0, 8));
     if (!video) return;
     if (!observed.has(video)) {
       observed.add(video);
+      videoEverObserved = true;
       const initialSnapshot = mediaSnapshot(video);
       let previousAudioState = { muted: initialSnapshot.muted, volume: initialSnapshot.volume };
-      report("zns-embedded-observed", initialSnapshot);
+      report("zns-embedded-observed", {
+        ...initialSnapshot,
+        helperAgeMs: discoveryAgeMs(),
+        discoveryTrigger: trigger,
+      });
       video.addEventListener("volumechange", () => {
         previousAudioState = reportAudioStateChange(video, previousAudioState);
       });
@@ -256,5 +279,73 @@
       });
     }
   };
-  RETRY_DELAYS_MS.forEach((delay) => setTimeout(attempt, delay));
+  const videoIn = (node) => {
+    try {
+      return Boolean(node && (
+        node.matches?.("video") || node.querySelector?.("video") || node.closest?.("video")
+      ));
+    } catch (_) { return false; }
+  };
+  const stopDiscovery = (reason) => {
+    if (discoveryStopped) return;
+    discoveryStopped = true;
+    try { discoveryObserver?.disconnect(); } catch (_) {}
+    report("zns-video-discovery-window-ended", {
+      helperAgeMs: discoveryAgeMs(),
+      reason,
+      videoEverObserved,
+    });
+  };
+  let discoveryObserver = null;
+  if (typeof MutationObserver === "function") {
+    discoveryObserver = new MutationObserver((records) => {
+      if (discoveryStopped || discoveryAgeMs() >= VIDEO_DISCOVERY_WINDOW_MS) return;
+      const relevantRecord = records.find((record) => {
+        if (record.type === "childList") return Array.from(record.addedNodes || []).some(videoIn);
+        if (record.type === "attributes" && ["class", "hidden", "src", "style"].includes(record.attributeName)) {
+          return videoIn(record.target);
+        }
+        return false;
+      });
+      if (!relevantRecord) return;
+      const videos = videoElements();
+      const visibleVideoCount = videos.filter(visible).length;
+      if (videos.length !== lastDiscoveryVideoCount || visibleVideoCount !== lastDiscoveryVisibleCount) {
+        lastDiscoveryVideoCount = videos.length;
+        lastDiscoveryVisibleCount = visibleVideoCount;
+        if (discoveryEventCount < MAX_VIDEO_DISCOVERY_EVENTS) {
+          discoveryEventCount += 1;
+          report("zns-video-discovery", {
+            helperAgeMs: discoveryAgeMs(),
+            videoCount: videos.length,
+            visibleVideoCount,
+            trigger: relevantRecord.type === "childList" ? "video_inserted" : "video_changed",
+          });
+        }
+      }
+      attempt("mutation");
+    });
+    try {
+      discoveryObserver.observe(document.documentElement || document, {
+        attributes: true,
+        attributeFilter: ["class", "hidden", "src", "style"],
+        childList: true,
+        subtree: true,
+      });
+    } catch (_) {
+      discoveryObserver = null;
+    }
+  }
+  if (!discoveryObserver) {
+    report("zns-video-discovery", {
+      helperAgeMs: 0,
+      videoCount: initialVideos.length,
+      visibleVideoCount: initialVisibleVideoCount,
+      trigger: "observer_unavailable",
+    });
+  }
+  document.addEventListener?.("pagehide", () => stopDiscovery("pagehide"), { once: true });
+  setTimeout(() => stopDiscovery("deadline"), VIDEO_DISCOVERY_WINDOW_MS);
+  attempt("initial");
+  RETRY_DELAYS_MS.forEach((delay) => setTimeout(() => attempt("scheduled"), delay));
 })();
