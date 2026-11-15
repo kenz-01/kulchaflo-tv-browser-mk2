@@ -108,6 +108,11 @@ test('only the manifest-injected exact page wakes one publisher-owned lazy Daily
   assert.ok(!manifest.content_scripts[0].js.includes('telesistema-lazy-frame-helper.js'));
   assert.match(activity, /private fun shouldPromoteDirectMedia\(url: String\): Boolean\s*\{\s*\/\/ Telesistema[\s\S]*?!isTelesistemaLivePageUrl\(url\)/);
   assert.match(activity, /private fun isTelesistemaLivePageUrl\(url: String\): Boolean[\s\S]*?host != "telesistema11\.com\.do"[\s\S]*?path == "\/en-vivo"/);
+  assert.match(activity, /private const val ENABLE_TELESISTEMA_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true/);
+  assert.match(activity, /private fun isTelesistemaDailymotionHost\(hostValue: String\?\): Boolean[\s\S]*?"www\.dailymotion\.com"[\s\S]*?"geo\.dailymotion\.com"/);
+  assert.match(activity, /val telesistemaTopContext = isTelesistemaLivePageUrl\(activeSessionUrl\) \|\| isTelesistemaLivePageUrl\(currentRootUrl\)/);
+  assert.match(activity, /val telesistemaAutoplayScoped = ENABLE_TELESISTEMA_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW[\s\S]*?autoplayPermissionRequest && telesistemaTopContext && telesistemaDailymotionContext/);
+  assert.match(activity, /telesistemaAutoplayScoped -> GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_ALLOW/);
   assert.doesNotMatch(script, /\.play\s*\(|\.click\s*\(/);
   const idlePolicy = activity.match(/private fun shouldPointerAssistIdleSleep\(url: String\): Boolean \{([\s\S]*?)\n    \}/)?.[1];
   assert.ok(idlePolicy);

@@ -294,18 +294,22 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.deepEqual(manifest.content_scripts[0].js, ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js']);
   assert.match(activity, /private fun isZnsTvSiteUrl[\s\S]*?host == "znsbahamas\.com" && path == "\/"/);
   assert.match(activity, /private fun isZnsStreamcomediaEmbedUrl[\s\S]*?host == "player\.streamcomedia\.com" && path == "\/html5\/znstv"/);
-  assert.doesNotMatch(activity, /znsAutoplayScoped/);
+  assert.match(activity, /private const val ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW = true/);
+  assert.match(activity, /val znsPermissionContext = listOf\(permission\.uri\.orEmpty\(\), permission\.thirdPartyOrigin\.orEmpty\(\)\)[\s\S]*?\.any \{ isZnsStreamcomediaEmbedUrl\(it\) \}/);
+  assert.match(activity, /val znsAutoplayScoped = ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW &&[\s\S]*?autoplayPermissionRequest && znsTopContext && znsPermissionContext/);
+  assert.match(activity, /znsAutoplayScoped -> GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_ALLOW/);
   assert.doesNotMatch(helperSource, /video\.muted\s*=|video\.volume\s*=|video\.play\s*\(/);
   assert.match(helperSource, /addEventListener\("playing"/);
   assert.match(helperSource, /addEventListener\("volumechange"/);
   assert.match(helperSource, /recentTrustedInput/);
   assert.match(helperSource, /addEventListener\("timeupdate"/);
-  const znsPermissionDiagnostics = activity.slice(
-    activity.indexOf('val znsAutoplayRequest'),
-    activity.indexOf('val tabId', activity.indexOf('val znsAutoplayRequest')),
+  const permissionDecision = activity.slice(
+    activity.indexOf('val decision = when'),
+    activity.indexOf('val tabId', activity.indexOf('val decision = when')),
   );
-  assert.ok(znsPermissionDiagnostics.length > 0);
-  assert.doesNotMatch(znsPermissionDiagnostics, /->\s*GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_(ALLOW|DENY)/);
+  assert.ok(permissionDecision.length > 0);
+  assert.match(permissionDecision, /znsAutoplayScoped -> GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_ALLOW/);
+  assert.match(permissionDecision, /else -> permission\.value/);
   assert.match(activity, /else -> permission\.value/);
   assert.match(activity, /if \(phase == "zns-audio-state"\)/);
   assert.match(activity, /zns audio state event=volumechange mutedBefore=/);

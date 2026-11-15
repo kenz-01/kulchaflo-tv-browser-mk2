@@ -9821,10 +9821,25 @@ return changed>0;
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
                     ) &&
                     (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
+            val autoplayPermissionRequest =
+                permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
+            val znsPermissionContext = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
+                .any { isZnsStreamcomediaEmbedUrl(it) }
+            val znsAutoplayScoped = ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW &&
+                autoplayPermissionRequest && znsTopContext && znsPermissionContext
+            val telesistemaTopContext = isTelesistemaLivePageUrl(activeSessionUrl) || isTelesistemaLivePageUrl(currentRootUrl)
+            val telesistemaDailymotionContext =
+                isTelesistemaDailymotionHost(uriHost) || isTelesistemaDailymotionHost(thirdPartyHost)
+            val telesistemaAutoplayScoped = ENABLE_TELESISTEMA_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW &&
+                autoplayPermissionRequest && telesistemaTopContext && telesistemaDailymotionContext
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 novusAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                znsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                telesistemaAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cgtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 chtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 caribvisionAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9844,13 +9859,7 @@ return changed>0;
                         ) -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 else -> permission.value
             }
-            val znsAutoplayRequest =
-                permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
-                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
-            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
-            val znsPermissionContext = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
-                .any { isZnsTvSiteUrl(it) || isZnsStreamcomediaEmbedUrl(it) }
-            if (znsAutoplayRequest && znsTopContext && znsPermissionContext) {
+            if (znsAutoplayScoped || telesistemaAutoplayScoped) {
                 val type = if (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE) {
                     "audible"
                 } else "inaudible"
@@ -9864,10 +9873,18 @@ return changed>0;
                     GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY -> "deny"
                     else -> "other"
                 }
-                GvLogger.i(
-                    "GvMedia",
-                    "zns autoplay permission type=$type requested=$requested decision=$decisionLabel"
-                )
+                if (znsAutoplayScoped) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "zns autoplay permission type=$type requested=$requested decision=$decisionLabel"
+                    )
+                }
+                if (telesistemaAutoplayScoped) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "telesistema dailymotion autoplay permission type=$type requested=$requested decision=$decisionLabel"
+                    )
+                }
             }
             val tabId = tabController.findTabBySession(session)?.id ?: "unknown"
             GvLogger.i(
@@ -15387,6 +15404,8 @@ return changed>0;
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_TELESISTEMA_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CHTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CARIBVISION_AUTOPLAY_PERMISSION_ALLOW = true
@@ -17336,6 +17355,14 @@ return changed>0;
         if (host != "telesistema11.com.do") return false
         val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
         return path == "/en-vivo"
+    }
+
+    private fun isTelesistemaDailymotionHost(hostValue: String?): Boolean {
+        return hostValue?.lowercase().orEmpty() in setOf(
+            "dailymotion.com",
+            "www.dailymotion.com",
+            "geo.dailymotion.com",
+        )
     }
 
     private fun isLiveMediaSurfaceUrl(url: String): Boolean {
