@@ -11068,6 +11068,7 @@ return changed>0;
             isNovusTelearubaContextUrl(url) ||
             isCgtvContextUrl(url) ||
             isChtvContextUrl(url) ||
+            isTelesistemaLivePageUrl(url) ||
             isCaribvisionPlayerActive(activeSession, url) ||
             isCvc9ContextUrl(url) ||
             isCnc3LiveStreamPageUrl(url) ||
@@ -13407,6 +13408,27 @@ return changed>0;
             if (!isZnsTvSiteUrl(currentUrl) ||
                 !(isZnsTvSiteUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(pageUrl))
             ) return
+            if (phase == "zns-audio-state") {
+                if (payload.optString("event") != "volumechange" ||
+                    !payload.has("mutedBefore") || !payload.has("mutedAfter")
+                ) return
+                val rawVolumeBefore = payload.optDouble("volumeBefore", -1.0)
+                val volumeBefore = if (rawVolumeBefore.isFinite() && rawVolumeBefore in 0.0..1.0) rawVolumeBefore else -1.0
+                val rawVolumeAfter = payload.optDouble("volumeAfter", -1.0)
+                val volumeAfter = if (rawVolumeAfter.isFinite() && rawVolumeAfter in 0.0..1.0) rawVolumeAfter else -1.0
+                val recentTrustedInput = payload.optString("recentTrustedInput").takeIf {
+                    it in setOf("pointerdown", "pointerup", "click", "keydown")
+                } ?: "none"
+                val rawInputAgeMs = payload.optInt("recentTrustedInputAgeMs", -1)
+                val inputAgeMs = if (recentTrustedInput == "none") -1 else rawInputAgeMs.takeIf { it in 0..5000 } ?: -1
+                GvLogger.i(
+                    "GvMedia",
+                    "zns audio state event=volumechange mutedBefore=${payload.optBoolean("mutedBefore")} " +
+                        "mutedAfter=${payload.optBoolean("mutedAfter")} volumeBefore=$volumeBefore volumeAfter=$volumeAfter " +
+                        "recentTrustedInput=$recentTrustedInput recentTrustedInputAgeMs=$inputAgeMs"
+                )
+                return
+            }
             val mediaEvent = if (phase == "zns-media-event") {
                 payload.optString("event").takeIf {
                     it in setOf(

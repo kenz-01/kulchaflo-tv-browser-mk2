@@ -108,6 +108,16 @@ test('only the manifest-injected exact page wakes one publisher-owned lazy Daily
   assert.ok(!manifest.content_scripts[0].js.includes('telesistema-lazy-frame-helper.js'));
   assert.match(activity, /private fun shouldPromoteDirectMedia\(url: String\): Boolean\s*\{\s*\/\/ Telesistema[\s\S]*?!isTelesistemaLivePageUrl\(url\)/);
   assert.match(activity, /private fun isTelesistemaLivePageUrl\(url: String\): Boolean[\s\S]*?host != "telesistema11\.com\.do"[\s\S]*?path == "\/en-vivo"/);
+  assert.doesNotMatch(script, /\.play\s*\(|\.click\s*\(/);
+  const idlePolicy = activity.match(/private fun shouldPointerAssistIdleSleep\(url: String\): Boolean \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(idlePolicy);
+  assert.match(idlePolicy, /isTelesistemaLivePageUrl\(url\)/);
+  const pointerAssistPolicy = activity.match(/private fun isPointerAssistAllowedForUrl\(url: String\): Boolean \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(pointerAssistPolicy);
+  assert.doesNotMatch(pointerAssistPolicy, /Telesistema/);
+  const backPolicy = activity.match(/private fun maybeHandleBrowserFullscreenBackPolicy\(\): Boolean \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(backPolicy);
+  assert.doesNotMatch(backPolicy, /Telesistema/);
 
   const original = 'https://www.dailymotion.com/embed/video/x8abc?autoplay=1';
   const frame = makeFrame({ src: 'about:blank', 'data-lazy-src': original, loading: 'lazy' }, 'litespeed-loading');

@@ -198,6 +198,85 @@ test('trusted player state and bounded time progression are reported without aud
   assert.doesNotMatch(progression, /token|private|currentTime|"start"|"end"/);
 });
 
+test('ZNS mute transitions report before/after state and recent trusted input without changing playback', () => {
+  const timers = [];
+  const prompts = [];
+  const documentListeners = {};
+  let now = 1000;
+  let muted = false;
+  let mutedWrites = 0;
+  let playCalls = 0;
+  const video = {
+    readyState: 3,
+    networkState: 2,
+    error: null,
+    paused: true,
+    get muted() { return muted; },
+    set muted(value) { muted = value; mutedWrites += 1; },
+    volume: 1,
+    currentSrc: 'https://cdn.example.invalid/opaque-id',
+    autoplay: false,
+    controls: true,
+    currentTime: 0,
+    addEventListener(name, callback) { this[`on${name}`] = callback; },
+    querySelector() { return null; },
+    getBoundingClientRect() { return {width: 900, height: 500}; },
+    play() { playCalls += 1; return Promise.resolve(); },
+  };
+  const window = {
+    location: {href: 'https://player.streamcomedia.com/HTML5/znstv?secret=private'},
+    top: {},
+    prompt(value) { prompts.push(value); },
+    getComputedStyle() { return {display: 'block', visibility: 'visible', opacity: '1'}; },
+  };
+  const document = {
+    referrer: 'https://znsbahamas.com/',
+    addEventListener(name, callback) { documentListeners[name] = callback; },
+    querySelectorAll(selector) { return selector === 'video' ? [video] : []; },
+  };
+  runInNewContext(helperSource, {
+    URL,
+    Date: {now: () => now},
+    window,
+    document,
+    setTimeout(callback, delay) { timers.push({callback, delay}); },
+  });
+  timers.splice(0).forEach(({callback}) => callback());
+
+  documentListeners.click({isTrusted: true});
+  now += 150;
+  video.muted = true; // Simulated player-owned change.
+  const writesAfterPlayerChange = mutedWrites;
+  video.onvolumechange({isTrusted: true});
+  assert.equal(mutedWrites, writesAfterPlayerChange);
+  video.onplay();
+
+  documentListeners.pointerup({isTrusted: true});
+  now += 100;
+  video.muted = false; // Simulated explicit user unmute retained by the player.
+  const writesAfterUserChange = mutedWrites;
+  video.onvolumechange({isTrusted: true});
+  assert.equal(mutedWrites, writesAfterUserChange);
+  video.paused = false;
+  video.onplaying();
+
+  const events = prompts.map((value) => JSON.parse(value.slice('__GV_MEDIA__'.length)));
+  const transitions = events.filter((event) => event.phase === 'zns-audio-state');
+  assert.deepEqual(transitions.map(({mutedBefore, mutedAfter}) => [mutedBefore, mutedAfter]), [
+    [false, true],
+    [true, false],
+  ]);
+  assert.equal(transitions[0].recentTrustedInput, 'click');
+  assert.equal(transitions[0].recentTrustedInputAgeMs, 150);
+  assert.equal(transitions[1].recentTrustedInput, 'pointerup');
+  assert.equal(transitions[1].recentTrustedInputAgeMs, 100);
+  const playing = events.find((event) => event.phase === 'zns-embedded-playing');
+  assert.ok(playing);
+  assert.equal(playing.muted, false);
+  assert.equal(playCalls, 0);
+  assert.doesNotMatch(prompts.join('\n'), /opaque-id|secret|private/);
+});
+
 test('the embedded player helper does not run without the official site referrer', () => {
   const timers = [];
   runInNewContext(helperSource, {
@@ -218,7 +297,18 @@ test('Kotlin permission and native-promotion boundaries stay scoped to the offic
   assert.doesNotMatch(activity, /znsAutoplayScoped/);
   assert.doesNotMatch(helperSource, /video\.muted\s*=|video\.volume\s*=|video\.play\s*\(/);
   assert.match(helperSource, /addEventListener\("playing"/);
+  assert.match(helperSource, /addEventListener\("volumechange"/);
+  assert.match(helperSource, /recentTrustedInput/);
   assert.match(helperSource, /addEventListener\("timeupdate"/);
+  const znsPermissionDiagnostics = activity.slice(
+    activity.indexOf('val znsAutoplayRequest'),
+    activity.indexOf('val tabId', activity.indexOf('val znsAutoplayRequest')),
+  );
+  assert.ok(znsPermissionDiagnostics.length > 0);
+  assert.doesNotMatch(znsPermissionDiagnostics, /->\s*GeckoSession\.PermissionDelegate\.ContentPermission\.VALUE_(ALLOW|DENY)/);
+  assert.match(activity, /else -> permission\.value/);
+  assert.match(activity, /if \(phase == "zns-audio-state"\)/);
+  assert.match(activity, /zns audio state event=volumechange mutedBefore=/);
   assert.match(activity, /zns helper phase=\$phase mode=browser-first ready=\$readyState paused=\$paused muted=\$muted volume=\$volume/);
   assert.match(activity, /zns autoplay permission type=\$type requested=\$requested decision=\$decisionLabel/);
   assert.match(activity, /zns media event=\$mediaEvent/);

@@ -8,6 +8,8 @@
   const RETRY_DELAYS_MS = Object.freeze([300, 900, 2000, 4000, 7000, 11000, 18000]);
   const PROGRESS_SAMPLE_MS = 4000;
   const MAX_PROGRESS_SAMPLES = 3;
+  const TRUSTED_INPUT_WINDOW_MS = 5000;
+  const TRUSTED_INPUT_EVENTS = Object.freeze(["pointerdown", "pointerup", "click", "keydown"]);
   const MEDIA_EVENTS = Object.freeze([
     "loadstart", "loadedmetadata", "loadeddata", "canplay", "play", "playing",
     "pause", "waiting", "stalled", "error", "abort", "emptied",
@@ -131,6 +133,15 @@
   const progressReported = new WeakSet();
   const reportedMediaEvents = new WeakMap();
   const mediaEventNames = new Set(MEDIA_EVENTS);
+  let lastTrustedInput = null;
+  TRUSTED_INPUT_EVENTS.forEach((eventName) => {
+    try {
+      document.addEventListener?.(eventName, (event) => {
+        if (!event || event.isTrusted !== true) return;
+        lastTrustedInput = { kind: eventName, atMs: Date.now() };
+      }, true);
+    } catch (_) {}
+  });
   const mediaSnapshot = (video) => {
     const boundedInt = (value, min, max, fallback) => {
       const number = Number(value);
@@ -175,6 +186,26 @@
       controls: Boolean(video.controls),
     };
   };
+  const audioSnapshot = (video) => {
+    const snapshot = mediaSnapshot(video);
+    return { muted: snapshot.muted, volume: snapshot.volume };
+  };
+  const reportAudioStateChange = (video, before) => {
+    const after = audioSnapshot(video);
+    if (before.muted === after.muted && before.volume === after.volume) return before;
+    const inputAgeMs = lastTrustedInput ? Math.max(0, Date.now() - lastTrustedInput.atMs) : -1;
+    const hasRecentInput = inputAgeMs >= 0 && inputAgeMs <= TRUSTED_INPUT_WINDOW_MS;
+    report("zns-audio-state", {
+      event: "volumechange",
+      mutedBefore: before.muted,
+      mutedAfter: after.muted,
+      volumeBefore: before.volume,
+      volumeAfter: after.volume,
+      recentTrustedInput: hasRecentInput ? lastTrustedInput.kind : "none",
+      recentTrustedInputAgeMs: hasRecentInput ? inputAgeMs : -1,
+    });
+    return after;
+  };
   const reportMediaEvent = (video, event) => {
     if (!mediaEventNames.has(event)) return;
     let reported = reportedMediaEvents.get(video);
@@ -191,7 +222,12 @@
     if (!video) return;
     if (!observed.has(video)) {
       observed.add(video);
-      report("zns-embedded-observed", mediaSnapshot(video));
+      const initialSnapshot = mediaSnapshot(video);
+      let previousAudioState = { muted: initialSnapshot.muted, volume: initialSnapshot.volume };
+      report("zns-embedded-observed", initialSnapshot);
+      video.addEventListener("volumechange", () => {
+        previousAudioState = reportAudioStateChange(video, previousAudioState);
+      });
       video.addEventListener("playing", () => {
         report("zns-embedded-playing", mediaSnapshot(video));
         reportMediaEvent(video, "playing");
