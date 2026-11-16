@@ -8,7 +8,9 @@ ACTIVITY="$PACKAGE/.app.GeckoBrowserActivity"
 APK="app-gv/build/outputs/apk/universal/debug/app-gv-universal-debug.apk"
 REPORT_DIR="${RUNNER_TEMP:-/tmp}/tv-emulator-qualification"
 NAVIGATION_WAIT_SECONDS=30
+APK_INSTALL_TIMEOUT_SECONDS=60
 MAX_SCREENSHOT_BYTES=$((4 * 1024 * 1024))
+FAILURE_STAGE=preflight
 
 mkdir -p "$REPORT_DIR"
 BOOT_STATUS=unknown ABI_STATUS=unknown LEANBACK_STATUS=unknown
@@ -69,17 +71,32 @@ finalize() {
       && "$SCREENSHOT_BACK" == captured ]]; then
     VIRTUAL_HARNESS_STATUS=PASS
     FAILURE_OBSERVATION=none
-  elif [[ "$NAVIGATION_STATUS" == failed ]]; then
-    FAILURE_OBSERVATION=neutral_page_navigation_failed
-  elif [[ "$NAVIGATION_STATUS" != completed ]]; then
-    FAILURE_OBSERVATION=neutral_page_navigation_not_observed
-  elif (( original_status != 0 )); then
-    FAILURE_OBSERVATION=required_app_state_or_screenshot_check_failed
+  elif [[ "$FAILURE_OBSERVATION" == qualification_not_completed ]]; then
+    case "$FAILURE_STAGE" in
+      emulator_boot) FAILURE_OBSERVATION=emulator_boot_or_adb_failed ;;
+      apk_install) FAILURE_OBSERVATION=apk_install_failed ;;
+      app_launch) FAILURE_OBSERVATION=app_launch_unconfirmed ;;
+      launch_state) FAILURE_OBSERVATION=launch_app_state_check_failed ;;
+      navigation) FAILURE_OBSERVATION="neutral_navigation_${NAVIGATION_STATUS}" ;;
+      dpad_state) FAILURE_OBSERVATION=dpad_app_state_check_failed ;;
+      back_state) FAILURE_OBSERVATION=back_app_state_check_failed ;;
+      final_checks)
+        if [[ "$NAVIGATION_STATUS" == failed ]]; then
+          FAILURE_OBSERVATION=neutral_page_navigation_failed
+        elif [[ "$NAVIGATION_STATUS" != completed ]]; then
+          FAILURE_OBSERVATION=neutral_page_navigation_not_observed
+        else
+          FAILURE_OBSERVATION=required_screenshot_or_remote_action_missing
+        fi
+        ;;
+      *) FAILURE_OBSERVATION=qualification_setup_failed ;;
+    esac
   fi
   export QUAL_COMMIT="${GITHUB_SHA:-unknown}" QUAL_PROFILE_STATUS="$VIRTUAL_HARNESS_STATUS"
   export QUAL_BOOT="$BOOT_STATUS" QUAL_ABI="$ABI_STATUS" QUAL_LEANBACK="$LEANBACK_STATUS"
   export QUAL_INSTALL="$INSTALL_STATUS" QUAL_LAUNCH="$LAUNCH_STATUS" QUAL_NAV="$NAVIGATION_STATUS"
   export QUAL_NAV_CAPTURE="$NAVIGATION_CAPTURE_STATUS" QUAL_FAILURE="$FAILURE_OBSERVATION"
+  export QUAL_FAILURE_STAGE="$FAILURE_STAGE"
   export QUAL_LP="$LAUNCH_PROCESS" QUAL_LF="$LAUNCH_FOREGROUND" QUAL_LW="$LAUNCH_FOCUS"
   export QUAL_DP="$DPAD_PROCESS" QUAL_DF="$DPAD_FOREGROUND" QUAL_DW="$DPAD_FOCUS"
   export QUAL_BP="$BACK_PROCESS" QUAL_BF="$BACK_FOREGROUND" QUAL_BW="$BACK_FOCUS"
@@ -93,6 +110,7 @@ receipt = {
   "commit": os.environ["QUAL_COMMIT"],
   "selected_profile": "qualification",
   "virtual_harness_status": os.environ["QUAL_PROFILE_STATUS"],
+  "failure_stage": os.environ["QUAL_FAILURE_STAGE"],
   "infrastructure": {
     "android_tv_boot": os.environ["QUAL_BOOT"],
     "abi_x86_64": os.environ["QUAL_ABI"],
@@ -135,6 +153,7 @@ PY
     echo "selected_profile=qualification"
     echo "virtual_harness_status=$VIRTUAL_HARNESS_STATUS"
     echo "failure_observation=$FAILURE_OBSERVATION"
+    echo "failure_stage=$FAILURE_STAGE"
     echo "android_tv_boot=$BOOT_STATUS"
     echo "abi_x86_64=$ABI_STATUS"
     echo "leanback_feature=$LEANBACK_STATUS"
@@ -157,6 +176,7 @@ PY
 trap finalize EXIT
 
 if [[ ! -s "$APK" ]]; then FAILURE_OBSERVATION=universal_debug_apk_missing; exit 1; fi
+FAILURE_STAGE=emulator_boot
 timeout 60 adb wait-for-device
 BOOT=$(timeout 8 adb shell getprop sys.boot_completed | tr -d '\r')
 ABI=$(timeout 8 adb shell getprop ro.product.cpu.abi | tr -d '\r')
@@ -169,14 +189,16 @@ ABI_STATUS=yes
 grep -Fq "android.software.leanback" <<<"$FEATURES" || { LEANBACK_STATUS=no; FAILURE_OBSERVATION=leanback_feature_missing; exit 1; }
 LEANBACK_STATUS=yes
 
+FAILURE_STAGE=apk_install
 timeout 30 adb logcat -c
-if timeout 15 adb install -r "$APK" >/dev/null; then
+if timeout "$APK_INSTALL_TIMEOUT_SECONDS" adb install -r "$APK" >/dev/null; then
   INSTALL_STATUS=yes
 else
   INSTALL_STATUS=no
   FAILURE_OBSERVATION=apk_install_failed
   exit 1
 fi
+FAILURE_STAGE=app_launch
 if launch_output=$(timeout 15 adb shell am start -W -n "$ACTIVITY" -e url "https://example.com" 2>&1) \
   && grep -Eq '^Status:[[:space:]]*ok[[:space:]]*$' <<<"$launch_output"; then
   LAUNCH_STATUS=confirmed
@@ -189,6 +211,7 @@ unset launch_output
 
 # Capture the first app frame before waiting for a navigation event.
 capture_screenshot initial /sdcard/kf-tv-qualification-initial.png
+FAILURE_STAGE=launch_state
 check_app_state
 LAUNCH_PROCESS=$APP_PROCESS
 LAUNCH_FOREGROUND=$ACTIVITY_FOREGROUND
@@ -196,6 +219,7 @@ LAUNCH_FOCUS=$WINDOW_FOCUSED
 
 # Observe a real GeckoView page-stop event for the fixed neutral route, with a
 # 30-second cap; this adapts to navigation speed and never stores arbitrary URLs.
+FAILURE_STAGE=navigation
 if timeout "$((NAVIGATION_WAIT_SECONDS + 5))" python3 tools/player-lab/scripts/tv-neutral-navigation-snapshot.py capture \
   > "$REPORT_DIR/navigation-observation.json"; then
   NAVIGATION_STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("navigation_status","not_observed"))' "$REPORT_DIR/navigation-observation.json")
@@ -204,6 +228,7 @@ else
   NAVIGATION_CAPTURE_STATUS=incomplete
 fi
 
+FAILURE_STAGE=dpad_state
 if timeout 5 adb shell input keyevent KEYCODE_DPAD_DOWN \
   && timeout 5 adb shell input keyevent KEYCODE_DPAD_UP; then
   DPAD_DISPATCH=yes
@@ -217,17 +242,16 @@ capture_screenshot after-dpad /sdcard/kf-tv-qualification-after-dpad.png
 
 if timeout 5 adb shell input keyevent KEYCODE_BACK; then BACK_DISPATCH=yes; fi
 sleep 2
+FAILURE_STAGE=back_state
 check_app_state
 BACK_PROCESS=$APP_PROCESS
 BACK_FOREGROUND=$ACTIVITY_FOREGROUND
 BACK_FOCUS=$WINDOW_FOCUSED
 capture_screenshot after-back /sdcard/kf-tv-qualification-after-back.png
 
-[[ "$DPAD_DISPATCH" == yes && "$BACK_DISPATCH" == yes ]] || {
-  FAILURE_OBSERVATION=remote_key_dispatch_failed
-  exit 1
-}
-[[ "$NAVIGATION_STATUS" == completed ]] || { FAILURE_OBSERVATION=neutral_page_navigation_not_confirmed; exit 1; }
+FAILURE_STAGE=final_checks
+[[ "$DPAD_DISPATCH" == yes && "$BACK_DISPATCH" == yes ]] || exit 1
+[[ "$NAVIGATION_STATUS" == completed ]] || exit 1
 [[ "$SCREENSHOT_INITIAL" == captured && "$SCREENSHOT_DPAD" == captured && "$SCREENSHOT_BACK" == captured ]] || {
   FAILURE_OBSERVATION=required_screenshot_missing_or_oversize
   exit 1

@@ -17,6 +17,9 @@ test('the infrastructure qualification stays neutral and records D-pad dispatch 
   assert.match(script, /-e url "https:\/\/example\.com"/);
   assert.doesNotMatch(script, /znsbahamas|dailymotion|streamcomedia|KEYCODE_DPAD_CENTER/);
   assert.match(script, /neutral_navigation=\$NAVIGATION_STATUS/);
+  assert.match(script, /APK_INSTALL_TIMEOUT_SECONDS=60/);
+  assert.match(script, /case "\$FAILURE_STAGE" in/);
+  assert.match(script, /failure_stage/);
   assert.doesNotMatch(script, /remote_navigation/);
   assert.match(script, /dpad_down_up_dispatched=\$DPAD_DISPATCH/);
 });

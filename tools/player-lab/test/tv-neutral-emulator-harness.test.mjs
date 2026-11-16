@@ -29,7 +29,11 @@ function createSandbox(navigation = 'complete') {
   const adb = `#!/usr/bin/env bash
 set -eu
 case "$1" in
-  wait-for-device|install) exit 0 ;;
+  wait-for-device) exit 0 ;;
+  install)
+    if [[ "\${TV_FAKE_INSTALL_FAILURE:-no}" == yes ]]; then exit 1; fi
+    exit 0
+    ;;
   logcat)
     if [[ "\${2:-}" == "-c" ]]; then exit 0; fi
     if [[ "\${TV_FAKE_NAVIGATION:-complete}" == "complete" ]]; then
@@ -64,7 +68,7 @@ exit 0
   return {root, scriptPath: join(scriptDir, 'tv-cloud-emulator-qualification.sh'), bin, reportDir};
 }
 
-function runHarness(navigation) {
+function runHarness(navigation, installFailure = false) {
   const sandbox = createSandbox(navigation);
   const summary = join(sandbox.root, 'step-summary.md');
   const result = spawnSync('/usr/bin/bash', [sandbox.scriptPath], {
@@ -77,6 +81,7 @@ function runHarness(navigation) {
       GITHUB_STEP_SUMMARY: summary,
       GITHUB_SHA: 'c'.repeat(40),
       TV_FAKE_NAVIGATION: navigation,
+      TV_FAKE_INSTALL_FAILURE: installFailure ? 'yes' : 'no',
     },
   });
   let receipt;
@@ -112,4 +117,12 @@ test('neutral harness fails with exact bounded reason when page completion is ab
   assert.equal(receipt.failure_observation, 'neutral_page_navigation_not_observed');
   assert.equal(receipt.physical_bravia_acceptance, 'not_tested');
   assert.match(summaryText, /neutral_page_navigation_not_observed/);
+});
+
+test('neutral harness preserves an earlier APK installation failure reason', () => {
+  const {result, receipt} = runHarness('complete', true);
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(receipt.failure_stage, 'apk_install');
+  assert.equal(receipt.failure_observation, 'apk_install_failed');
+  assert.equal(receipt.infrastructure.apk_install, 'no');
 });
