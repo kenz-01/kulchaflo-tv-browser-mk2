@@ -3,7 +3,7 @@ import { PLAYER_FAMILIES } from './player-families.mjs';
 
 export { PLAYER_FAMILIES };
 
-const HOSTED_PLAYER_FAMILIES = new Set(['youtube', 'vimeo', 'dailymotion', 'jwplayer', 'bradmax', 'tego', 'novus']);
+const HOSTED_PLAYER_FAMILIES = new Set(['youtube', 'vimeo', 'dailymotion', 'jwplayer', 'bradmax', 'tego', 'novus', 'infomaniak', 'pro-fhi', 'streamhoster', 'telemicro', 'radiant', 'cloudflare-stream']);
 const STREAM_TECH_FAMILIES = new Set(['hlsjs', 'shaka', 'native-html5']);
 
 const WEIGHTS = Object.freeze({
@@ -154,7 +154,7 @@ function matchRecord(record, signatures) {
       matches.push({ family, reason: 'known DOM id/class/wrapper signal', weight: WEIGHTS.dom });
       continue;
     }
-    if (record.kind === 'script' && (includesToken(signature.scriptPatterns, record.normalized) || urlHostMatches(record.safeValue, signature.hostPatterns))) {
+    if (record.kind === 'script' && includesToken(signature.scriptPatterns, record.normalized)) {
       matches.push({ family, reason: 'known player script URL', weight: WEIGHTS.script });
       continue;
     }

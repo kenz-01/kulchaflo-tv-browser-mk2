@@ -22,7 +22,8 @@
     "derive-target-observations": "node src/derive-target-observations-cli.mjs",
     "prepare-policy-review": "node src/prepare-policy-review-cli.mjs",
     "generate-policy-diff": "node src/generate-policy-diff-cli.mjs",
-    "prepare-policy-application": "node src/prepare-policy-application-cli.mjs"
+    "prepare-policy-application": "node src/prepare-policy-application-cli.mjs",
+    "interaction-probe": "node src/interaction-probe.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1"
