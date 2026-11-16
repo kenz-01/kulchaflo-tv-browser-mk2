@@ -1,3 +1,7 @@
+## CURRENT TV job entrypoint — 27 October 2026
+
+Every TV implementation, review or repair task MUST read [TV Architect Delivery Playbook](docs/TV_ARCHITECT_DELIVERY_PLAYBOOK.md), [active task](.ai/TASK.md), [compact state](.ai/STATE.md), [TV start-here](TV_APP_HANDOVER_START_HERE.md), relevant provider contracts and **refresh live GitHub exact heads and checks**. ChatGPT does implementation/repair in bounded GitHub PRs, checks exact-head CI, separates Bravia physical acceptance, and advances another independent eligible job if a provider is held. This does **not** enable the Events control plane, runner, watchdog, worker or paid automation. Historic directions below remain physical and project context but must not override this current entrypoint.
+
 # KulchaFlo TV Browser MK2 Restart Context
 
 ## Current Project State
