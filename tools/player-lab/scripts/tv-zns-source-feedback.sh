@@ -359,6 +359,7 @@ except (OSError,json.JSONDecodeError):
     receipt={}
 yes_no=lambda value: "yes" if value is True else "no" if value is False else "unknown"
 print(f"- Harness success: `{yes_no(receipt.get('harness_completed'))}`")
+print(f"- Virtual Android TV harness: `{receipt.get('virtual_harness_status','FAIL')}` (does not establish playback or physical acceptance)")
 print(f"- Diagnostic success: `{yes_no(receipt.get('diagnostic_success'))}`; cause: `{receipt.get('diagnostic_cause','not_established')}`")
 print(f"- Playback progression: `{receipt.get('playback_progression','unknown')}` (actual bounded media-time advancement)")
 print(f"- Physical TV acceptance: `{receipt.get('device_acceptance','not_tested')}`")

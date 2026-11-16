@@ -36,6 +36,7 @@ test('classifies actual bounded current-time advancement without claiming live v
 
   assert.equal(receipt.classification, 'PROGRESSION_OBSERVED');
   assert.equal(receipt.harness_completed, true);
+  assert.equal(receipt.virtual_harness_status, 'PASS');
   assert.equal(receipt.commit, 'a'.repeat(40));
   assert.equal(receipt.selected_profile, 'zns');
   assert.equal(receipt.source.observed, true);
@@ -59,8 +60,10 @@ test('classifies a complete run with no ZNS observation separately from a player
 
   assert.equal(noSource.classification, 'SOURCE_NOT_OBSERVED');
   assert.equal(noSource.harness_completed, true);
+  assert.equal(noSource.virtual_harness_status, 'PASS');
   assert.equal(noSource.source.observed, false);
   assert.equal(noProgress.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
+  assert.equal(noProgress.virtual_harness_status, 'PASS');
   assert.equal(noProgress.video_time_advanced_observed, 'no');
   assert.equal(noProgress.diagnostic_success, false);
   assert.equal(noProgress.diagnostic_cause, 'not_established');
@@ -219,6 +222,7 @@ test('classifies emulator and required app-state failures as infrastructure fail
   }));
 
   assert.equal(emulatorFailure.classification, 'INFRA_FAILURE');
+  assert.equal(emulatorFailure.virtual_harness_status, 'FAIL');
   assert.equal(focusFailure.classification, 'INFRA_FAILURE');
   assert.equal(emulatorFailure.harness_completed, false);
 });

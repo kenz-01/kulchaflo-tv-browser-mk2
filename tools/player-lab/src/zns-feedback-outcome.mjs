@@ -392,6 +392,7 @@ export function classifyZnsFeedback(evidence = {}) {
     schema_version: 1,
     receipt_finalized: true,
     harness_completed: Boolean(harnessCompleted),
+    virtual_harness_status: harnessCompleted ? 'PASS' : 'FAIL',
     commit: /^[a-f\d]{40}$/i.test(String(evidence.commit ?? '')) ? evidence.commit.toLowerCase() : 'unknown',
     selected_profile: evidence.profile === 'zns' ? 'zns' : 'unknown',
     source: {

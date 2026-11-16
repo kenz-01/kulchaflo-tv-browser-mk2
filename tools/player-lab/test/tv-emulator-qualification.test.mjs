@@ -13,24 +13,24 @@ test('PR23 qualification is manually dispatched on a standard free GitHub-hosted
   assert.match(workflow, /permissions:\s*\n\s*contents:\s*read/);
 });
 
-test('the infrastructure qualification stays neutral and does not claim D-pad navigation', () => {
+test('the infrastructure qualification stays neutral and records D-pad dispatch only', () => {
   assert.match(script, /-e url "https:\/\/example\.com"/);
   assert.doesNotMatch(script, /znsbahamas|dailymotion|streamcomedia|KEYCODE_DPAD_CENTER/);
-  assert.doesNotMatch(script, /navigation_(success|verified)|remote_navigation/);
-  assert.match(script, /dpad_down_up_dispatched=yes/);
+  assert.match(script, /neutral_navigation=\$NAVIGATION_STATUS/);
+  assert.doesNotMatch(script, /remote_navigation/);
+  assert.match(script, /dpad_down_up_dispatched=\$DPAD_DISPATCH/);
 });
 
 test('foreground, window focus, Back, and post-action state are checked before success', () => {
-  for (const checkpoint of ['after_launch', 'after_dpad', 'after_back']) {
-    assert.match(script, new RegExp(`check_app_state ${checkpoint}`));
-  }
+  assert.equal((script.match(/\ncheck_app_state\n/g) ?? []).length, 3);
+  assert.match(script, /LAUNCH_PROCESS=\$APP_PROCESS/);
+  assert.match(script, /DPAD_PROCESS=\$APP_PROCESS/);
+  assert.match(script, /BACK_PROCESS=\$APP_PROCESS/);
   assert.match(script, /topResumedActivity\|mResumedActivity/);
   assert.match(script, /mCurrentFocus\|mFocusedApp/);
-  assert.match(script, /activity_foreground_after_dpad=\$DPAD_FOREGROUND/);
-  assert.match(script, /window_focus_after_dpad=\$DPAD_FOCUS/);
-  assert.match(script, /back_key_dispatched=yes/);
-  assert.match(script, /activity_foreground_after_back=\$BACK_FOREGROUND/);
-  assert.match(script, /window_focus_after_back=\$BACK_FOCUS/);
-  assert.match(script, /screenshot_after_dpad=yes/);
-  assert.match(script, /screenshot_after_back=yes/);
+  assert.match(script, /BACK_DISPATCH=yes/);
+  assert.match(script, /screenshot_after_dpad=\$SCREENSHOT_DPAD/);
+  assert.match(script, /screenshot_after_back=\$SCREENSHOT_BACK/);
+  assert.match(script, /\[\[ "\$NAVIGATION_STATUS" == completed \]\]/);
+  assert.match(script, /physical_bravia_acceptance=not_tested/);
 });

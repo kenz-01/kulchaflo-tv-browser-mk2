@@ -6,105 +6,232 @@ set -euo pipefail
 PACKAGE="com.kulchaflo.tv.mk2.gv"
 ACTIVITY="$PACKAGE/.app.GeckoBrowserActivity"
 APK="app-gv/build/outputs/apk/universal/debug/app-gv-universal-debug.apk"
-REPORT_DIR="$RUNNER_TEMP/tv-emulator-qualification"
+REPORT_DIR="${RUNNER_TEMP:-/tmp}/tv-emulator-qualification"
+NAVIGATION_WAIT_SECONDS=30
+MAX_SCREENSHOT_BYTES=$((4 * 1024 * 1024))
 
 mkdir -p "$REPORT_DIR"
-test -s "$APK" || { echo "Universal debug APK missing" >&2; exit 1; }
+BOOT_STATUS=unknown ABI_STATUS=unknown LEANBACK_STATUS=unknown
+INSTALL_STATUS=unknown LAUNCH_STATUS=unknown NAVIGATION_STATUS=not_observed
+NAVIGATION_CAPTURE_STATUS=incomplete
+LAUNCH_PROCESS=unknown LAUNCH_FOREGROUND=unknown LAUNCH_FOCUS=unknown
+DPAD_PROCESS=unknown DPAD_FOREGROUND=unknown DPAD_FOCUS=unknown
+BACK_PROCESS=unknown BACK_FOREGROUND=unknown BACK_FOCUS=unknown
+DPAD_DISPATCH=no BACK_DISPATCH=no
+SCREENSHOT_INITIAL=missing SCREENSHOT_DPAD=missing SCREENSHOT_BACK=missing
+FAILURE_OBSERVATION=qualification_not_completed
+VIRTUAL_HARNESS_STATUS=FAIL
 
-adb wait-for-device
-BOOT=$(adb shell getprop sys.boot_completed | tr -d '\r')
-ABI=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
-FEATURES=$(adb shell pm list features)
-SIZE=$(adb shell wm size | tr -d '\r')
-
-[[ "$BOOT" == "1" ]] || { echo "Android emulator did not report completed boot" >&2; exit 1; }
-[[ "$ABI" == "x86_64" ]] || { echo "Expected x86_64 Android TV, got $ABI" >&2; exit 1; }
-grep -Fq "android.software.leanback" <<<"$FEATURES" || {
-  echo "The emulator does not expose the Android TV leanback feature" >&2
-  exit 1
+capture_screenshot() {
+  local phase="$1" remote="$2" path="$REPORT_DIR/$1.png" size status=missing
+  if timeout 8 adb shell screencap -p "$remote" >/dev/null 2>&1 \
+    && timeout 8 adb pull "$remote" "$path" >/dev/null 2>&1 \
+    && [[ -s "$path" ]]; then
+    size=$(stat -c '%s' "$path" 2>/dev/null || printf '0')
+    if [[ "$size" =~ ^[0-9]+$ ]] && (( size <= MAX_SCREENSHOT_BYTES )); then
+      status=captured
+    else
+      rm -f "$path"
+      status=oversize
+    fi
+  else
+    rm -f "$path"
+  fi
+  case "$phase" in
+    initial) SCREENSHOT_INITIAL=$status ;;
+    after-dpad) SCREENSHOT_DPAD=$status ;;
+    after-back) SCREENSHOT_BACK=$status ;;
+  esac
 }
 
 check_app_state() {
   local activity_lines focus_lines
-  APP_PROCESS="no"
-  ACTIVITY_FOREGROUND="no"
-  WINDOW_FOCUSED="no"
-
-  if [[ -n "$(adb shell pidof "$PACKAGE" | tr -d '\r' || true)" ]]; then
-    APP_PROCESS="yes"
+  APP_PROCESS=no ACTIVITY_FOREGROUND=no WINDOW_FOCUSED=no
+  if [[ -n "$(timeout 8 adb shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' || true)" ]]; then
+    APP_PROCESS=yes
   fi
-  activity_lines=$(adb shell dumpsys activity activities | tr -d '\r' | grep -E 'topResumedActivity|mResumedActivity' || true)
+  activity_lines=$(timeout 8 adb shell dumpsys activity activities 2>/dev/null | tr -d '\r' | grep -E 'topResumedActivity|mResumedActivity' || true)
   if grep -Fq "$PACKAGE" <<<"$activity_lines"; then
-    ACTIVITY_FOREGROUND="yes"
+    ACTIVITY_FOREGROUND=yes
   fi
-  focus_lines=$(adb shell dumpsys window windows | tr -d '\r' | grep -E 'mCurrentFocus|mFocusedApp' || true)
+  focus_lines=$(timeout 8 adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | grep -E 'mCurrentFocus|mFocusedApp' || true)
   if grep -Fq "$PACKAGE" <<<"$focus_lines"; then
-    WINDOW_FOCUSED="yes"
+    WINDOW_FOCUSED=yes
   fi
-
-  [[ "$APP_PROCESS" == "yes" && "$ACTIVITY_FOREGROUND" == "yes" && "$WINDOW_FOCUSED" == "yes" ]] || {
-    echo "GeckoView was not foregrounded and focused at the $1 checkpoint" >&2
-    return 1
-  }
+  [[ "$APP_PROCESS" == yes && "$ACTIVITY_FOREGROUND" == yes && "$WINDOW_FOCUSED" == yes ]]
 }
 
-# Fresh anonymous emulator; keep this infrastructure check on the neutral page.
-adb install -r "$APK" >/dev/null
-adb shell am start -W -n "$ACTIVITY" -e url "https://example.com" >/dev/null
-sleep 8
-check_app_state after_launch
-LAUNCH_PROCESS="$APP_PROCESS"
-LAUNCH_FOREGROUND="$ACTIVITY_FOREGROUND"
-LAUNCH_FOCUS="$WINDOW_FOCUSED"
+finalize() {
+  local original_status=$?
+  trap - EXIT
+  if (( original_status == 0 )) && [[ "$NAVIGATION_STATUS" == completed \
+      && "$SCREENSHOT_INITIAL" == captured && "$SCREENSHOT_DPAD" == captured \
+      && "$SCREENSHOT_BACK" == captured ]]; then
+    VIRTUAL_HARNESS_STATUS=PASS
+    FAILURE_OBSERVATION=none
+  elif [[ "$NAVIGATION_STATUS" == failed ]]; then
+    FAILURE_OBSERVATION=neutral_page_navigation_failed
+  elif [[ "$NAVIGATION_STATUS" != completed ]]; then
+    FAILURE_OBSERVATION=neutral_page_navigation_not_observed
+  elif (( original_status != 0 )); then
+    FAILURE_OBSERVATION=required_app_state_or_screenshot_check_failed
+  fi
+  export QUAL_COMMIT="${GITHUB_SHA:-unknown}" QUAL_PROFILE_STATUS="$VIRTUAL_HARNESS_STATUS"
+  export QUAL_BOOT="$BOOT_STATUS" QUAL_ABI="$ABI_STATUS" QUAL_LEANBACK="$LEANBACK_STATUS"
+  export QUAL_INSTALL="$INSTALL_STATUS" QUAL_LAUNCH="$LAUNCH_STATUS" QUAL_NAV="$NAVIGATION_STATUS"
+  export QUAL_NAV_CAPTURE="$NAVIGATION_CAPTURE_STATUS" QUAL_FAILURE="$FAILURE_OBSERVATION"
+  export QUAL_LP="$LAUNCH_PROCESS" QUAL_LF="$LAUNCH_FOREGROUND" QUAL_LW="$LAUNCH_FOCUS"
+  export QUAL_DP="$DPAD_PROCESS" QUAL_DF="$DPAD_FOREGROUND" QUAL_DW="$DPAD_FOCUS"
+  export QUAL_BP="$BACK_PROCESS" QUAL_BF="$BACK_FOREGROUND" QUAL_BW="$BACK_FOCUS"
+  export QUAL_DPAD="$DPAD_DISPATCH" QUAL_BACK="$BACK_DISPATCH"
+  export QUAL_SI="$SCREENSHOT_INITIAL" QUAL_SD="$SCREENSHOT_DPAD" QUAL_SB="$SCREENSHOT_BACK"
+  python3 - "$REPORT_DIR/qualification.json" <<'PY'
+import json, os, sys
+receipt = {
+  "schema_version": 1,
+  "receipt_finalized": True,
+  "commit": os.environ["QUAL_COMMIT"],
+  "selected_profile": "qualification",
+  "virtual_harness_status": os.environ["QUAL_PROFILE_STATUS"],
+  "infrastructure": {
+    "android_tv_boot": os.environ["QUAL_BOOT"],
+    "abi_x86_64": os.environ["QUAL_ABI"],
+    "leanback_feature": os.environ["QUAL_LEANBACK"],
+    "apk_install": os.environ["QUAL_INSTALL"],
+    "app_launch": os.environ["QUAL_LAUNCH"],
+  },
+  "neutral_route": {
+    "route": "https://example.com/",
+    "navigation_status": os.environ["QUAL_NAV"],
+    "navigation_log_capture": os.environ["QUAL_NAV_CAPTURE"],
+  },
+  "app_state": {
+    "after_launch": {"process": os.environ["QUAL_LP"], "activity_foreground": os.environ["QUAL_LF"], "window_focus": os.environ["QUAL_LW"]},
+    "after_dpad": {"process": os.environ["QUAL_DP"], "activity_foreground": os.environ["QUAL_DF"], "window_focus": os.environ["QUAL_DW"]},
+    "after_back": {"process": os.environ["QUAL_BP"], "activity_foreground": os.environ["QUAL_BF"], "window_focus": os.environ["QUAL_BW"]},
+  },
+  "actions": {"dpad_down_up_dispatched": os.environ["QUAL_DPAD"], "back_dispatched": os.environ["QUAL_BACK"]},
+  "screenshots": {"initial": os.environ["QUAL_SI"], "after_dpad": os.environ["QUAL_SD"], "after_back": os.environ["QUAL_SB"]},
+  "playback_progression": "not_tested",
+  "audio_output": "not_tested",
+  "physical_bravia_acceptance": "not_tested",
+  "failure_observation": os.environ["QUAL_FAILURE"],
+}
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+  json.dump(receipt, stream, indent=2)
+  stream.write("\n")
+summary = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary:
+  with open(summary, "a", encoding="utf-8") as stream:
+    stream.write("## Neutral Android TV qualification\n\n")
+    stream.write(f"- Virtual Android TV harness: `{receipt['virtual_harness_status']}`\n")
+    stream.write(f"- Observation responsible for result: `{receipt['failure_observation']}`\n")
+    stream.write(f"- Navigation to the neutral route: `{receipt['neutral_route']['navigation_status']}`\n")
+    stream.write("- Broadcaster playback: `not tested`; physical Bravia acceptance: `not tested`\n")
+PY
+  {
+    echo "KULCHA FLO TV — NEUTRAL TV EMULATOR QUALIFICATION"
+    echo "commit=${GITHUB_SHA:-unknown}"
+    echo "selected_profile=qualification"
+    echo "virtual_harness_status=$VIRTUAL_HARNESS_STATUS"
+    echo "failure_observation=$FAILURE_OBSERVATION"
+    echo "android_tv_boot=$BOOT_STATUS"
+    echo "abi_x86_64=$ABI_STATUS"
+    echo "leanback_feature=$LEANBACK_STATUS"
+    echo "apk_install=$INSTALL_STATUS"
+    echo "app_launch=$LAUNCH_STATUS"
+    echo "neutral_navigation=$NAVIGATION_STATUS"
+    echo "initial_screenshot=$SCREENSHOT_INITIAL"
+    echo "dpad_down_up_dispatched=$DPAD_DISPATCH"
+    echo "screenshot_after_dpad=$SCREENSHOT_DPAD"
+    echo "back_key_dispatched=$BACK_DISPATCH"
+    echo "screenshot_after_back=$SCREENSHOT_BACK"
+    echo "playback_progression=not_tested"
+    echo "audio_output=not_tested"
+    echo "physical_bravia_acceptance=not_tested"
+  } > "$REPORT_DIR/qualification.txt"
+  cat "$REPORT_DIR/qualification.txt"
+  cat "$REPORT_DIR/qualification.json"
+  return "$original_status"
+}
+trap finalize EXIT
 
-# D-pad keys are dispatched, then foreground, focus, and process are observed again.
-adb shell input keyevent KEYCODE_DPAD_DOWN
-adb shell input keyevent KEYCODE_DPAD_UP
+if [[ ! -s "$APK" ]]; then FAILURE_OBSERVATION=universal_debug_apk_missing; exit 1; fi
+timeout 60 adb wait-for-device
+BOOT=$(timeout 8 adb shell getprop sys.boot_completed | tr -d '\r')
+ABI=$(timeout 8 adb shell getprop ro.product.cpu.abi | tr -d '\r')
+FEATURES=$(timeout 8 adb shell pm list features)
+SIZE=$(timeout 8 adb shell wm size | tr -d '\r')
+[[ "$BOOT" == 1 ]] || { FAILURE_OBSERVATION=android_boot_not_completed; exit 1; }
+BOOT_STATUS=yes
+[[ "$ABI" == x86_64 ]] || { ABI_STATUS=no; FAILURE_OBSERVATION=unexpected_emulator_abi; exit 1; }
+ABI_STATUS=yes
+grep -Fq "android.software.leanback" <<<"$FEATURES" || { LEANBACK_STATUS=no; FAILURE_OBSERVATION=leanback_feature_missing; exit 1; }
+LEANBACK_STATUS=yes
+
+timeout 30 adb logcat -c
+if timeout 15 adb install -r "$APK" >/dev/null; then
+  INSTALL_STATUS=yes
+else
+  INSTALL_STATUS=no
+  FAILURE_OBSERVATION=apk_install_failed
+  exit 1
+fi
+if launch_output=$(timeout 15 adb shell am start -W -n "$ACTIVITY" -e url "https://example.com" 2>&1) \
+  && grep -Eq '^Status:[[:space:]]*ok[[:space:]]*$' <<<"$launch_output"; then
+  LAUNCH_STATUS=confirmed
+else
+  LAUNCH_STATUS=unconfirmed
+  FAILURE_OBSERVATION=app_launch_not_confirmed
+  exit 1
+fi
+unset launch_output
+
+# Capture the first app frame before waiting for a navigation event.
+capture_screenshot initial /sdcard/kf-tv-qualification-initial.png
+check_app_state
+LAUNCH_PROCESS=$APP_PROCESS
+LAUNCH_FOREGROUND=$ACTIVITY_FOREGROUND
+LAUNCH_FOCUS=$WINDOW_FOCUSED
+
+# Observe a real GeckoView page-stop event for the fixed neutral route, with a
+# 30-second cap; this adapts to navigation speed and never stores arbitrary URLs.
+if timeout "$((NAVIGATION_WAIT_SECONDS + 5))" python3 tools/player-lab/scripts/tv-neutral-navigation-snapshot.py capture \
+  > "$REPORT_DIR/navigation-observation.json"; then
+  NAVIGATION_STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("navigation_status","not_observed"))' "$REPORT_DIR/navigation-observation.json")
+  NAVIGATION_CAPTURE_STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("capture_status","incomplete"))' "$REPORT_DIR/navigation-observation.json")
+else
+  NAVIGATION_CAPTURE_STATUS=incomplete
+fi
+
+if timeout 5 adb shell input keyevent KEYCODE_DPAD_DOWN \
+  && timeout 5 adb shell input keyevent KEYCODE_DPAD_UP; then
+  DPAD_DISPATCH=yes
+fi
 sleep 1
-check_app_state after_dpad
-DPAD_PROCESS="$APP_PROCESS"
-DPAD_FOREGROUND="$ACTIVITY_FOREGROUND"
-DPAD_FOCUS="$WINDOW_FOCUSED"
-adb shell screencap -p /sdcard/kf-tv-qualification-after-dpad.png
-adb pull /sdcard/kf-tv-qualification-after-dpad.png "$REPORT_DIR/after-dpad.png" >/dev/null
-test -s "$REPORT_DIR/after-dpad.png"
+check_app_state
+DPAD_PROCESS=$APP_PROCESS
+DPAD_FOREGROUND=$ACTIVITY_FOREGROUND
+DPAD_FOCUS=$WINDOW_FOCUSED
+capture_screenshot after-dpad /sdcard/kf-tv-qualification-after-dpad.png
 
-# Back is followed by the same observable state checks and a second screenshot.
-adb shell input keyevent KEYCODE_BACK
+if timeout 5 adb shell input keyevent KEYCODE_BACK; then BACK_DISPATCH=yes; fi
 sleep 2
-check_app_state after_back
-BACK_PROCESS="$APP_PROCESS"
-BACK_FOREGROUND="$ACTIVITY_FOREGROUND"
-BACK_FOCUS="$WINDOW_FOCUSED"
-adb shell screencap -p /sdcard/kf-tv-qualification-after-back.png
-adb pull /sdcard/kf-tv-qualification-after-back.png "$REPORT_DIR/after-back.png" >/dev/null
-test -s "$REPORT_DIR/after-back.png"
+check_app_state
+BACK_PROCESS=$APP_PROCESS
+BACK_FOREGROUND=$ACTIVITY_FOREGROUND
+BACK_FOCUS=$WINDOW_FOCUSED
+capture_screenshot after-back /sdcard/kf-tv-qualification-after-back.png
 
-{
-  echo "KULCHA FLO TV — NEUTRAL TV EMULATOR QUALIFICATION"
-  echo "commit=$GITHUB_SHA"
-  echo "image=android-tv API36 x86_64"
-  echo "android_boot=$BOOT"
-  echo "abi=$ABI"
-  echo "display=$SIZE"
-  echo "app_package=$PACKAGE"
-  echo "selected_profile=qualification"
-  echo "requested_page=https://example.com"
-  echo "app_process_after_launch=$LAUNCH_PROCESS"
-  echo "activity_foreground_after_launch=$LAUNCH_FOREGROUND"
-  echo "window_focus_after_launch=$LAUNCH_FOCUS"
-  echo "dpad_down_up_dispatched=yes"
-  echo "app_process_after_dpad=$DPAD_PROCESS"
-  echo "activity_foreground_after_dpad=$DPAD_FOREGROUND"
-  echo "window_focus_after_dpad=$DPAD_FOCUS"
-  echo "screenshot_after_dpad=yes"
-  echo "back_key_dispatched=yes"
-  echo "app_process_after_back=$BACK_PROCESS"
-  echo "activity_foreground_after_back=$BACK_FOREGROUND"
-  echo "window_focus_after_back=$BACK_FOCUS"
-  echo "screenshot_after_back=yes"
-  echo "broadcaster_playback_verified=no"
-  echo "audio_verified=no"
-  echo "physical_sony_bravia_verified=no"
-} > "$REPORT_DIR/qualification.txt"
-cat "$REPORT_DIR/qualification.txt"
+[[ "$DPAD_DISPATCH" == yes && "$BACK_DISPATCH" == yes ]] || {
+  FAILURE_OBSERVATION=remote_key_dispatch_failed
+  exit 1
+}
+[[ "$NAVIGATION_STATUS" == completed ]] || { FAILURE_OBSERVATION=neutral_page_navigation_not_confirmed; exit 1; }
+[[ "$SCREENSHOT_INITIAL" == captured && "$SCREENSHOT_DPAD" == captured && "$SCREENSHOT_BACK" == captured ]] || {
+  FAILURE_OBSERVATION=required_screenshot_missing_or_oversize
+  exit 1
+}
+VIRTUAL_HARNESS_STATUS=PASS
+FAILURE_OBSERVATION=none
+exit 0

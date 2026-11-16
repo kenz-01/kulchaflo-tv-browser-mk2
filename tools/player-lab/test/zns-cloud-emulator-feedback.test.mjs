@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 
 const script = readFileSync(resolve(process.cwd(), 'scripts/tv-zns-source-feedback.sh'), 'utf8');
 const workflow = readFileSync(resolve(process.cwd(), '../../.github/workflows/tv-cloud-emulator-qualification.yml'), 'utf8');
 const neutralQualification = readFileSync(resolve(process.cwd(), 'scripts/tv-cloud-emulator-qualification.sh'), 'utf8');
+const neutralNavigation = readFileSync(resolve(process.cwd(), 'scripts/tv-neutral-navigation-snapshot.py'), 'utf8');
 const classifier = readFileSync(resolve(process.cwd(), 'src/zns-feedback-outcome.mjs'), 'utf8');
 const dispatcher = readFileSync(resolve(process.cwd(), 'scripts/tv-cloud-emulator-dispatch.sh'), 'utf8');
 const stateParser = readFileSync(resolve(process.cwd(), 'scripts/tv-emulator-state.py'), 'utf8');
@@ -22,15 +24,47 @@ test('ZNS remains a separate explicitly selected manual profile on standard free
   assert.match(workflow, /runs-on:\s+ubuntu-latest/);
   assert.doesNotMatch(workflow, /larger runner|self-hosted|schedule:/i);
   assert.match(workflow, /timeout-minutes:\s+45/);
+  assert.match(workflow, /retention-days:\s+7/);
   assert.match(workflow, /!.*navigation-attempts/);
   assert.match(workflow, /name: tv-cloud-emulator-\$\{\{ inputs\.test_profile \}\}-navigation-attempts/);
+  assert.match(workflow, /virtual_harness_status/);
+  assert.match(workflow, /physical_bravia_acceptance/);
 });
 
 test('the neutral infrastructure qualification remains generic and does not navigate to a broadcaster', () => {
   assert.match(neutralQualification, /https:\/\/example\.com/);
   assert.match(neutralQualification, /selected_profile=qualification/);
   assert.doesNotMatch(neutralQualification, /znsbahamas|streamcomedia|KEYCODE_DPAD_CENTER/i);
+  assert.match(neutralQualification, /NAVIGATION_WAIT_SECONDS=30/);
+  assert.match(neutralQualification, /tv-neutral-navigation-snapshot\.py capture/);
+  assert.match(neutralQualification, /capture_screenshot initial/);
+  assert.match(neutralQualification, /virtual_harness_status=\$VIRTUAL_HARNESS_STATUS/);
+  assert.doesNotMatch(neutralQualification, /sleep 8/);
+  assert.match(neutralNavigation, /MAX_CAPTURE_SECONDS = 30/);
+  assert.match(neutralNavigation, /MAX_SCAN_BYTES = 256 \* 1024/);
   assert.match(dispatcher, /qualification\)/);
+});
+
+test('neutral navigation feedback accepts only the exact fixed route and emits sanitized state', () => {
+  const input = [
+    '11-14 12:00:00.002 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://example.com/',
+    '11-14 12:00:00.003 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=true url=https://example.com/',
+    '11-14 12:00:00.004 1234 1234 I KfMkIIGV:GvNav: page start tabId=abc url=https://example.com/?token=private',
+    '11-14 12:00:00.005 1234 1234 I KfMkIIGV:GvNav: page stop tabId=abc success=false url=https://other.invalid/',
+  ].join('\n');
+  const parsed = spawnSync('python3', [resolve(process.cwd(), 'scripts/tv-neutral-navigation-snapshot.py'), '--parse'], {
+    input,
+    encoding: 'utf8',
+  });
+  assert.equal(parsed.status, 0, parsed.stderr);
+  const report = JSON.parse(parsed.stdout);
+  assert.equal(report.capture_status, 'complete');
+  assert.equal(report.navigation_status, 'completed');
+  assert.equal(report.navigation_started, true);
+  assert.equal(report.navigation_completed, true);
+  assert.equal(report.navigation_failed, false);
+  assert.equal(report.route, 'https://example.com/');
+  assert.doesNotMatch(parsed.stdout, /token=private|other\.invalid/);
 });
 
 test('the ZNS profile uses only the official route and never dispatches play or center actions', () => {
