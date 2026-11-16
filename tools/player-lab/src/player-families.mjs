@@ -10,6 +10,12 @@ export const PLAYER_FAMILIES = Object.freeze([
   'bradmax',
   'tego',
   'novus',
+  'infomaniak',
+  'pro-fhi',
+  'streamhoster',
+  'telemicro',
+  'radiant',
+  'cloudflare-stream',
   'native-html5',
   'unknown',
 ]);
