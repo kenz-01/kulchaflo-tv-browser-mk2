@@ -2,6 +2,15 @@
 
 This index identifies sources, not a promise that raw chats/uploaded logs remain accessible forever.
 
+## 9 November 2026 — Cloud emulator and multi-repository Architect
+
+- Owner directed us to preserve manually working streaming helpers, reuse player families conservatively, and establish an emulator test-fix path without an Intel Mac.
+- [TV PR #22](https://github.com/kenz-01/kulchaflo-tv-browser-mk2/pull/22) source-only lock inventory; exact-head CI [#42551858450](https://github.com/kenz-01/kulchaflo-tv-browser-mk2/actions/runs/42551858450) SUCCESS; still draft.
+- [TV PR #23](https://github.com/kenz-01/kulchaflo-tv-browser-mk2/pull/23) cloud Android TV emulator qualification; corrected run [#42677219314](https://github.com/kenz-01/kulchaflo-tv-browser-mk2/actions/runs/42677219314) SUCCESS and Android deterministic #42677219152 SUCCESS; still draft. Artifact #13701585916 expires 10 Nov 18:52 UTC; private screenshot not mirrored into Git.
+- Architect Heartbeat ID `6ab6f2a9e2b08191b63c6f0a2579f3bd` expanded **in place** to Events + TV queues. No copied Events privileged controller, no auto-merge, no trusted Mac or paid emulator.
+- Current Events Codex [#1442](https://github.com/kenz-01/kulchaflo-events-engine/pull/1442) and [#1443](https://github.com/kenz-01/kulchaflo-events-engine/pull/1443) reports are summarized in paired 9 Nov TV handover; no native STAGING evidence from either. Reinspect live GitHub; never claim local tests equal protected gate/installed runtime.
+- Source: [9 Nov continuation](archive/2026-11-09_TV_Architect_Emulator_Helper_Continuation_Handover.md) and [9 Nov Brainstorm](archive/2026-11-09_Brainstorm_TV_One_Architect_Helper_Cloud_Proof_Handover.md), with older 27 Oct source retained below.
+
 ## 27 October 2026 — Manual broadcaster helper expansion and Bravia tests
 
 - Current TV Project chat: user asked to use previously implemented manual helpers, batch 19 known-family routes, then 17 unresolved routes, perform Bravia testing, reconcile output after repeated connection loss, and preserve a durable Git handover.
