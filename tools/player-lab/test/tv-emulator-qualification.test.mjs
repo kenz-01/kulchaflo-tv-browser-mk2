@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 
 const script = readFileSync(resolve(process.cwd(), 'scripts/tv-cloud-emulator-qualification.sh'), 'utf8');
+const stateParser = readFileSync(resolve(process.cwd(), 'scripts/tv-emulator-state.py'), 'utf8');
 const workflow = readFileSync(resolve(process.cwd(), '../../.github/workflows/tv-cloud-emulator-qualification.yml'), 'utf8');
 
 test('PR23 qualification is manually dispatched on a standard free GitHub-hosted runner', () => {
@@ -25,12 +26,17 @@ test('the infrastructure qualification stays neutral and records D-pad dispatch 
 });
 
 test('foreground, window focus, Back, and post-action state are checked before success', () => {
-  assert.equal((script.match(/\ncheck_app_state\n/g) ?? []).length, 3);
+  assert.match(script, /tv-emulator-state\.py capture/);
+  assert.match(script, /MAX_APP_STATE_POLLS=3/);
+  assert.match(script, /APP_STATE_POLL_INTERVAL_SECONDS=2/);
+  assert.match(script, /APP_STATE_CAPTURE_TIMEOUT_SECONDS=15/);
+  assert.match(script, /wait_for_app_state/);
+  assert.equal((script.match(/\ncheck_app_state\n/g) ?? []).length, 2);
   assert.match(script, /LAUNCH_PROCESS=\$APP_PROCESS/);
   assert.match(script, /DPAD_PROCESS=\$APP_PROCESS/);
   assert.match(script, /BACK_PROCESS=\$APP_PROCESS/);
-  assert.match(script, /topResumedActivity\|mResumedActivity/);
-  assert.match(script, /mCurrentFocus\|mFocusedApp/);
+  assert.match(stateParser, /topResumedActivity\|mResumedActivity/);
+  assert.match(stateParser, /mCurrentFocus/);
   assert.match(script, /BACK_DISPATCH=yes/);
   assert.match(script, /screenshot_after_dpad=\$SCREENSHOT_DPAD/);
   assert.match(script, /screenshot_after_back=\$SCREENSHOT_BACK/);

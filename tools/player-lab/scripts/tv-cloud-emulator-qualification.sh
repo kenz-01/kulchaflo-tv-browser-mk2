@@ -9,6 +9,9 @@ APK="app-gv/build/outputs/apk/universal/debug/app-gv-universal-debug.apk"
 REPORT_DIR="${RUNNER_TEMP:-/tmp}/tv-emulator-qualification"
 NAVIGATION_WAIT_SECONDS=30
 APK_INSTALL_TIMEOUT_SECONDS=60
+MAX_APP_STATE_POLLS=3
+APP_STATE_POLL_INTERVAL_SECONDS=2
+APP_STATE_CAPTURE_TIMEOUT_SECONDS=15
 MAX_SCREENSHOT_BYTES=$((4 * 1024 * 1024))
 FAILURE_STAGE=preflight
 
@@ -17,6 +20,7 @@ BOOT_STATUS=unknown ABI_STATUS=unknown LEANBACK_STATUS=unknown
 INSTALL_STATUS=unknown LAUNCH_STATUS=unknown NAVIGATION_STATUS=not_observed
 NAVIGATION_CAPTURE_STATUS=incomplete
 LAUNCH_PROCESS=unknown LAUNCH_FOREGROUND=unknown LAUNCH_FOCUS=unknown
+LAUNCH_STATE_POLLS=0
 DPAD_PROCESS=unknown DPAD_FOREGROUND=unknown DPAD_FOCUS=unknown
 BACK_PROCESS=unknown BACK_FOREGROUND=unknown BACK_FOCUS=unknown
 DPAD_DISPATCH=no BACK_DISPATCH=no
@@ -47,20 +51,37 @@ capture_screenshot() {
 }
 
 check_app_state() {
-  local activity_lines focus_lines
-  APP_PROCESS=no ACTIVITY_FOREGROUND=no WINDOW_FOCUSED=no
-  if [[ -n "$(timeout 8 adb shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' || true)" ]]; then
-    APP_PROCESS=yes
-  fi
-  activity_lines=$(timeout 8 adb shell dumpsys activity activities 2>/dev/null | tr -d '\r' | grep -E 'topResumedActivity|mResumedActivity' || true)
-  if grep -Fq "$PACKAGE" <<<"$activity_lines"; then
-    ACTIVITY_FOREGROUND=yes
-  fi
-  focus_lines=$(timeout 8 adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | grep -E 'mCurrentFocus|mFocusedApp' || true)
-  if grep -Fq "$PACKAGE" <<<"$focus_lines"; then
-    WINDOW_FOCUSED=yes
+  local state_file="$REPORT_DIR/app-state.json" parsed
+  APP_PROCESS=unknown ACTIVITY_FOREGROUND=unknown WINDOW_FOCUSED=unknown
+  timeout "$APP_STATE_CAPTURE_TIMEOUT_SECONDS" python3 tools/player-lab/scripts/tv-emulator-state.py capture > "$state_file" 2>/dev/null || true
+  if [[ -s "$state_file" ]]; then
+    parsed=$(python3 - "$state_file" <<'PY'
+import json, sys
+try:
+  state = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+  state = {}
+for key in ("process", "activity_foreground", "window_focus"):
+  value = state.get(key, "unknown")
+  print(value if value in ("yes", "no", "unknown") else "unknown")
+PY
+    ) || parsed=$'unknown\nunknown\nunknown'
+    mapfile -t state_values <<< "$parsed"
+    APP_PROCESS="${state_values[0]:-unknown}"
+    ACTIVITY_FOREGROUND="${state_values[1]:-unknown}"
+    WINDOW_FOCUSED="${state_values[2]:-unknown}"
   fi
   [[ "$APP_PROCESS" == yes && "$ACTIVITY_FOREGROUND" == yes && "$WINDOW_FOCUSED" == yes ]]
+}
+
+wait_for_app_state() {
+  local poll
+  for ((poll=1; poll<=MAX_APP_STATE_POLLS; poll++)); do
+    LAUNCH_STATE_POLLS=$poll
+    if check_app_state; then return 0; fi
+    if (( poll < MAX_APP_STATE_POLLS )); then sleep "$APP_STATE_POLL_INTERVAL_SECONDS"; fi
+  done
+  return 1
 }
 
 finalize() {
@@ -98,6 +119,8 @@ finalize() {
   export QUAL_NAV_CAPTURE="$NAVIGATION_CAPTURE_STATUS" QUAL_FAILURE="$FAILURE_OBSERVATION"
   export QUAL_FAILURE_STAGE="$FAILURE_STAGE"
   export QUAL_LP="$LAUNCH_PROCESS" QUAL_LF="$LAUNCH_FOREGROUND" QUAL_LW="$LAUNCH_FOCUS"
+  export QUAL_LAUNCH_POLLS="$LAUNCH_STATE_POLLS" QUAL_MAX_LAUNCH_POLLS="$MAX_APP_STATE_POLLS"
+  export QUAL_STATE_POLL_INTERVAL="$APP_STATE_POLL_INTERVAL_SECONDS" QUAL_STATE_CAPTURE_TIMEOUT="$APP_STATE_CAPTURE_TIMEOUT_SECONDS"
   export QUAL_DP="$DPAD_PROCESS" QUAL_DF="$DPAD_FOREGROUND" QUAL_DW="$DPAD_FOCUS"
   export QUAL_BP="$BACK_PROCESS" QUAL_BF="$BACK_FOREGROUND" QUAL_BW="$BACK_FOCUS"
   export QUAL_DPAD="$DPAD_DISPATCH" QUAL_BACK="$BACK_DISPATCH"
@@ -125,6 +148,7 @@ receipt = {
   },
   "app_state": {
     "after_launch": {"process": os.environ["QUAL_LP"], "activity_foreground": os.environ["QUAL_LF"], "window_focus": os.environ["QUAL_LW"]},
+    "launch_readiness": {"polls_used": int(os.environ["QUAL_LAUNCH_POLLS"]), "poll_limit": int(os.environ["QUAL_MAX_LAUNCH_POLLS"]), "poll_interval_seconds": int(os.environ["QUAL_STATE_POLL_INTERVAL"]), "capture_timeout_seconds": int(os.environ["QUAL_STATE_CAPTURE_TIMEOUT"]), "max_wait_seconds": int(os.environ["QUAL_MAX_LAUNCH_POLLS"]) * int(os.environ["QUAL_STATE_CAPTURE_TIMEOUT"]) + (int(os.environ["QUAL_MAX_LAUNCH_POLLS"]) - 1) * int(os.environ["QUAL_STATE_POLL_INTERVAL"])},
     "after_dpad": {"process": os.environ["QUAL_DP"], "activity_foreground": os.environ["QUAL_DF"], "window_focus": os.environ["QUAL_DW"]},
     "after_back": {"process": os.environ["QUAL_BP"], "activity_foreground": os.environ["QUAL_BF"], "window_focus": os.environ["QUAL_BW"]},
   },
@@ -212,7 +236,13 @@ unset launch_output
 # Capture the first app frame before waiting for a navigation event.
 capture_screenshot initial /sdcard/kf-tv-qualification-initial.png
 FAILURE_STAGE=launch_state
-check_app_state
+if ! wait_for_app_state; then
+  LAUNCH_PROCESS=$APP_PROCESS
+  LAUNCH_FOREGROUND=$ACTIVITY_FOREGROUND
+  LAUNCH_FOCUS=$WINDOW_FOCUSED
+  FAILURE_OBSERVATION=launch_app_state_check_failed
+  exit 1
+fi
 LAUNCH_PROCESS=$APP_PROCESS
 LAUNCH_FOREGROUND=$ACTIVITY_FOREGROUND
 LAUNCH_FOCUS=$WINDOW_FOCUSED
@@ -239,6 +269,11 @@ DPAD_PROCESS=$APP_PROCESS
 DPAD_FOREGROUND=$ACTIVITY_FOREGROUND
 DPAD_FOCUS=$WINDOW_FOCUSED
 capture_screenshot after-dpad /sdcard/kf-tv-qualification-after-dpad.png
+if [[ "$APP_PROCESS" != yes || "$ACTIVITY_FOREGROUND" != yes || "$WINDOW_FOCUSED" != yes ]]; then
+  FAILURE_STAGE=dpad_state
+  FAILURE_OBSERVATION=dpad_app_state_check_failed
+  exit 1
+fi
 
 if timeout 5 adb shell input keyevent KEYCODE_BACK; then BACK_DISPATCH=yes; fi
 sleep 2
@@ -248,6 +283,10 @@ BACK_PROCESS=$APP_PROCESS
 BACK_FOREGROUND=$ACTIVITY_FOREGROUND
 BACK_FOCUS=$WINDOW_FOCUSED
 capture_screenshot after-back /sdcard/kf-tv-qualification-after-back.png
+if [[ "$APP_PROCESS" != yes || "$ACTIVITY_FOREGROUND" != yes || "$WINDOW_FOCUSED" != yes ]]; then
+  FAILURE_OBSERVATION=back_app_state_check_failed
+  exit 1
+fi
 
 FAILURE_STAGE=final_checks
 [[ "$DPAD_DISPATCH" == yes && "$BACK_DISPATCH" == yes ]] || exit 1

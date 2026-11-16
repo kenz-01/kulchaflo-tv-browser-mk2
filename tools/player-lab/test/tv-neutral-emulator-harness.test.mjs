@@ -25,6 +25,7 @@ function createSandbox(navigation = 'complete') {
   mkdirSync(bin, {recursive: true});
   writeFileSync(join(scriptDir, 'tv-cloud-emulator-qualification.sh'), readFileSync(join(playerLab, 'scripts/tv-cloud-emulator-qualification.sh')));
   writeFileSync(join(scriptDir, 'tv-neutral-navigation-snapshot.py'), readFileSync(join(playerLab, 'scripts/tv-neutral-navigation-snapshot.py')));
+  writeFileSync(join(scriptDir, 'tv-emulator-state.py'), readFileSync(join(playerLab, 'scripts/tv-emulator-state.py')));
   writeFileSync(apk, 'test-only APK placeholder');
   const adb = `#!/usr/bin/env bash
 set -eu
@@ -52,8 +53,19 @@ case "$1" in
       am) printf 'Status: ok\\n' ;;
       pidof) printf '1234\\n' ;;
       dumpsys)
-        if [[ "$2" == activity ]]; then printf 'topResumedActivity=ActivityRecord{package=com.kulchaflo.tv.mk2.gv}\\n';
-        else printf 'mCurrentFocus=Window{package=com.kulchaflo.tv.mk2.gv}\\n'; fi
+        if [[ "$2" == activity ]]; then
+          if [[ "\${TV_FAKE_DELAY_LAUNCH_STATE:-no}" == yes ]]; then
+            count=0
+            [[ ! -f "\${TV_FAKE_ACTIVITY_COUNT_FILE}" ]] || read -r count < "\${TV_FAKE_ACTIVITY_COUNT_FILE}"
+            count=$((count + 1))
+            printf '%s\\n' "$count" > "\${TV_FAKE_ACTIVITY_COUNT_FILE}"
+            if (( count == 1 )); then printf 'topResumedActivity=ActivityRecord{a com.android.launcher/.Launcher t5}\\n';
+            else printf 'topResumedActivity=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity t5}\\n'; fi
+          else printf 'topResumedActivity=ActivityRecord{a com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity t5}\\n'; fi
+        elif [[ "$2" == window ]]; then printf 'mCurrentFocus=Window{b com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}\\n';
+        elif [[ "$2" == input ]]; then
+          printf '%s\\n' 'Input Dispatcher State:' '  FocusedWindows:' "    displayId=0, name='Window{abc u0 com.kulchaflo.tv.mk2.gv/.app.GeckoBrowserActivity}', token=redacted" '  FocusedApplications:'
+        fi
         ;;
       screencap|input) exit 0 ;;
     esac
@@ -68,7 +80,7 @@ exit 0
   return {root, scriptPath: join(scriptDir, 'tv-cloud-emulator-qualification.sh'), bin, reportDir};
 }
 
-function runHarness(navigation, installFailure = false) {
+function runHarness(navigation, installFailure = false, delayedLaunchState = false) {
   const sandbox = createSandbox(navigation);
   const summary = join(sandbox.root, 'step-summary.md');
   const result = spawnSync('/usr/bin/bash', [sandbox.scriptPath], {
@@ -82,6 +94,8 @@ function runHarness(navigation, installFailure = false) {
       GITHUB_SHA: 'c'.repeat(40),
       TV_FAKE_NAVIGATION: navigation,
       TV_FAKE_INSTALL_FAILURE: installFailure ? 'yes' : 'no',
+      TV_FAKE_DELAY_LAUNCH_STATE: delayedLaunchState ? 'yes' : 'no',
+      TV_FAKE_ACTIVITY_COUNT_FILE: join(sandbox.root, 'activity-count.txt'),
     },
   });
   let receipt;
@@ -100,6 +114,13 @@ test('neutral harness reports virtual PASS only after navigation, app focus, act
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   assert.equal(receipt.virtual_harness_status, 'PASS');
   assert.equal(receipt.neutral_route.navigation_status, 'completed');
+  assert.equal(receipt.app_state.after_launch.process, 'yes');
+  assert.equal(receipt.app_state.after_launch.activity_foreground, 'yes');
+  assert.equal(receipt.app_state.after_launch.window_focus, 'yes');
+  assert.equal(receipt.app_state.launch_readiness.polls_used, 1);
+  assert.equal(receipt.app_state.launch_readiness.poll_limit, 3);
+  assert.equal(receipt.app_state.launch_readiness.capture_timeout_seconds, 15);
+  assert.equal(receipt.app_state.launch_readiness.max_wait_seconds, 49);
   assert.equal(receipt.screenshots.initial, 'captured');
   assert.equal(receipt.screenshots.after_dpad, 'captured');
   assert.equal(receipt.screenshots.after_back, 'captured');
@@ -107,6 +128,14 @@ test('neutral harness reports virtual PASS only after navigation, app focus, act
   assert.equal(receipt.playback_progression, 'not_tested');
   assert.equal(receipt.physical_bravia_acceptance, 'not_tested');
   assert.match(summaryText, /Virtual Android TV harness: `PASS`/);
+});
+
+test('neutral harness waits a bounded extra poll for launch focus after a loading transition', () => {
+  const {result, receipt} = runHarness('complete', false, true);
+  assert.equal(result.status, 0, `${result.stderr}\\n${result.stdout}`);
+  assert.equal(receipt.virtual_harness_status, 'PASS');
+  assert.equal(receipt.app_state.launch_readiness.polls_used, 2);
+  assert.equal(receipt.app_state.after_launch.activity_foreground, 'yes');
 });
 
 test('neutral harness fails with exact bounded reason when page completion is absent', () => {

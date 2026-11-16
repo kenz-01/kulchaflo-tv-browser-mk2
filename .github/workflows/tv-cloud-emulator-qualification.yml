@@ -43,7 +43,10 @@ jobs:
               "failure_stage": "workflow_setup",
               "infrastructure": {"android_tv_boot": "unknown", "abi_x86_64": "unknown", "leanback_feature": "unknown", "apk_install": "unknown", "app_launch": "unknown"},
               "neutral_route": {"route": "https://example.com/", "navigation_status": "not_observed", "navigation_log_capture": "incomplete"},
-              "app_state": {name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")},
+              "app_state": {
+                  **{name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")},
+                  "launch_readiness": {"polls_used": 0, "poll_limit": 3, "poll_interval_seconds": 2, "capture_timeout_seconds": 15, "max_wait_seconds": 49},
+              },
               "actions": {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"},
               "screenshots": {"initial": "missing", "after_dpad": "missing", "after_back": "missing"},
               "playback_progression": "not_tested",
