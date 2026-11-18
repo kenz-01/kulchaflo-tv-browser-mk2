@@ -139,6 +139,31 @@ test('only the manifest-injected exact page wakes one publisher-owned lazy Daily
   assert.doesNotMatch(page.messages[0], /dailymotion|x8abc|autoplay|https?:/i);
 });
 
+test('Telesistema pointer movement skips the generic GeckoSession JavaScript wake pulse', () => {
+  const pulse = activity.match(/private fun dispatchInteractionWakePulse\(\) \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(pulse);
+  const routeGuard = pulse.indexOf('isTelesistemaLivePageUrl(activeTab.url)');
+  const throttle = pulse.indexOf('lastInteractionWakePulseMs = now');
+  const sessionLoad = pulse.indexOf('session.loadUri("javascript:');
+  assert.notEqual(routeGuard, -1);
+  assert.notEqual(throttle, -1);
+  assert.notEqual(sessionLoad, -1);
+  assert.ok(routeGuard < throttle, 'Telesistema movement must not consume the shared interaction-pulse throttle');
+  assert.ok(routeGuard < sessionLoad, 'Telesistema guard must run before the JavaScript URI load');
+  assert.match(pulse, /interaction wake pulse skipped surface=telesistema reason=publisher-owned-player/);
+  assert.match(pulse, /if \(!shouldApplyUnifiedCompat\(activeTab\.url\)\)/);
+
+  const timingSurface = activity.match(/private fun liveLoadTimingSurface\(url: String\): String\? \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(timingSurface);
+  assert.match(timingSurface, /isTelesistemaLivePageUrl\(url\) -> "telesistema-live"/);
+  assert.match(activity, /LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf\(5_000L, 30_000L, 90_000L, 180_000L\)/);
+  const timingUrlSanitizer = activity.match(/private fun liveLoadTimingUrlForLog\(surface: String\?, url: String\): String \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(timingUrlSanitizer);
+  assert.match(timingUrlSanitizer, /surface == "telesistema-live"/);
+  assert.match(timingUrlSanitizer, /"https:\/\/telesistema11\.com\.do\/en-vivo\/"/);
+  assert.match(activity, /currentUrl=\$\{liveLoadTimingUrlForLog\(currentState\.surface, currentSessionUrl\)\}/);
+});
+
 test('an already active frame and unrelated sites keep publisher UI and source untouched', () => {
   const active = makeFrame({ src: 'https://geo.dailymotion.com/player/x.html?video=x8abc' });
   const page = runPage({ url: 'https://telesistema11.com.do/en-vivo/', frames: [active] });

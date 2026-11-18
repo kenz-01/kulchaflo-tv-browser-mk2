@@ -11585,12 +11585,19 @@ return changed>0;
     }
 
     private fun dispatchInteractionWakePulse() {
+        val activeTab = tabController.getActiveTab() ?: return
+        if (isTelesistemaLivePageUrl(activeTab.url)) {
+            GvLogger.i(
+                "GvInput",
+                "interaction wake pulse skipped surface=telesistema reason=publisher-owned-player"
+            )
+            return
+        }
         val now = SystemClock.uptimeMillis()
         if (now - lastInteractionWakePulseMs < INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS) {
             return
         }
         lastInteractionWakePulseMs = now
-        val activeTab = tabController.getActiveTab() ?: return
         if (!shouldApplyUnifiedCompat(activeTab.url)) {
             return
         }
@@ -12339,10 +12346,12 @@ return changed>0;
     private fun maybeStartLiveLoadTiming(session: GeckoSession, url: String, event: String) {
         val surface = liveLoadTimingSurface(url)
         if (surface == null) {
-            if (liveLoadTimingBySession.remove(session) != null) {
+            val previousState = liveLoadTimingBySession.remove(session)
+            if (previousState != null) {
                 GvLogger.i(
                     "GvNav",
-                    "live load timing event=state-clear reason=non-live-url tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+                    "live load timing event=state-clear reason=non-live-url tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                        "surface=${previousState.surface} url=${liveLoadTimingUrlForLog(previousState.surface, url)}"
                 )
             }
             absTegoStartupReprobeBySession.remove(session)
@@ -12361,7 +12370,8 @@ return changed>0;
         liveLoadTimingBySession[session] = state
         GvLogger.i(
             "GvNav",
-            "live load timing event=$event surface=$surface elapsedMs=0 tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+            "live load timing event=$event surface=$surface elapsedMs=0 tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                "url=${liveLoadTimingUrlForLog(surface, url)}"
         )
         scheduleLiveLoadTimingCheckpoints(session, state)
     }
@@ -12380,7 +12390,8 @@ return changed>0;
             absTegoStartupReprobeBySession.remove(session)
             GvLogger.i(
                 "GvNav",
-                "live load timing event=state-clear reason=left-live-surface surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+                "live load timing event=state-clear reason=left-live-surface surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} " +
+                    "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=${liveLoadTimingUrlForLog(state.surface, url)}"
             )
             return
         }
@@ -12415,7 +12426,8 @@ return changed>0;
                     GvLogger.i(
                         "GvNav",
                         "live load timing checkpoint surface=${currentState.surface} elapsedMs=${elapsedLiveLoadMs(currentState)} " +
-                            "targetMs=$delayMs tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} currentUrl=$currentSessionUrl " +
+                            "targetMs=$delayMs tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                            "currentUrl=${liveLoadTimingUrlForLog(currentState.surface, currentSessionUrl)} " +
                             "pageStopLogged=${currentState.pageStopLogged} tegoIframeLogged=${currentState.tegoIframeLogged} " +
                             "mediaEvidenceLogged=${currentState.mediaEvidenceLogged} tegoQualityLogged=${currentState.tegoQualityLogged} " +
                             "playableVideoLogged=${currentState.playableVideoLogged}"
@@ -13081,8 +13093,18 @@ return changed>0;
         GvLogger.i(
             "GvNav",
             "live load timing event=$event surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} " +
-                "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url rootUrl=${state.rootUrl}$extra"
+                "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                "url=${liveLoadTimingUrlForLog(state.surface, url)} " +
+                "rootUrl=${liveLoadTimingUrlForLog(state.surface, state.rootUrl)}$extra"
         )
+    }
+
+    private fun liveLoadTimingUrlForLog(surface: String?, url: String): String {
+        return if (surface == "telesistema-live") {
+            "https://telesistema11.com.do/en-vivo/"
+        } else {
+            url
+        }
     }
 
     private fun elapsedLiveLoadMs(state: LiveLoadTimingState): Long {
@@ -16325,6 +16347,7 @@ return changed>0;
             return null
         }
         return when {
+            isTelesistemaLivePageUrl(url) -> "telesistema-live"
             host == "player.tegotv.com" || path.contains("/player.php") -> "tego-player"
             host == "ttt.live" || host.endsWith(".ttt.live") -> "ttt-live"
             host == "abstvradio.com" && path.contains("live-streaming") -> "abs-live"
