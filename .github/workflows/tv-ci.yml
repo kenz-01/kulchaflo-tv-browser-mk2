@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout exact head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -34,3 +36,30 @@ jobs:
         uses: gradle/actions/wrapper-validation@v4
       - name: Compile and test GeckoView runtime
         run: ./gradlew :app-gv:test :app-gv:assembleBraviaRelease --console=plain
+      - name: Prepare Bravia APK artifact
+        run: |
+          set -euo pipefail
+          d153_apk='app-gv/build/outputs/apk/bravia/release/app-gv-bravia-release.apk'
+          d153_artifact_dir="$RUNNER_TEMP/bravia-candidate"
+          test -s "$d153_apk"
+          mkdir -p "$d153_artifact_dir"
+          cp "$d153_apk" "$d153_artifact_dir/app-gv-bravia-release.apk"
+          (cd "$d153_artifact_dir" && sha256sum app-gv-bravia-release.apk > SHA256SUMS.txt)
+          d153_commit="$(git rev-parse HEAD)"
+          cat > "$d153_artifact_dir/BUILD_PROVENANCE.txt" <<EOF
+          repository=${{ github.repository }}
+          source_commit=$d153_commit
+          variant=braviaRelease
+          artifact=app-gv-bravia-release.apk
+          signing=Android Debug certificate
+          acceptance=build candidate only; no emulator or physical TV verification
+          EOF
+      - name: Upload Bravia test APK for same-repository pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: bravia-test-candidate-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/bravia-candidate/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

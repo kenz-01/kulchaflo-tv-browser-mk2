@@ -12,6 +12,8 @@ const MEDIA_EVENTS = new Set([
   'pause', 'waiting', 'stalled', 'error', 'abort', 'emptied',
 ]);
 const AUTOPLAY_TYPES = new Set(['audible', 'inaudible']);
+const PERMISSION_ORIGINS = new Set(['publisher', 'streamcomedia', 'other']);
+const DISCOVERY_TRIGGERS = new Set(['video_inserted', 'video_changed', 'observer_unavailable']);
 const APP_CHECKPOINTS = ['after_launch', 'after_dpad', 'after_back'];
 const INFRA_FAILURE_STAGES = new Set([
   'preflight',
@@ -119,6 +121,36 @@ function safeAttemptSnapshot(snapshot = {}) {
   const captureStatus = ['complete', 'incomplete', 'truncated'].includes(snapshot.capture_status)
     ? snapshot.capture_status
     : 'incomplete';
+  const boundedCount = (value) => Number.isInteger(value) && value >= 0 && value <= 32 ? value : null;
+  const initial = snapshot.helper_initial_state && typeof snapshot.helper_initial_state === 'object'
+    ? {
+      video_count: boundedCount(snapshot.helper_initial_state.video_count),
+      visible_video_count: boundedCount(snapshot.helper_initial_state.visible_video_count),
+    }
+    : null;
+  const discoveryEvents = Array.isArray(snapshot.video_discovery_events)
+    ? snapshot.video_discovery_events.slice(0, 16).flatMap((event) => {
+      if (!event || typeof event !== 'object') return [];
+      const phase = ['zns-video-discovery', 'zns-video-discovery-window-ended'].includes(event.phase)
+        ? event.phase
+        : null;
+      const trigger = DISCOVERY_TRIGGERS.has(event.trigger) ? event.trigger : 'none';
+      const reason = ['deadline', 'pagehide'].includes(event.reason) ? event.reason : 'none';
+      const age = Number.isInteger(event.helper_age_ms) && event.helper_age_ms >= 0 && event.helper_age_ms <= 60000
+        ? event.helper_age_ms
+        : null;
+      if (!phase) return [];
+      return [{
+        phase,
+        helper_age_ms: age,
+        video_count: boundedCount(event.video_count),
+        visible_video_count: boundedCount(event.visible_video_count),
+        trigger,
+        reason,
+        video_ever_observed: event.video_ever_observed === true,
+      }];
+    })
+    : [];
   return {
     capture_status: captureStatus,
     official_frame_observed: isStatus(snapshot.official_frame_observed) ? snapshot.official_frame_observed : 'unknown',
@@ -128,6 +160,8 @@ function safeAttemptSnapshot(snapshot = {}) {
     embedded_helper_active_observed: isStatus(snapshot.embedded_helper_active_observed) ? snapshot.embedded_helper_active_observed : 'unknown',
     launch_observations: safeLaunchObservations(snapshot.launch_observations),
     observation_phases: phases,
+    helper_initial_state: initial,
+    video_discovery_events: discoveryEvents,
     player_state: safePlayerState(snapshot.player_state),
     media_diagnostics: safeMediaDiagnostics(snapshot.media_diagnostics),
     video_time_advanced_observed: isStatus(snapshot.video_time_advanced_observed) ? snapshot.video_time_advanced_observed : 'unknown',
@@ -212,7 +246,12 @@ function safeMediaDiagnostics(value = {}) {
     ? state.autoplay_permission_events.slice(0, 8).flatMap((entry) => {
       if (!entry || !AUTOPLAY_TYPES.has(entry.type)) return [];
       const label = (input) => ['allow', 'deny', 'other'].includes(input) ? input : 'unknown';
-      return [{type: entry.type, requested: label(entry.requested), decision: label(entry.decision)}];
+      const permission = {type: entry.type, requested: label(entry.requested), decision: label(entry.decision)};
+      if (PERMISSION_ORIGINS.has(entry.origin) && typeof entry.scope_matched === 'boolean') {
+        permission.origin = entry.origin;
+        permission.scope_matched = entry.scope_matched;
+      }
+      return [permission];
     })
     : [];
   const status = (input) => isStatus(input) ? input : 'unknown';
@@ -353,6 +392,7 @@ export function classifyZnsFeedback(evidence = {}) {
     schema_version: 1,
     receipt_finalized: true,
     harness_completed: Boolean(harnessCompleted),
+    virtual_harness_status: harnessCompleted ? 'PASS' : 'FAIL',
     commit: /^[a-f\d]{40}$/i.test(String(evidence.commit ?? '')) ? evidence.commit.toLowerCase() : 'unknown',
     selected_profile: evidence.profile === 'zns' ? 'zns' : 'unknown',
     source: {

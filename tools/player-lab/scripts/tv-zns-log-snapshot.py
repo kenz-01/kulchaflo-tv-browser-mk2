@@ -48,7 +48,18 @@ MEDIA_SNAPSHOT_PREFIX = re.compile(
 MEDIA_EVENT_PATTERN = re.compile(r"^zns media event=([a-z]+)\b")
 AUTOPLAY_PERMISSION_PATTERN = re.compile(
     r"^zns autoplay permission type=(audible|inaudible) "
-    r"requested=(allow|deny|other) decision=(allow|deny|other)\b"
+    r"requested=(allow|deny|other) decision=(allow|deny|other)"
+    r"(?: origin=(publisher|streamcomedia|other) scopeMatched=(true|false))?\b"
+)
+HELPER_ACTIVE_PATTERN = re.compile(
+    r"^zns helper phase=zns-embedded-helper-active mode=browser-first .*"
+    r"\binitialVideoCount=(-1|[0-9]{1,2}) initialVisibleVideoCount=(-1|[0-9]{1,2})\b"
+)
+VIDEO_DISCOVERY_PATTERN = re.compile(
+    r"^zns video discovery phase=(zns-video-discovery|zns-video-discovery-window-ended) "
+    r"ageMs=(-1|[0-9]{1,5}) videoCount=(-1|[0-9]{1,2}) visibleVideoCount=(-1|[0-9]{1,2}) "
+    r"trigger=(video_inserted|video_changed|observer_unavailable|none) "
+    r"reason=(deadline|pagehide|none) videoEverObserved=(true|false)\b"
 )
 APP_LOG_TAG = re.compile(r"\b[VDIWEF]\s+KfMkIIGV:(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
 LEGACY_APP_LOG_TAG = re.compile(r"\b[VDIWEF]/(GvMedia|GvNav|GvContent|GvTabs):\s*(.*)$")
@@ -81,6 +92,8 @@ def sanitize(text, capture_status="complete"):
     media_state = None
     media_events = set()
     autoplay_permissions = []
+    helper_initial_state = None
+    video_discovery_events = []
     observed = set()
     lifecycle = set()
     for line in text.splitlines():
@@ -96,6 +109,26 @@ def sanitize(text, capture_status="complete"):
                     phases.append(phase)
                 if phase in LIFECYCLE_PHASES:
                     lifecycle.add(LIFECYCLE_PHASES[phase])
+            helper_active_match = HELPER_ACTIVE_PATTERN.match(message)
+            if helper_active_match:
+                helper_initial_state = {
+                    "video_count": int(helper_active_match.group(1)),
+                    "visible_video_count": int(helper_active_match.group(2)),
+                }
+            video_discovery_match = VIDEO_DISCOVERY_PATTERN.match(message)
+            if video_discovery_match and len(video_discovery_events) < 16:
+                phase, age_ms, video_count, visible_count, trigger, reason, video_ever_observed = video_discovery_match.groups()
+                event = {
+                    "phase": phase,
+                    "helper_age_ms": int(age_ms),
+                    "video_count": int(video_count),
+                    "visible_video_count": int(visible_count),
+                    "trigger": trigger,
+                    "reason": reason,
+                    "video_ever_observed": video_ever_observed == "true",
+                }
+                if event not in video_discovery_events:
+                    video_discovery_events.append(event)
             state_match = STATE_PATTERN.match(message)
             if state_match:
                 phases.append("zns-embedded-observed") if "zns-embedded-observed" not in phases else None
@@ -123,7 +156,11 @@ def sanitize(text, capture_status="complete"):
                 media_events.add(event_match.group(1))
             permission_match = AUTOPLAY_PERMISSION_PATTERN.match(message)
             if permission_match:
-                permission = dict(zip(("type", "requested", "decision"), permission_match.groups()))
+                permission_type, requested, decision, origin, scope_matched = permission_match.groups()
+                permission = {"type": permission_type, "requested": requested, "decision": decision}
+                if origin is not None and scope_matched is not None:
+                    permission["origin"] = origin
+                    permission["scope_matched"] = scope_matched == "true"
                 if permission not in autoplay_permissions and len(autoplay_permissions) < 8:
                     autoplay_permissions.append(permission)
         if tag == "GvTabs":
@@ -188,6 +225,8 @@ def sanitize(text, capture_status="complete"):
         "iframe_load_watch_attached": lifecycle_observations["iframe_load_watch_attached"],
         "iframe_load_event_after_watch": lifecycle_observations["iframe_load_event_after_watch"],
         "embedded_helper_active_observed": lifecycle_observations["embedded_helper_active_observed"],
+        "helper_initial_state": helper_initial_state,
+        "video_discovery_events": video_discovery_events,
         "player_state": player_state,
         "media_diagnostics": media_diagnostics,
         "video_time_advanced_observed": "yes" if "zns-video-time-advanced" in phases else "no",

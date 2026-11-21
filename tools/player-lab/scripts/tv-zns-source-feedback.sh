@@ -204,7 +204,11 @@ try:
  for item in raw.get("autoplay_permission_events",[])[:8] if isinstance(raw.get("autoplay_permission_events"),list) else []:
   if not isinstance(item,dict) or item.get("type") not in {"audible","inaudible"}: continue
   label=lambda value: value if value in {"allow","deny","other"} else "unknown"
-  permissions.append({"type":item["type"],"requested":label(item.get("requested")),"decision":label(item.get("decision"))})
+  permission={"type":item["type"],"requested":label(item.get("requested")),"decision":label(item.get("decision"))}
+  if item.get("origin") in {"publisher","streamcomedia","other"} and isinstance(item.get("scope_matched"),bool):
+   permission["origin"]=item["origin"]
+   permission["scope_matched"]=item["scope_matched"]
+  permissions.append(permission)
  report={
   "observed":status(raw.get("observed")),
   "network_state":integer(raw.get("network_state"),{0,1,2,3}),
@@ -355,6 +359,7 @@ except (OSError,json.JSONDecodeError):
     receipt={}
 yes_no=lambda value: "yes" if value is True else "no" if value is False else "unknown"
 print(f"- Harness success: `{yes_no(receipt.get('harness_completed'))}`")
+print(f"- Virtual Android TV harness: `{receipt.get('virtual_harness_status','FAIL')}` (does not establish playback or physical acceptance)")
 print(f"- Diagnostic success: `{yes_no(receipt.get('diagnostic_success'))}`; cause: `{receipt.get('diagnostic_cause','not_established')}`")
 print(f"- Playback progression: `{receipt.get('playback_progression','unknown')}` (actual bounded media-time advancement)")
 print(f"- Physical TV acceptance: `{receipt.get('device_acceptance','not_tested')}`")
