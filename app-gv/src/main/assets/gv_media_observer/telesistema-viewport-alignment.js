@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const DISCOVERY_WINDOW_MS = 35000;
+  const DISCOVERY_WINDOW_MS = 60000;
   const FRAME_READY_FALLBACK_MS = 2500;
   const PROMPT_PREFIX = "__GV_MEDIA__";
   const PLAYER_CLASS = "kf-telesistema-full-viewport-player";
@@ -172,8 +172,7 @@
   }
 
   function requestNativeHover() {
-    if (hoverRequestSent || stopped) return;
-    hoverRequestSent = true;
+    if (stopped) return;
     if (waitingFrame && frameLoadListener) {
       try { waitingFrame.removeEventListener("load", frameLoadListener); } catch (_) {}
     }
@@ -183,6 +182,8 @@
       clearTimeout(frameReadyTimer);
       frameReadyTimer = null;
     }
+    if (hoverRequestSent) return;
+    hoverRequestSent = true;
     if (!isTelesistemaLiveRoute()) {
       cleanupIfRouteChanged();
       return;
@@ -205,7 +206,7 @@
   }
 
   function waitForOfficialFrameLoad(frame) {
-    if (hoverRequestSent || stopped || waitingFrame === frame || !hasOfficialDailymotionSource(frame)) return;
+    if (stopped || waitingFrame === frame || !hasOfficialDailymotionSource(frame)) return;
     applyPlayerFirstLayout(frame);
     stopDiscovery();
     waitingFrame = frame;
@@ -233,6 +234,10 @@
     const afterY = Number(window.scrollY || window.pageYOffset || 0);
     const scrollChanged = beforeX !== afterX || beforeY !== afterY;
     alignmentEvidence = { visibleBefore: viewportBefore.visible, scrollChanged: scrollChanged };
+    // Wake the publisher's existing lazy frame at discovery time. Waiting for
+    // the iframe's load event is too late when the publisher only assigns src
+    // after pointer hover.
+    requestNativeHover();
     if (hasOfficialDailymotionSource(frame)) waitForOfficialFrameLoad(frame);
   }
 

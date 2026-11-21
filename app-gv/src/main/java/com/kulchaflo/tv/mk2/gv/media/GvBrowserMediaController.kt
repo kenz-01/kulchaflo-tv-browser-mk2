@@ -16,9 +16,6 @@ class GvBrowserMediaController(
      */
     var youtubeMediaReadyListener: ((GeckoSession) -> Unit)? = null
 
-    /** Called after GeckoView reports a browser media session entering play. */
-    var playbackStartedListener: ((GeckoSession) -> Unit)? = null
-
     private data class BrowserMediaState(
         val tabId: String,
         val mediaSession: MediaSession,
@@ -77,7 +74,6 @@ class GvBrowserMediaController(
         override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
             activeState = stateFor(session, mediaSession).apply { isPlaying = true }
             GvLogger.i(TAG, "browser media play tabId=${activeState?.tabId ?: "unknown"}")
-            playbackStartedListener?.invoke(session)
             youtubeMediaReadyListener?.invoke(session)
         }
 
@@ -213,15 +209,6 @@ class GvBrowserMediaController(
             activeState = null
             GvLogger.i(TAG, "browser media state cleared tabId=$tabId reason=tab-closed")
         }
-    }
-
-    fun isTelesistemaStreamPlaying(session: GeckoSession): Boolean {
-        val tabId = tabController.findTabBySession(session)?.id ?: return false
-        val state = activeState ?: return false
-        if (state.tabId != tabId || !state.isPlaying) return false
-        val title = state.metadata?.title.orEmpty()
-        return title.contains("Telesistema", ignoreCase = true) &&
-            title.contains("Canal 11", ignoreCase = true)
     }
 
     fun describeSessionState(session: GeckoSession): String {

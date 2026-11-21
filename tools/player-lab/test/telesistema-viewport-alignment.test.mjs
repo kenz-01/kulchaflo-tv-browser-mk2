@@ -115,26 +115,26 @@ function fireFrameReady(frame) {
   frame.listeners.load?.();
 }
 
-test('offscreen official Dailymotion iframe is aligned once and reports only minimal booleans', () => {
+test('offscreen official Dailymotion iframe is aligned and triggers one hover before iframe load', () => {
   const { state, window } = runHelper();
   const frame = dailymotionFrame(window);
   state.frames.push(frame);
   state.observer.callback([]);
   state.observer.callback([]);
-  assert.equal(state.events.length, 0);
-  fireFrameReady(frame);
-  state.timers.find((timer) => timer.delayMs === 2500)?.callback();
-
-  assert.equal(frame.scrollCount, 1);
-  assert.equal(frame.lastScrollOptions.block, 'center');
   assert.equal(state.events.length, 1);
   assert.deepEqual({ ...state.events[0] }, {
     type: 'telesistema-viewport-alignment',
     visibleBefore: false,
     scrollChanged: true,
   });
+  fireFrameReady(frame);
+  state.timers.find((timer) => timer.delayMs === 2500)?.callback();
+
+  assert.equal(frame.scrollCount, 1);
+  assert.equal(frame.lastScrollOptions.block, 'center');
+  assert.equal(state.events.length, 1);
   assert.equal(state.observer.disconnected, true);
-  assert.equal(state.timers[0].delayMs, 35000);
+  assert.equal(state.timers[0].delayMs, 60000);
   assert.equal(state.timers[0].cleared, true);
   assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
   assert.match(state.styles[0].textContent, /position:fixed!important/);
@@ -191,7 +191,7 @@ test('late Dailymotion iframe discovery is bounded and rejects non-official embe
   assert.equal(state.observer.disconnected, true);
 });
 
-test('official lazy iframe placeholder is aligned without rewriting attributes and waits for publisher src', () => {
+test('official lazy iframe placeholder gets one hover before publisher src without rewriting attributes', () => {
   const { state, window } = runHelper();
   const frame = dailymotionFrame(window);
   frame.src = 'about:blank';
@@ -202,7 +202,12 @@ test('official lazy iframe placeholder is aligned without rewriting attributes a
   assert.equal(frame.scrollCount, 1);
   assert.equal(frame.lastScrollOptions.block, 'center');
   assert.equal(state.styles.length, 0);
-  assert.equal(state.events.length, 0);
+  assert.equal(state.events.length, 1);
+  assert.deepEqual({ ...state.events[0] }, {
+    type: 'telesistema-viewport-alignment',
+    visibleBefore: false,
+    scrollChanged: true,
+  });
   assert.notEqual(state.observer.disconnected, true);
   assert.equal(frame.src, 'about:blank');
   assert.equal(frame.attributes['data-litespeed-src'], 'https://geo.dailymotion.com/player/x123.html?video=x456');
@@ -214,7 +219,7 @@ test('official lazy iframe placeholder is aligned without rewriting attributes a
   assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
   assert.equal(state.observer.disconnected, true);
   assert.equal(state.timers[0].cleared, true);
-  assert.equal(state.events.length, 0);
+  assert.equal(state.events.length, 1);
 
   fireFrameReady(frame);
   assert.equal(state.events.length, 1);
@@ -235,7 +240,7 @@ test('unrelated route and expired discovery do not align any iframe', () => {
   assert.equal(nearMiss.state.events.length, 0);
 
   const pending = runHelper();
-  assert.equal(pending.state.timers[0].delayMs, 35000);
+  assert.equal(pending.state.timers[0].delayMs, 60000);
   pending.state.timers[0].callback();
   assert.equal(pending.state.observer.disconnected, true);
   assert.equal(pending.state.events.length, 0);
@@ -266,7 +271,7 @@ test('pagehide removes the player-first styling and cancels the one-shot hover r
   assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), false);
   assert.equal(state.styles.length, 0);
   assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
-  assert.equal(state.events.length, 0);
+  assert.equal(state.events.length, 1);
 });
 
 test('helper source cannot click, play, synthesize input, mutate player attributes, or force fullscreen', () => {
@@ -275,7 +280,7 @@ test('helper source cannot click, play, synthesize input, mutate player attribut
   assert.match(helper, /frame\.addEventListener\("load"/);
   assert.match(helper, /\["src", "data-src", "data-lazy-src", "data-litespeed-src"\]/);
   assert.match(helper, /hasOfficialDailymotionSource\(frame\)/);
-  assert.match(helper, /DISCOVERY_WINDOW_MS = 35000/);
+  assert.match(helper, /DISCOVERY_WINDOW_MS = 60000/);
   assert.match(helper, /FRAME_READY_FALLBACK_MS = 2500/);
   assert.match(helper, /hoverRequestSent/);
 });
