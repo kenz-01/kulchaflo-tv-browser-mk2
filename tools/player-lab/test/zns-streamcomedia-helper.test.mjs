@@ -368,7 +368,8 @@ test('the embedded player helper does not run without the official site referrer
 test('Kotlin permission and native-promotion boundaries stay scoped to the official ZNS routes', () => {
   const activity = readFileSync(resolve(process.cwd(), '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt'), 'utf8');
   const manifest = JSON.parse(readFileSync(resolve(assets, 'manifest.json'), 'utf8'));
-  assert.deepEqual(manifest.content_scripts[0].js, ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js']);
+  const genericObserver = manifest.content_scripts.find((entry) => entry.matches.includes('<all_urls>'));
+  assert.deepEqual(genericObserver.js, ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js']);
   assert.match(activity, /private fun isZnsTvSiteUrl[\s\S]*?host == "znsbahamas\.com" && path == "\/"/);
   assert.match(activity, /private fun isZnsStreamcomediaEmbedUrl[\s\S]*?host == "player\.streamcomedia\.com" && path == "\/html5\/znstv"/);
   assert.match(activity, /private const val ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW = true/);

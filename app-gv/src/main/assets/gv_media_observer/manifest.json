@@ -11,6 +11,15 @@
   "permissions": ["<all_urls>"],
   "content_scripts": [
     {
+      "matches": [
+        "https://telesistema11.com.do/en-vivo*",
+        "https://www.telesistema11.com.do/en-vivo*"
+      ],
+      "js": ["telesistema-viewport-alignment.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
       "matches": ["<all_urls>"],
       "js": ["candidate-ranking.js", "content.js", "zns-streamcomedia-helper.js"],
       "run_at": "document_idle",

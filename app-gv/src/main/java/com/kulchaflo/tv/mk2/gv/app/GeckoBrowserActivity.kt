@@ -13230,6 +13230,17 @@ return changed>0;
         val title = payload.optString("title")
         val phase = payload.optString("phase")
         val type = payload.optString("type")
+        if (type == "telesistema-viewport-alignment") {
+            val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
+            if (!isTelesistemaLivePageUrl(activeUrl)) return
+            val visibleBefore = payload.opt("visibleBefore") as? Boolean ?: return
+            val scrollChanged = payload.opt("scrollChanged") as? Boolean ?: return
+            GvLogger.i(
+                "GvMedia",
+                "telesistema viewport alignment visibleBefore=$visibleBefore scrollChanged=$scrollChanged"
+            )
+            return
+        }
         if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick" || type == "facebook-login-modal-close" || type == "facebook-bottom-login-bar-cosmetic-hide") && !isCurrentFacebookPassiveGeneration(session, payload)) {
             return
         }

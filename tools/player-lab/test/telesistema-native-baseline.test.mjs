@@ -9,9 +9,18 @@ const contentScript = readFileSync(resolve(assets, 'content.js'), 'utf8');
 const activity = readFileSync(resolve(process.cwd(), '../../app-gv/src/main/java/com/kulchaflo/tv/mk2/gv/app/GeckoBrowserActivity.kt'), 'utf8');
 const targets = JSON.parse(readFileSync(resolve(process.cwd(), 'config/public-targets.json'), 'utf8'));
 
-test('Telesistema baseline injects no channel helper or interaction diagnostic', () => {
-  assert.equal(manifest.content_scripts.length, 1);
+test('Telesistema viewport experiment is isolated to its official top-level live route', () => {
+  assert.equal(manifest.content_scripts.length, 2);
   assert.deepEqual(manifest.content_scripts[0], {
+    matches: [
+      'https://telesistema11.com.do/en-vivo*',
+      'https://www.telesistema11.com.do/en-vivo*',
+    ],
+    js: ['telesistema-viewport-alignment.js'],
+    run_at: 'document_idle',
+    all_frames: false,
+  });
+  assert.deepEqual(manifest.content_scripts[1], {
     matches: ['<all_urls>'],
     js: ['candidate-ranking.js', 'content.js', 'zns-streamcomedia-helper.js'],
     run_at: 'document_idle',
@@ -21,6 +30,11 @@ test('Telesistema baseline injects no channel helper or interaction diagnostic',
   assert.equal(existsSync(resolve(assets, 'telesistema-first-interaction-diagnostic.js')), false);
   assert.doesNotMatch(activity, /TelesistemaDiagnostic|telesistema-interaction-diagnostic/);
   assert.doesNotMatch(contentScript, /telesistema11\.com\.do|KfTelesistema|telesistema-lazy-frame-helper/);
+  assert.doesNotMatch(activity, /"telesistema viewport alignment[^\n]*pageUrl=/);
+});
+
+test('viewport evidence is accepted only on the active official route and logs two booleans', () => {
+  assert.match(activity, /if \(type == "telesistema-viewport-alignment"\) \{[\s\S]*?isTelesistemaLivePageUrl\(activeUrl\)[\s\S]*?opt\("visibleBefore"\) as\? Boolean[\s\S]*?opt\("scrollChanged"\) as\? Boolean[\s\S]*?telesistema viewport alignment visibleBefore=\$visibleBefore scrollChanged=\$scrollChanged/);
 });
 
 test('official route, scoped autoplay permission, and GeckoView media protection remain', () => {
