@@ -11791,6 +11791,20 @@ return changed>0;
         return handled
     }
 
+    private fun dispatchTelesistemaStartupHover(session: GeckoSession) {
+        pointerHandler.post {
+            if (isFinishing || isDestroyed || !pointerAssistModeActive) return@post
+            val activeTab = tabController.getActiveTab() ?: return@post
+            if (activeTab.session !== session || !isTelesistemaLivePageUrl(activeTab.url)) return@post
+            if (geckoView.width <= 0 || geckoView.height <= 0) return@post
+            val inset = pointerBoundsInsetPx()
+            val maxX = (geckoView.width.toFloat() - inset).coerceAtLeast(inset)
+            val maxY = (geckoView.height.toFloat() - inset).coerceAtLeast(inset)
+            if (pointerX !in inset..maxX || pointerY !in inset..maxY) return@post
+            dispatchPointerHover()
+        }
+    }
+
     private fun dispatchNativeMouseMoveAt(x: Float, y: Float, reason: String): Boolean {
         val eventTime = SystemClock.uptimeMillis()
         val handled = dispatchPointerMotionAt(
@@ -13231,14 +13245,15 @@ return changed>0;
         val phase = payload.optString("phase")
         val type = payload.optString("type")
         if (type == "telesistema-viewport-alignment") {
-            val activeUrl = tabController.findTabBySession(session)?.url.orEmpty()
-            if (!isTelesistemaLivePageUrl(activeUrl)) return
+            val activeTab = tabController.getActiveTab() ?: return
+            if (activeTab.session !== session || !isTelesistemaLivePageUrl(activeTab.url)) return
             val visibleBefore = payload.opt("visibleBefore") as? Boolean ?: return
             val scrollChanged = payload.opt("scrollChanged") as? Boolean ?: return
             GvLogger.i(
                 "GvMedia",
                 "telesistema viewport alignment visibleBefore=$visibleBefore scrollChanged=$scrollChanged"
             )
+            dispatchTelesistemaStartupHover(session)
             return
         }
         if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick" || type == "facebook-login-modal-close" || type == "facebook-bottom-login-bar-cosmetic-hide") && !isCurrentFacebookPassiveGeneration(session, payload)) {

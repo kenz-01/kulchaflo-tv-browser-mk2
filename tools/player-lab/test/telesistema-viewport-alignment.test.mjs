@@ -8,7 +8,7 @@ const helperPath = resolve(process.cwd(), '../../app-gv/src/main/assets/gv_media
 const helper = readFileSync(helperPath, 'utf8');
 
 function runHelper({ url = 'https://telesistema11.com.do/en-vivo/', frames = [] } = {}) {
-  const state = { frames, events: [], observer: null, timers: [], scrollCalls: 0 };
+  const state = { frames, events: [], observer: null, timers: [], scrollCalls: 0, listeners: {}, styles: [] };
   const window = {
     location: new URL(url),
     innerWidth: 1920,
@@ -17,7 +17,10 @@ function runHelper({ url = 'https://telesistema11.com.do/en-vivo/', frames = [] 
     scrollY: 0,
     requestAnimationFrame(callback) { callback(); },
     getComputedStyle() { return { display: 'block', visibility: 'visible' }; },
-    addEventListener() {},
+    addEventListener(type, callback) { state.listeners[type] = callback; },
+    removeEventListener(type, callback) {
+      if (state.listeners[type] === callback) delete state.listeners[type];
+    },
     prompt(message) {
       assert.match(message, /^__GV_MEDIA__/);
       state.events.push(JSON.parse(message.slice('__GV_MEDIA__'.length)));
@@ -28,6 +31,14 @@ function runHelper({ url = 'https://telesistema11.com.do/en-vivo/', frames = [] 
   const document = {
     baseURI: url,
     documentElement: {},
+    head: {
+      appendChild(style) { style.parentNode = this; state.styles.push(style); },
+      removeChild(style) {
+        style.parentNode = null;
+        state.styles = state.styles.filter((candidate) => candidate !== style);
+      },
+    },
+    createElement(tagName) { return { tagName: tagName.toUpperCase(), textContent: '', parentNode: null }; },
     querySelectorAll(selector) {
       assert.equal(selector, 'iframe[src]');
       return state.frames;
@@ -78,6 +89,16 @@ function dailymotionFrame(window, { top = 1300, left = 0 } = {}) {
     play() { this.plays += 1; },
     dispatchEvent() { this.dispatchedEvents += 1; },
     getBoundingClientRect() { return this.rect; },
+    listeners: {},
+    classNames: new Set(),
+    classList: {
+      add(name) { this.owner.classNames.add(name); },
+      remove(name) { this.owner.classNames.delete(name); },
+    },
+    addEventListener(type, callback) { this.listeners[type] = callback; },
+    removeEventListener(type, callback) {
+      if (this.listeners[type] === callback) delete this.listeners[type];
+    },
     scrollIntoView(options) {
       window.scrollY += 500;
       this.rect = { ...this.rect, top: 100, bottom: 550 };
@@ -85,7 +106,12 @@ function dailymotionFrame(window, { top = 1300, left = 0 } = {}) {
       this.scrollCount = (this.scrollCount || 0) + 1;
     },
   };
+  frame.classList.owner = frame;
   return frame;
+}
+
+function fireFrameReady(frame) {
+  frame.listeners.load?.();
 }
 
 test('offscreen official Dailymotion iframe is aligned once and reports only minimal booleans', () => {
@@ -94,6 +120,9 @@ test('offscreen official Dailymotion iframe is aligned once and reports only min
   state.frames.push(frame);
   state.observer.callback([]);
   state.observer.callback([]);
+  assert.equal(state.events.length, 0);
+  fireFrameReady(frame);
+  state.timers.find((timer) => timer.delayMs === 2500)?.callback();
 
   assert.equal(frame.scrollCount, 1);
   assert.equal(frame.lastScrollOptions.block, 'center');
@@ -106,6 +135,10 @@ test('offscreen official Dailymotion iframe is aligned once and reports only min
   assert.equal(state.observer.disconnected, true);
   assert.equal(state.timers[0].delayMs, 12000);
   assert.equal(state.timers[0].cleared, true);
+  assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
+  assert.match(state.styles[0].textContent, /position:fixed!important/);
+  assert.match(state.styles[0].textContent, /width:100vw!important;height:100vh!important/);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
   assert.equal(frame.attributesWritten + frame.clicks + frame.plays + frame.dispatchedEvents, 0);
   assert.equal(frame.src, 'https://geo.dailymotion.com/player/x123.html?video=x456');
 });
@@ -114,6 +147,7 @@ test('already visible Dailymotion iframe is reported without scrolling', () => {
   const frame = dailymotionFrame(null, { top: 50 });
   const { state, window } = runHelper({ frames: [frame] });
   frame.scrollIntoView = () => { state.scrollCalls += 1; };
+  fireFrameReady(frame);
 
   assert.equal(state.events.length, 1);
   assert.deepEqual({ ...state.events[0] }, {
@@ -123,6 +157,7 @@ test('already visible Dailymotion iframe is reported without scrolling', () => {
   });
   assert.equal(state.scrollCalls, 0);
   assert.equal(window.scrollY, 0);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
 });
 
 test('partially visible iframe is brought fully into the viewport once', () => {
@@ -130,6 +165,7 @@ test('partially visible iframe is brought fully into the viewport once', () => {
   const frame = dailymotionFrame(window, { top: 800 });
   state.frames.push(frame);
   state.observer.callback([]);
+  fireFrameReady(frame);
 
   assert.equal(frame.scrollCount, 1);
   assert.deepEqual({ ...state.events[0] }, {
@@ -148,6 +184,7 @@ test('late Dailymotion iframe discovery is bounded and rejects non-official embe
 
   rejected.src = 'https://geo.dailymotion.com/player/x123.html?video=x456';
   state.observer.callback([]);
+  fireFrameReady(rejected);
   assert.equal(state.events.length, 1);
   assert.equal(rejected.scrollCount, 1);
   assert.equal(state.observer.disconnected, true);
@@ -169,7 +206,38 @@ test('unrelated route and expired discovery do not align any iframe', () => {
   assert.equal(pending.state.events.length, 0);
 });
 
+test('Back or page navigation restores the player-first class and stops pending work', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window);
+  state.frames.push(frame);
+  state.observer.callback([]);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
+  assert.equal(state.styles.length, 1);
+
+  window.location.pathname = '/';
+  state.listeners.popstate();
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), false);
+  assert.equal(state.styles.length, 0);
+  assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
+});
+
+test('pagehide removes the player-first styling and cancels the one-shot hover request', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window);
+  state.frames.push(frame);
+  state.observer.callback([]);
+  state.listeners.pagehide();
+
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), false);
+  assert.equal(state.styles.length, 0);
+  assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
+  assert.equal(state.events.length, 0);
+});
+
 test('helper source cannot click, play, synthesize input, mutate player attributes, or force fullscreen', () => {
-  assert.doesNotMatch(helper, /\.click\s*\(|\.play\s*\(|dispatchEvent|setAttribute\s*\(|removeAttribute\s*\(|\.src\s*=|requestFullscreen|fullscreen|autoplay|KEYCODE|DPAD/i);
+  assert.doesNotMatch(helper, /\.click\s*\(|\.play\s*\(|dispatchEvent|setAttribute\s*\(|removeAttribute\s*\(|\.src\s*=|requestFullscreen|autoplay|KEYCODE|DPAD/i);
   assert.match(helper, /frame\.scrollIntoView/);
+  assert.match(helper, /frame\.addEventListener\("load"/);
+  assert.match(helper, /FRAME_READY_FALLBACK_MS = 2500/);
+  assert.match(helper, /hoverRequestSent/);
 });

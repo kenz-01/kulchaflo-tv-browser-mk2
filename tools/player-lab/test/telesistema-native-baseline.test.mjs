@@ -33,8 +33,11 @@ test('Telesistema viewport experiment is isolated to its official top-level live
   assert.doesNotMatch(activity, /"telesistema viewport alignment[^\n]*pageUrl=/);
 });
 
-test('viewport evidence is accepted only on the active official route and logs two booleans', () => {
-  assert.match(activity, /if \(type == "telesistema-viewport-alignment"\) \{[\s\S]*?isTelesistemaLivePageUrl\(activeUrl\)[\s\S]*?opt\("visibleBefore"\) as\? Boolean[\s\S]*?opt\("scrollChanged"\) as\? Boolean[\s\S]*?telesistema viewport alignment visibleBefore=\$visibleBefore scrollChanged=\$scrollChanged/);
+test('player-ready receipt is exact-route gated and requests one native startup hover', () => {
+  assert.match(activity, /if \(type == "telesistema-viewport-alignment"\) \{[\s\S]*?isTelesistemaLivePageUrl\(activeTab\.url\)[\s\S]*?opt\("visibleBefore"\) as\? Boolean[\s\S]*?opt\("scrollChanged"\) as\? Boolean[\s\S]*?telesistema viewport alignment visibleBefore=\$visibleBefore scrollChanged=\$scrollChanged/);
+  assert.match(activity, /if \(activeTab\.session !== session \|\| !isTelesistemaLivePageUrl\(activeTab\.url\)\) return[\s\S]*?dispatchTelesistemaStartupHover\(session\)/);
+  assert.match(activity, /private fun dispatchTelesistemaStartupHover\(session: GeckoSession\)[\s\S]*?activeTab\.session !== session \|\| !isTelesistemaLivePageUrl\(activeTab\.url\)[\s\S]*?dispatchPointerHover\(\)/);
+  assert.match(activity, /private fun dispatchPointerHover\(\)[\s\S]*?MotionEvent\.ACTION_HOVER_MOVE[\s\S]*?source = InputDevice\.SOURCE_MOUSE[\s\S]*?geckoView\.dispatchGenericMotionEvent\(event\)/);
 });
 
 test('official route, scoped autoplay permission, and GeckoView media protection remain', () => {
