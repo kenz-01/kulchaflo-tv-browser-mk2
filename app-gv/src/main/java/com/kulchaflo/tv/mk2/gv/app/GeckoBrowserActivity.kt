@@ -11800,7 +11800,13 @@ return changed>0;
             val inset = pointerBoundsInsetPx()
             val maxX = (geckoView.width.toFloat() - inset).coerceAtLeast(inset)
             val maxY = (geckoView.height.toFloat() - inset).coerceAtLeast(inset)
-            if (pointerX !in inset..maxX || pointerY !in inset..maxY) return@post
+            val hasStoredPosition = pointerX in inset..maxX && pointerY in inset..maxY
+            if (!hasStoredPosition) {
+                // Match the initial real-D-pad path without showing the software
+                // pointer: ensure its native hover lands inside the player.
+                pointerX = (geckoView.width.toFloat() * 0.5f).coerceIn(inset, maxX)
+                pointerY = (geckoView.height.toFloat() * 0.5f).coerceIn(inset, maxY)
+            }
             dispatchPointerHover()
         }
     }
