@@ -15,7 +15,6 @@ class GvBrowserMediaController(
      * Used by GeckoBrowserActivity to trigger media-ready YouTube auto-fullscreen.
      */
     var youtubeMediaReadyListener: ((GeckoSession) -> Unit)? = null
-    var diagnosticEventListener: ((GeckoSession, String) -> Unit)? = null
 
     private data class BrowserMediaState(
         val tabId: String,
@@ -34,7 +33,6 @@ class GvBrowserMediaController(
             val tabId = tabController.findTabBySession(session)?.id ?: "unknown"
             activeState = BrowserMediaState(tabId = tabId, mediaSession = mediaSession)
             GvLogger.i(TAG, "browser media session activated tabId=$tabId")
-            diagnosticEventListener?.invoke(session, "media-activated")
         }
 
         override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
@@ -43,7 +41,6 @@ class GvBrowserMediaController(
                 activeState = null
             }
             GvLogger.i(TAG, "browser media session deactivated tabId=$tabId")
-            diagnosticEventListener?.invoke(session, "media-deactivated")
         }
 
         override fun onMetadata(
@@ -77,20 +74,17 @@ class GvBrowserMediaController(
         override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
             activeState = stateFor(session, mediaSession).apply { isPlaying = true }
             GvLogger.i(TAG, "browser media play tabId=${activeState?.tabId ?: "unknown"}")
-            diagnosticEventListener?.invoke(session, "media-play")
             youtubeMediaReadyListener?.invoke(session)
         }
 
         override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
             activeState = stateFor(session, mediaSession).apply { isPlaying = false }
             GvLogger.i(TAG, "browser media pause tabId=${activeState?.tabId ?: "unknown"}")
-            diagnosticEventListener?.invoke(session, "media-pause")
         }
 
         override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
             activeState = stateFor(session, mediaSession).apply { isPlaying = false }
             GvLogger.i(TAG, "browser media stop tabId=${activeState?.tabId ?: "unknown"}")
-            diagnosticEventListener?.invoke(session, "media-stop")
         }
 
         override fun onPositionState(
@@ -237,17 +231,6 @@ class GvBrowserMediaController(
             append(" fullscreen=${state.fullscreen}")
             append(" title=${state.metadata?.title ?: ""}")
         }
-    }
-
-    fun describeSessionStateForDiagnostics(session: GeckoSession): String {
-        val state = activeState
-        if (state == null) {
-            return "active=false playing=false fullscreen=false"
-        }
-        val sameSession = tabController.findTabBySession(session)?.id == state.tabId
-        return "active=$sameSession playing=${state.isPlaying} fullscreen=${state.fullscreen} " +
-            "play=${has(state.features, MediaSession.Feature.PLAY)} " +
-            "pause=${has(state.features, MediaSession.Feature.PAUSE)}"
     }
 
     private fun stateFor(session: GeckoSession, mediaSession: MediaSession): BrowserMediaState {
