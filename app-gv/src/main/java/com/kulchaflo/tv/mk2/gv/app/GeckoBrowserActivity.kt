@@ -350,6 +350,11 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val facebookCompatResolvedBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pointerDirectionKeys = LinkedHashSet<Int>()
+    private val telesistemaAutoDpadDispatchedBySession =
+        Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
+    private val telesistemaRemoteInputSeenBySession =
+        Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
+    private val telesistemaAutoDpadPendingBySession = LinkedHashMap<GeckoSession, Runnable>()
     private val pointerHandler = Handler(Looper.getMainLooper())
     private var pointerVisible = false
     private var pointerX = 0f
@@ -477,6 +482,9 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
             listener = this,
         )
         browserMediaController = GvBrowserMediaController(tabController)
+        browserMediaController.playbackStartedListener = { session ->
+            maybeDispatchTelesistemaStartupDpadMove(session)
+        }
         browserMediaController.youtubeMediaReadyListener = { session ->
             onYouTubeMediaReady(session)
         }
@@ -675,6 +683,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        noteTelesistemaRemoteInput(event)
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
         if (maybeHandleCaribVisionPlayAssistOk(event)) {
             return true
@@ -1033,6 +1042,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     override fun onDestroy() {
         stopPointerRepeater()
         pointerHandler.removeCallbacksAndMessages(null)
+        telesistemaAutoDpadPendingBySession.clear()
         cvc9ConsentFrameNativeTapHandledMsBySession.clear()
         cvc9ConsentFrameSafety3500UsedBySession.clear()
         cvc9ConsentFrameSafety7000UsedBySession.clear()
@@ -1070,6 +1080,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val progressDelegate = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
             val tab = tabController.findTabBySession(session)
+            telesistemaAutoDpadPendingBySession.remove(session)?.let(pointerHandler::removeCallbacks)
+            telesistemaRemoteInputSeenBySession.remove(session)
             currentUrl = url
             loadingOverlay.visibility = View.VISIBLE
             progressBar.visibility = View.VISIBLE
@@ -10117,6 +10129,61 @@ return changed>0;
         return false
     }
 
+    private fun noteTelesistemaRemoteInput(event: KeyEvent) {
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0 || event.keyCode !in POINTER_KEY_CODES) {
+            return
+        }
+        val activeTab = tabController.getActiveTab() ?: return
+        if (!isTelesistemaLivePageUrl(activeTab.url)) return
+        telesistemaRemoteInputSeenBySession.add(activeTab.session)
+    }
+
+    private fun maybeDispatchTelesistemaStartupDpadMove(session: GeckoSession) {
+        val activeTab = tabController.getActiveTab() ?: return
+        if (activeTab.session !== session || !isTelesistemaLivePageUrl(activeTab.url)) return
+        if (session in telesistemaAutoDpadDispatchedBySession) return
+        if (session in telesistemaRemoteInputSeenBySession) {
+            GvLogger.i(
+                "GvInput",
+                "telesistema startup D-pad experiment skipped reason=remote-input-before-play"
+            )
+            return
+        }
+
+        telesistemaAutoDpadDispatchedBySession.add(session)
+        val runnable = Runnable {
+            telesistemaAutoDpadPendingBySession.remove(session)
+            val currentTab = tabController.getActiveTab()
+            if (isFinishing || isDestroyed || currentTab?.session !== session ||
+                !isTelesistemaLivePageUrl(currentTab.url) || session in telesistemaRemoteInputSeenBySession ||
+                !browserMediaController.isTelesistemaStreamPlaying(session) || !pointerAssistModeActive ||
+                tabsOverlay.visibility == View.VISIBLE || geckoView.width <= 0 || geckoView.height <= 0
+            ) {
+                GvLogger.i(
+                    "GvInput",
+                    "telesistema startup D-pad experiment skipped reason=state-changed"
+                )
+                return@Runnable
+            }
+
+            val downTime = SystemClock.uptimeMillis()
+            val down = KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)
+            val up = KeyEvent(downTime, downTime + TELESISTEMA_STARTUP_DPAD_KEY_HOLD_MS, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT, 0)
+            val downHandled = handlePointerInput(down)
+            val upHandled = handlePointerInput(up)
+            GvLogger.i(
+                "GvInput",
+                "telesistema startup D-pad experiment dispatched direction=right downHandled=$downHandled upHandled=$upHandled"
+            )
+        }
+        telesistemaAutoDpadPendingBySession[session] = runnable
+        pointerHandler.postDelayed(runnable, TELESISTEMA_STARTUP_DPAD_DELAY_MS)
+        GvLogger.i(
+            "GvInput",
+            "telesistema startup D-pad experiment scheduled trigger=browser-media-play delayMs=$TELESISTEMA_STARTUP_DPAD_DELAY_MS"
+        )
+    }
+
     private fun maybeHandlePointerAssistManualSummon(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) {
             return false
@@ -15557,6 +15624,8 @@ return changed>0;
         private const val POINTER_INITIAL_REPEAT_DELAY_MS = 110L
         private const val POINTER_REPEAT_FRAME_MS = 16L
         private const val POINTER_MOVE_STEP_PX = 18f
+        private const val TELESISTEMA_STARTUP_DPAD_DELAY_MS = 250L
+        private const val TELESISTEMA_STARTUP_DPAD_KEY_HOLD_MS = 20L
         private const val EDGE_PADDING_PX = 8f
         private const val EDGE_SCROLL_MULTIPLIER = 2.0f
         private const val ENABLE_DPAD_DOCUMENT_SCROLL_FALLBACK = true
