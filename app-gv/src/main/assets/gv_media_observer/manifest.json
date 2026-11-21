@@ -24,6 +24,15 @@
       "js": ["telesistema-lazy-frame-helper.js"],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "https://telesistema11.com.do/en-vivo*",
+        "https://www.telesistema11.com.do/en-vivo*"
+      ],
+      "js": ["telesistema-first-interaction-diagnostic.js"],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ]
 }

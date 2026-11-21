@@ -33,8 +33,12 @@ function makeFrame(attributes = {}, className = '') {
 function runPage({ url, frames = [], topFrame = true }) {
   const timers = [];
   const messages = [];
+  const prompts = [];
   let observerInstance = null;
-  const page = { location: { href: url } };
+  const page = {
+    location: { href: url },
+    prompt(message) { prompts.push(String(message)); },
+  };
   page.top = topFrame ? page : {};
   class TestMutationObserver {
     constructor(callback) { this.callback = callback; observerInstance = this; }
@@ -62,6 +66,7 @@ function runPage({ url, frames = [], topFrame = true }) {
   return {
     timers,
     messages,
+    prompts,
     helper: scope.KfTelesistemaLazyFrameHelper,
     observer: () => observerInstance,
     runNextZeroTimer() {
@@ -137,6 +142,12 @@ test('only the manifest-injected exact page wakes one publisher-owned lazy Daily
   assert.equal(page.messages.length, 1);
   assert.match(page.messages[0], /result=wake-requested/);
   assert.doesNotMatch(page.messages[0], /dailymotion|x8abc|autoplay|https?:/i);
+  assert.equal(page.prompts.length, 1);
+  const helperReceipt = JSON.parse(page.prompts[0].replace('__GV_MEDIA__', ''));
+  assert.equal(helperReceipt.phase, 'helper-lifecycle');
+  assert.equal(helperReceipt.result, 'wake-requested');
+  assert.equal(helperReceipt.sourceActivated, true);
+  assert.doesNotMatch(page.prompts[0], /dailymotion|x8abc|autoplay|https?:/i);
 });
 
 test('Telesistema pointer movement skips the generic GeckoSession JavaScript wake pulse', () => {

@@ -79,9 +79,20 @@
   function report(result, extra = {}) {
     try {
       // Only fixed route/status labels are logged; never emit iframe URLs or media tokens.
+      const elapsedMs = Math.max(0, Math.min(30000, Date.now() - startedAt));
       console.info("KF_TELESISTEMA_LAZY_FRAME result=" + result +
-        " attempts=" + attempts + " elapsedMs=" + Math.max(0, Date.now() - startedAt) +
+        " attempts=" + attempts + " elapsedMs=" + elapsedMs +
         (extra.sourceActivated ? " sourceActivated=true" : " sourceActivated=false"));
+    } catch (_) {}
+    try {
+      window.prompt("__GV_MEDIA__" + JSON.stringify({
+        type: "telesistema-interaction-diagnostic",
+        phase: "helper-lifecycle",
+        result: String(result || "").slice(0, 32),
+        attempts: Math.max(0, Math.min(MAX_ATTEMPTS, attempts)),
+        elapsedMs: Math.max(0, Math.min(30000, Date.now() - startedAt)),
+        sourceActivated: extra.sourceActivated === true,
+      }), "");
     } catch (_) {}
   }
 

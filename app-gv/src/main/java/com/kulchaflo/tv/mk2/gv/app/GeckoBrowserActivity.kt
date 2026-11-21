@@ -56,6 +56,27 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         var playableVideoLogged: Boolean = false,
     )
 
+    private data class TelesistemaDiagnosticState(
+        val startedAtMs: Long,
+        var dispatchedKeyEvents: Int = 0,
+        var inputCount: Int = 0,
+        var payloadCount: Int = 0,
+    )
+
+    private data class TelesistemaKeyDispatchTrace(
+        val session: GeckoSession,
+        val state: TelesistemaDiagnosticState,
+        val inputIndex: Int,
+        val keyCategory: String,
+        val action: String,
+        val pointerVisibleBefore: Boolean,
+        val pointerAssistBefore: Boolean,
+        val fullscreenBefore: Boolean,
+        val fullscreenSleepBefore: Boolean,
+        val mediaBefore: String,
+        var route: String? = null,
+    )
+
     private data class AbsTegoStartupReprobeState(
         val rootUrl: String,
         val startedAtMs: Long,
@@ -335,6 +356,8 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     private val youtubePremiumPopupLastInteractionBurstMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val youtubeFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
     private val browserFullscreenStateBySession = LinkedHashMap<GeckoSession, Boolean>()
+    private val telesistemaDiagnosticStateBySession = LinkedHashMap<GeckoSession, TelesistemaDiagnosticState>()
+    private var activeTelesistemaKeyDispatchTrace: TelesistemaKeyDispatchTrace? = null
     private val cvmVimeoDiagnosticLastDispatchMsBySession = LinkedHashMap<GeckoSession, Long>()
     private val islandTvPlayTapSentBySession =
         Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
@@ -480,6 +503,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         browserMediaController.youtubeMediaReadyListener = { session ->
             onYouTubeMediaReady(session)
         }
+        browserMediaController.diagnosticEventListener = ::recordTelesistemaMediaEvent
         promotedMediaPlayer = GvPromotedMediaPlayer(this, promotedMediaHost as ViewGroup)
         promotedMediaPlayer.listener = object : GvPromotedMediaPlayer.Listener {
             override fun onPromotedPlayerError(
@@ -675,54 +699,153 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val trace = beginTelesistemaKeyDispatch(event)
+        val previousTrace = activeTelesistemaKeyDispatchTrace
+        if (trace != null) {
+            activeTelesistemaKeyDispatchTrace = trace
+        }
+        val handled = try {
+            dispatchKeyEventInternal(event)
+        } finally {
+            activeTelesistemaKeyDispatchTrace = previousTrace
+        }
+        if (trace != null) {
+            finishTelesistemaKeyDispatch(trace, handled)
+        }
+        return handled
+    }
+
+    private fun dispatchKeyEventInternal(event: KeyEvent): Boolean {
         maybeScheduleCvmVimeoDiagnosticAfterKeyAttempt(event)
         if (maybeHandleCaribVisionPlayAssistOk(event)) {
+            markTelesistemaKeyDispatchRoute("channel-play-assist")
             return true
         }
         if (maybeHandleChtvPlayAssistOk(event)) {
+            markTelesistemaKeyDispatchRoute("channel-play-assist")
             return true
         }
         if (maybeHandleCgtvPlayAssistOk(event)) {
+            markTelesistemaKeyDispatchRoute("channel-play-assist")
             return true
         }
         if (maybeHandleNovusTelearubaPlayAssistOk(event)) {
+            markTelesistemaKeyDispatchRoute("channel-play-assist")
             return true
         }
         if (maybeHandleTttTegoPlayAssistOk(event)) {
+            markTelesistemaKeyDispatchRoute("channel-play-assist")
             return true
         }
         if (handleTabsOverlayInput(event)) {
+            markTelesistemaKeyDispatchRoute("tabs-overlay")
             return true
         }
         if (promotedPointerModeActive && handlePromotedPointerInput(event)) {
+            markTelesistemaKeyDispatchRoute("promoted-pointer")
             return true
         }
         if (handleCnc3PromotedDpadInput(event)) {
+            markTelesistemaKeyDispatchRoute("promoted-channel-input")
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && maybeHandlePointerAssistManualSummon(event)) {
+            markTelesistemaKeyDispatchRoute("pointer-assist-summon")
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && browserMediaController.handleMediaKey(event)) {
+            markTelesistemaKeyDispatchRoute("browser-media-key")
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && maybeHandleBrowserFullscreenPointerInput(event)) {
+            markTelesistemaKeyDispatchRoute("browser-fullscreen-pointer")
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && maybeRecoverYouTubePointerAssistForDpad(event)) {
+            markTelesistemaKeyDispatchRoute("youtube-pointer-recovery")
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && !pointerAssistModeActive && handleKulchaFloSiteFocusInput(event)) {
+            markTelesistemaKeyDispatchRoute("kulchaflo-site-focus")
             return true
         }
         if (!promotedMediaPlayer.isPromoted() && pointerAssistModeActive && handlePointerInput(event)) {
+            markTelesistemaKeyDispatchRoute("page-pointer")
             return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_MENU) {
             toggleTabsOverlay()
+            markTelesistemaKeyDispatchRoute("menu-overlay")
             return true
         }
+        markTelesistemaKeyDispatchRoute("geckoview")
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun beginTelesistemaKeyDispatch(event: KeyEvent): TelesistemaKeyDispatchTrace? {
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return null
+        if (event.repeatCount > 0) return null
+        val keyCategory = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+            KeyEvent.KEYCODE_DPAD_UP -> "up"
+            KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "ok"
+            else -> return null
+        }
+        val tab = tabController.getActiveTab() ?: return null
+        if (!isTelesistemaLivePageUrl(tab.url)) return null
+        val state = telesistemaDiagnosticStateBySession[tab.session] ?: return null
+        val now = SystemClock.uptimeMillis()
+        if (now - state.startedAtMs > TELESISTEMA_DIAGNOSTIC_WINDOW_MS ||
+            state.dispatchedKeyEvents >= TELESISTEMA_DIAGNOSTIC_MAX_KEY_EVENTS
+        ) return null
+        state.dispatchedKeyEvents += 1
+        if (event.action == KeyEvent.ACTION_DOWN) state.inputCount += 1
+        return TelesistemaKeyDispatchTrace(
+            session = tab.session,
+            state = state,
+            inputIndex = state.inputCount,
+            keyCategory = keyCategory,
+            action = if (event.action == KeyEvent.ACTION_DOWN) "down" else "up",
+            pointerVisibleBefore = pointerVisible && pointerOverlay.isPointerVisible(),
+            pointerAssistBefore = pointerAssistModeActive,
+            fullscreenBefore = isBrowserFullscreenLikeState(tab),
+            fullscreenSleepBefore = browserFullscreenPointerSleepActive,
+            mediaBefore = browserMediaController.describeSessionStateForDiagnostics(tab.session),
+        )
+    }
+
+    private fun markTelesistemaKeyDispatchRoute(route: String) {
+        activeTelesistemaKeyDispatchTrace?.route = route
+    }
+
+    private fun finishTelesistemaKeyDispatch(trace: TelesistemaKeyDispatchTrace, handled: Boolean) {
+        val ageMs = (SystemClock.uptimeMillis() - trace.state.startedAtMs).coerceAtLeast(0L)
+        val tab = tabController.findTabBySession(trace.session)
+        val fullscreenAfter = isBrowserFullscreenLikeState(tab)
+        val pointerVisibleAfter = pointerVisible && pointerOverlay.isPointerVisible()
+        val mediaAfter = browserMediaController.describeSessionStateForDiagnostics(trace.session)
+        GvLogger.i(
+            "KfTelesistema",
+            "event=key ageMs=$ageMs index=${trace.inputIndex} key=${trace.keyCategory} action=${trace.action} " +
+                "route=${trace.route ?: "unclassified"} handled=$handled " +
+                "pointer=${trace.pointerVisibleBefore}->$pointerVisibleAfter " +
+                "pointerAssist=${trace.pointerAssistBefore}->$pointerAssistModeActive " +
+                "fullscreen=${trace.fullscreenBefore}->$fullscreenAfter " +
+                "fullscreenSleep=${trace.fullscreenSleepBefore}->$browserFullscreenPointerSleepActive " +
+                "mediaBefore={${trace.mediaBefore}} mediaAfter={$mediaAfter}"
+        )
+    }
+
+    private fun recordTelesistemaMediaEvent(session: GeckoSession, event: String) {
+        val state = telesistemaDiagnosticStateBySession[session] ?: return
+        val tab = tabController.findTabBySession(session) ?: return
+        if (!isTelesistemaLivePageUrl(tab.url)) return
+        if (event !in TELESISTEMA_DIAGNOSTIC_MEDIA_EVENTS) return
+        val ageMs = (SystemClock.uptimeMillis() - state.startedAtMs).coerceAtLeast(0L)
+        if (ageMs > TELESISTEMA_DIAGNOSTIC_WINDOW_MS) return
+        GvLogger.i("KfTelesistema", "event=$event ageMs=$ageMs")
     }
 
     private fun maybeHandleTttTegoPlayAssistOk(event: KeyEvent): Boolean {
@@ -1033,6 +1156,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
     override fun onDestroy() {
         stopPointerRepeater()
         pointerHandler.removeCallbacksAndMessages(null)
+        telesistemaDiagnosticStateBySession.clear()
         cvc9ConsentFrameNativeTapHandledMsBySession.clear()
         cvc9ConsentFrameSafety3500UsedBySession.clear()
         cvc9ConsentFrameSafety7000UsedBySession.clear()
@@ -1071,6 +1195,13 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         override fun onPageStart(session: GeckoSession, url: String) {
             val tab = tabController.findTabBySession(session)
             currentUrl = url
+            if (isTelesistemaLivePageUrl(url)) {
+                val state = TelesistemaDiagnosticState(startedAtMs = SystemClock.uptimeMillis())
+                telesistemaDiagnosticStateBySession[session] = state
+                GvLogger.i("KfTelesistema", "event=top-page-start ageMs=0 success=unknown")
+            } else {
+                telesistemaDiagnosticStateBySession.remove(session)
+            }
             loadingOverlay.visibility = View.VISIBLE
             progressBar.visibility = View.VISIBLE
             tabController.updateLoading(session, true)
@@ -1097,6 +1228,14 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
         override fun onPageStop(session: GeckoSession, success: Boolean) {
             val tab = tabController.findTabBySession(session)
             val pageUrl = tab?.url ?: currentUrl
+            if (isTelesistemaLivePageUrl(pageUrl)) {
+                val state = telesistemaDiagnosticStateBySession[session]
+                    ?: TelesistemaDiagnosticState(startedAtMs = SystemClock.uptimeMillis()).also {
+                        telesistemaDiagnosticStateBySession[session] = it
+                    }
+                val ageMs = (SystemClock.uptimeMillis() - state.startedAtMs).coerceAtLeast(0L)
+                GvLogger.i("KfTelesistema", "event=top-page-stop ageMs=$ageMs success=$success")
+            }
             progressBar.visibility = View.GONE
             // Don't stay stuck on the loading overlay even if success is false,
             // unless it's a critical error.
@@ -1551,6 +1690,7 @@ class GeckoBrowserActivity : AppCompatActivity(), GvTabController.Listener {
 
     override fun onTabClosed(tab: GvTab) {
         directMediaDismissalTracker.closeSession(tab.session)
+        telesistemaDiagnosticStateBySession.remove(tab.session)
         loadRetryAttemptsBySession.remove(tab.session)
         absTegoPlayerFirstReturnUrlBySession.remove(tab.session)
         tttTegoPlayerFirstReturnUrlBySession.remove(tab.session)
@@ -13226,6 +13366,10 @@ return changed>0;
         payload: JSONObject,
         source: String,
     ) {
+        if (payload.optString("type") == "telesistema-interaction-diagnostic") {
+            handleTelesistemaDiagnosticPayload(session, payload)
+            return
+        }
         val pageUrl = payload.optString("pageUrl")
         val title = payload.optString("title")
         val phase = payload.optString("phase")
@@ -15443,6 +15587,42 @@ return changed>0;
         }
     }
 
+    private fun handleTelesistemaDiagnosticPayload(session: GeckoSession, payload: JSONObject) {
+        val tab = tabController.findTabBySession(session) ?: return
+        if (!isTelesistemaLivePageUrl(tab.url)) return
+        val state = telesistemaDiagnosticStateBySession[session] ?: return
+        val ageMs = (SystemClock.uptimeMillis() - state.startedAtMs).coerceAtLeast(0L)
+        if (ageMs > TELESISTEMA_DIAGNOSTIC_WINDOW_MS ||
+            state.payloadCount >= TELESISTEMA_DIAGNOSTIC_MAX_PAYLOADS
+        ) return
+        val phase = payload.optString("phase").takeIf {
+            it in TELESISTEMA_DIAGNOSTIC_PHASES
+        } ?: return
+        state.payloadCount += 1
+        val frameId = payload.optInt("frameId", -1).takeIf { it in 1..32 } ?: 0
+        val frameCount = payload.optInt("frameCount", -1).takeIf { it in 0..16 } ?: -1
+        val frameLoadCount = payload.optInt("loadCount", -1).takeIf { it in 0..32 } ?: -1
+        val scriptElapsedMs = payload.optInt("elapsedMs", -1).takeIf { it in 0..TELESISTEMA_DIAGNOSTIC_WINDOW_MS.toInt() } ?: -1
+        val sourceAttribute = payload.optString("sourceAttribute").takeIf {
+            it in TELESISTEMA_DIAGNOSTIC_SOURCE_ATTRIBUTES
+        } ?: "none"
+        val sourceChange = payload.optString("sourceChange").takeIf {
+            it in setOf("initial", "same", "changed")
+        } ?: "none"
+        val result = payload.optString("result").takeIf {
+            it in TELESISTEMA_DIAGNOSTIC_HELPER_RESULTS
+        } ?: "none"
+        val attempts = payload.optInt("attempts", -1).takeIf { it in 0..32 } ?: -1
+        val sourceActivated = payload.optBoolean("sourceActivated", false)
+        GvLogger.i(
+            "KfTelesistema",
+            "event=$phase ageMs=$ageMs scriptElapsedMs=$scriptElapsedMs frameId=$frameId " +
+                "frameCount=$frameCount frameLoadCount=$frameLoadCount " +
+                "sourceAttribute=$sourceAttribute sourceChange=$sourceChange result=$result " +
+                "attempts=$attempts sourceActivated=$sourceActivated"
+        )
+    }
+
     private companion object {
         // Modern Sony Bravia UA from MkII successful run
         private const val SONY_BRAVIA_USER_AGENT =
@@ -15534,6 +15714,23 @@ return changed>0;
         private const val KULCHAFLO_RAIL_HOVER_SCROLL_MIN_STEP_PX = 24
         private const val KULCHAFLO_RAIL_HOVER_SCROLL_MIN_INTERVAL_MS = 70L
         private const val CVM_VIMEO_DIAGNOSTIC_MIN_INTERVAL_MS = 150L
+        private const val TELESISTEMA_DIAGNOSTIC_WINDOW_MS = 60_000L
+        private const val TELESISTEMA_DIAGNOSTIC_MAX_KEY_EVENTS = 8
+        private const val TELESISTEMA_DIAGNOSTIC_MAX_PAYLOADS = 48
+        private val TELESISTEMA_DIAGNOSTIC_PHASES = setOf(
+            "diagnostic-active", "frame-snapshot", "frame-added", "frame-removed", "frame-load",
+            "frame-source-change", "pagehide", "pageshow", "route-changed", "observation-limit", "helper-lifecycle",
+        )
+        private val TELESISTEMA_DIAGNOSTIC_SOURCE_ATTRIBUTES = setOf(
+            "src", "data-src", "data-lazy-src", "data-litespeed-src",
+        )
+        private val TELESISTEMA_DIAGNOSTIC_HELPER_RESULTS = setOf(
+            "wake-requested", "wake-failed", "frame-already-active", "ambiguous-player",
+            "route-changed", "observation-limit",
+        )
+        private val TELESISTEMA_DIAGNOSTIC_MEDIA_EVENTS = setOf(
+            "media-activated", "media-deactivated", "media-play", "media-pause", "media-stop",
+        )
         private const val INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS = 120L
         private val LIVE_LOAD_TIMING_CHECKPOINTS_MS = longArrayOf(5_000L, 30_000L, 90_000L, 180_000L)
         private const val POINTER_IDLE_HIDE_MS = 3500L
