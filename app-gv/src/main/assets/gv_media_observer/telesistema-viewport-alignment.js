@@ -1,12 +1,12 @@
 (function () {
   "use strict";
 
-  const DISCOVERY_WINDOW_MS = 12000;
+  const DISCOVERY_WINDOW_MS = 35000;
   const FRAME_READY_FALLBACK_MS = 2500;
   const PROMPT_PREFIX = "__GV_MEDIA__";
   const PLAYER_CLASS = "kf-telesistema-full-viewport-player";
   const PLAYER_STYLE_ID = "kf-telesistema-full-viewport-player-style";
-  let completed = false;
+  let alignmentStarted = false;
   let observer = null;
   let discoveryTimer = null;
   let frameReadyTimer = null;
@@ -14,6 +14,7 @@
   let frameLoadListener = null;
   let playerStyle = null;
   let playerFrame = null;
+  let alignmentEvidence = null;
   let hoverRequestSent = false;
   let stopped = false;
 
@@ -33,9 +34,8 @@
     }
   }
 
-  function isOfficialDailymotionEmbed(frame) {
+  function isOfficialDailymotionUrl(rawSrc) {
     try {
-      const rawSrc = frame && frame.getAttribute && frame.getAttribute("src");
       if (!rawSrc) return false;
       const source = new URL(String(rawSrc), document.baseURI);
       if (source.protocol !== "https:" || (source.port && source.port !== "443")) return false;
@@ -50,9 +50,28 @@
     }
   }
 
+  function hasOfficialDailymotionSource(frame) {
+    try {
+      return isOfficialDailymotionUrl(frame && frame.getAttribute && frame.getAttribute("src"));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isOfficialDailymotionEmbed(frame) {
+    try {
+      if (!frame || !frame.getAttribute) return false;
+      const sourceAttributes = ["src", "data-src", "data-lazy-src", "data-litespeed-src"];
+      for (let index = 0; index < sourceAttributes.length; index += 1) {
+        if (isOfficialDailymotionUrl(frame.getAttribute(sourceAttributes[index]))) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   function findOfficialDailymotionIframe() {
     try {
-      const frames = document.querySelectorAll("iframe[src]");
+      const frames = document.querySelectorAll("iframe");
       for (let index = 0; index < frames.length; index += 1) {
         if (isOfficialDailymotionEmbed(frames[index])) return frames[index];
       }
@@ -152,10 +171,53 @@
     } catch (_) {}
   }
 
-  function alignOnce(frame) {
-    if (completed || !isTelesistemaLiveRoute()) return;
-    completed = true;
+  function requestNativeHover() {
+    if (hoverRequestSent || stopped) return;
+    hoverRequestSent = true;
+    if (waitingFrame && frameLoadListener) {
+      try { waitingFrame.removeEventListener("load", frameLoadListener); } catch (_) {}
+    }
+    waitingFrame = null;
+    frameLoadListener = null;
+    if (frameReadyTimer !== null) {
+      clearTimeout(frameReadyTimer);
+      frameReadyTimer = null;
+    }
+    if (!isTelesistemaLiveRoute()) {
+      cleanupIfRouteChanged();
+      return;
+    }
+    const evidence = alignmentEvidence || { visibleBefore: false, scrollChanged: false };
+    const report = function () {
+      if (stopped || !isTelesistemaLiveRoute()) {
+        cleanupIfRouteChanged();
+        return;
+      }
+      emitEvidence(evidence.visibleBefore, evidence.scrollChanged);
+    };
+    try {
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(report);
+      });
+    } catch (_) {
+      setTimeout(report, 0);
+    }
+  }
+
+  function waitForOfficialFrameLoad(frame) {
+    if (hoverRequestSent || stopped || waitingFrame === frame || !hasOfficialDailymotionSource(frame)) return;
+    applyPlayerFirstLayout(frame);
     stopDiscovery();
+    waitingFrame = frame;
+    frameLoadListener = requestNativeHover;
+    try { frame.addEventListener("load", frameLoadListener, { once: true }); } catch (_) {}
+    frameReadyTimer = setTimeout(requestNativeHover, FRAME_READY_FALLBACK_MS);
+  }
+
+  function alignOnce(frame) {
+    if (alignmentStarted || !isTelesistemaLiveRoute()) return;
+    alignmentStarted = true;
+    playerFrame = frame;
 
     const viewportBefore = measureViewport(frame);
     const beforeX = Number(window.scrollX || window.pageXOffset || 0);
@@ -170,60 +232,14 @@
     const afterX = Number(window.scrollX || window.pageXOffset || 0);
     const afterY = Number(window.scrollY || window.pageYOffset || 0);
     const scrollChanged = beforeX !== afterX || beforeY !== afterY;
-
-    // Keep the publisher's existing Dailymotion iframe and controls, while
-    // presenting that frame across the TV viewport. The class/style are removed
-    // when this document leaves the official route.
-    applyPlayerFirstLayout(frame);
-
-    const requestNativeHover = function () {
-      if (hoverRequestSent || stopped) return;
-      hoverRequestSent = true;
-      if (waitingFrame && frameLoadListener) {
-        try { waitingFrame.removeEventListener("load", frameLoadListener); } catch (_) {}
-      }
-      waitingFrame = null;
-      frameLoadListener = null;
-      if (frameReadyTimer !== null) {
-        clearTimeout(frameReadyTimer);
-        frameReadyTimer = null;
-      }
-      if (!isTelesistemaLiveRoute()) {
-        cleanupIfRouteChanged();
-        return;
-      }
-      const report = function () {
-        if (stopped || !isTelesistemaLiveRoute()) {
-          cleanupIfRouteChanged();
-          return;
-        }
-        emitEvidence(viewportBefore.visible, scrollChanged);
-      };
-      try {
-        window.requestAnimationFrame(function () {
-          window.requestAnimationFrame(report);
-        });
-      } catch (_) {
-        setTimeout(report, 0);
-      }
-    };
-
-    waitingFrame = frame;
-    frameLoadListener = requestNativeHover;
-    try { frame.addEventListener("load", frameLoadListener, { once: true }); } catch (_) {}
-    frameReadyTimer = setTimeout(requestNativeHover, FRAME_READY_FALLBACK_MS);
-
+    alignmentEvidence = { visibleBefore: viewportBefore.visible, scrollChanged: scrollChanged };
+    if (hasOfficialDailymotionSource(frame)) waitForOfficialFrameLoad(frame);
   }
 
   if (!isTelesistemaLiveRoute()) return;
   window.addEventListener("pagehide", handlePageHide, { once: true });
   window.addEventListener("popstate", cleanupIfRouteChanged);
   window.addEventListener("hashchange", cleanupIfRouteChanged);
-  const existingFrame = findOfficialDailymotionIframe();
-  if (existingFrame) {
-    alignOnce(existingFrame);
-    return;
-  }
 
   try {
     observer = new MutationObserver(function () {
@@ -231,16 +247,29 @@
         stopDiscovery();
         return;
       }
-      const lateFrame = findOfficialDailymotionIframe();
-      if (lateFrame) alignOnce(lateFrame);
+      if (!alignmentStarted) {
+        const candidateFrame = findOfficialDailymotionIframe();
+        if (candidateFrame) alignOnce(candidateFrame);
+      }
+      if (alignmentStarted && playerFrame && hasOfficialDailymotionSource(playerFrame)) {
+        waitForOfficialFrameLoad(playerFrame);
+      }
     });
     observer.observe(document.documentElement || document, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["src"]
+      attributeFilter: ["src", "data-src", "data-lazy-src", "data-litespeed-src"]
     });
-    discoveryTimer = setTimeout(stopDiscovery, DISCOVERY_WINDOW_MS);
+    discoveryTimer = setTimeout(function () {
+      stopDiscovery();
+      if (alignmentStarted && !hasOfficialDailymotionSource(playerFrame)) restorePlayerFirstLayout();
+    }, DISCOVERY_WINDOW_MS);
+    const existingFrame = findOfficialDailymotionIframe();
+    if (existingFrame) {
+      alignOnce(existingFrame);
+      if (hasOfficialDailymotionSource(existingFrame)) waitForOfficialFrameLoad(existingFrame);
+    }
   } catch (_) {
     stopDiscovery();
   }
