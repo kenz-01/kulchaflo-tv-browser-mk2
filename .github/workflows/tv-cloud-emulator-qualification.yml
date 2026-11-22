@@ -25,13 +25,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Initialize fail-closed ZNS receipt
+      - name: Initialize fail-closed qualification receipt
         env:
           TV_TEST_PROFILE: ${{ inputs.test_profile }}
           TV_COMMIT: ${{ github.sha }}
         run: |
-          if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
           mkdir -p "$RUNNER_TEMP/tv-emulator-qualification"
+          if [[ "$TV_TEST_PROFILE" == qualification ]]; then
+            python3 - <<'PY'
+          import json, os
+          receipt = {
+              "schema_version": 1,
+              "receipt_finalized": False,
+              "commit": os.environ.get("TV_COMMIT", "unknown"),
+              "selected_profile": "qualification",
+              "virtual_harness_status": "FAIL",
+              "failure_stage": "workflow_setup",
+              "infrastructure": {"android_tv_boot": "unknown", "abi_x86_64": "unknown", "leanback_feature": "unknown", "apk_install": "unknown", "app_launch": "unknown"},
+              "neutral_route": {"route": "https://example.com/", "navigation_status": "not_observed", "navigation_log_capture": "incomplete"},
+              "app_state": {
+                  **{name: {"process": "unknown", "activity_foreground": "unknown", "window_focus": "unknown"} for name in ("after_launch", "after_dpad", "after_back")},
+                  "launch_readiness": {"polls_used": 0, "poll_limit": 3, "poll_interval_seconds": 2, "capture_timeout_seconds": 15, "max_wait_seconds": 49},
+              },
+              "actions": {"dpad_down_up_dispatched": "unknown", "back_dispatched": "unknown"},
+              "screenshots": {"initial": "missing", "after_dpad": "missing", "after_back": "missing"},
+              "playback_progression": "not_tested",
+              "audio_output": "not_tested",
+              "physical_bravia_acceptance": "not_tested",
+              "failure_observation": "workflow_not_completed",
+          }
+          path = os.path.join(os.environ["RUNNER_TEMP"], "tv-emulator-qualification", "qualification.json")
+          with open(path, "w", encoding="utf-8") as stream:
+              json.dump(receipt, stream, indent=2)
+              stream.write("\n")
+          PY
+            exit 0
+          fi
+          if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
           python3 - <<'PY'
           import json, os
           launch_names = ("browser_session_configured", "browser_view_attached", "zns_navigation_requested", "zns_navigation_started", "zns_navigation_completed", "zns_navigation_failed")
@@ -39,6 +69,7 @@ jobs:
               "schema_version": 1,
               "receipt_finalized": False,
               "harness_completed": False,
+              "virtual_harness_status": "FAIL",
               "commit": os.environ.get("TV_COMMIT", "unknown"),
               "selected_profile": "zns",
               "source": {"url": "https://znsbahamas.com/", "identification": "official_zns_bahamas_route_requested", "observed": False},
@@ -123,6 +154,52 @@ jobs:
           TV_APK_ASSEMBLY_OUTCOME: ${{ steps.apk_assembly.outcome }}
           TV_EMULATOR_STEP_OUTCOME: ${{ steps.emulator_test.outcome }}
         run: |
+          if [[ "$TV_TEST_PROFILE" == qualification ]]; then
+            python3 - <<'PY'
+          import json, os
+          path = os.path.join(os.environ["RUNNER_TEMP"], "tv-emulator-qualification", "qualification.json")
+          try:
+              with open(path, encoding="utf-8") as stream:
+                  receipt = json.load(stream)
+          except (OSError, json.JSONDecodeError):
+              receipt = {}
+          if receipt.get("receipt_finalized"):
+              raise SystemExit(0)
+          if os.environ.get("TV_KVM_OUTCOME") == "failure":
+              reason = "kvm_preflight_failed"
+              failure_stage = "kvm_preflight"
+          elif os.environ.get("TV_APK_ASSEMBLY_OUTCOME") == "failure":
+              reason = "apk_assembly_failed"
+              failure_stage = "apk_assembly"
+          elif os.environ.get("TV_EMULATOR_STEP_OUTCOME") == "failure":
+              reason = "emulator_boot_or_test_step_failed"
+              failure_stage = "emulator_step"
+          else:
+              reason = "workflow_setup_incomplete"
+              failure_stage = "workflow_setup"
+          receipt.update({
+              "schema_version": 1,
+              "receipt_finalized": True,
+              "commit": os.environ.get("TV_COMMIT", "unknown"),
+              "selected_profile": "qualification",
+              "virtual_harness_status": "FAIL",
+              "failure_stage": failure_stage,
+              "failure_observation": reason,
+          })
+          os.makedirs(os.path.dirname(path), exist_ok=True)
+          with open(path, "w", encoding="utf-8") as stream:
+              json.dump(receipt, stream, indent=2)
+              stream.write("\n")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as stream:
+                  stream.write("## Neutral Android TV qualification\n\n")
+                  stream.write("- Virtual Android TV harness: `FAIL`\n")
+                  stream.write(f"- Observation responsible for result: `{reason}`\n")
+                  stream.write("- Broadcaster playback and physical Bravia acceptance: `not tested`\n")
+          PY
+            exit 0
+          fi
           if [[ "$TV_TEST_PROFILE" != zns ]]; then exit 0; fi
           python3 - <<'PY'
           import json, os
@@ -172,6 +249,7 @@ jobs:
               "schema_version": 1,
               "receipt_finalized": True,
               "harness_completed": False,
+              "virtual_harness_status": "FAIL",
               "commit": os.environ.get("TV_COMMIT", "unknown"),
               "selected_profile": "zns",
               "classification": classification,
@@ -198,6 +276,7 @@ jobs:
                   stream.write(f"- Classification: `{receipt['classification']}`\n")
                   stream.write(f"- Commit: `{receipt['commit']}`\n")
                   stream.write(f"- Harness success: `{str(receipt.get('harness_completed', False)).lower()}`\n")
+                  stream.write(f"- Virtual Android TV harness: `{receipt.get('virtual_harness_status', 'FAIL')}` (infrastructure and bounded observations only)\n")
                   stream.write(f"- Diagnostic success: `{str(receipt.get('diagnostic_success', False)).lower()}`; cause: `{receipt.get('diagnostic_cause', 'not_established')}`\n")
                   stream.write(f"- Playback progression: `{receipt.get('playback_progression', 'unknown')}`; physical TV acceptance: `{receipt.get('device_acceptance', 'not_tested')}`\n")
                   stream.write("- The bounded diagnostic harness did not complete; this receipt does not verify live playback.\n")
@@ -212,7 +291,7 @@ jobs:
             ${{ runner.temp }}/tv-emulator-qualification/
             !${{ runner.temp }}/tv-emulator-qualification/navigation-attempts/**
           if-no-files-found: ignore
-          retention-days: 1
+          retention-days: 7
 
       - name: Upload bounded navigation-attempt screenshots
         if: always()
@@ -221,4 +300,4 @@ jobs:
           name: tv-cloud-emulator-${{ inputs.test_profile }}-navigation-attempts
           path: ${{ runner.temp }}/tv-emulator-qualification/navigation-attempts/*.png
           if-no-files-found: ignore
-          retention-days: 1
+          retention-days: 7

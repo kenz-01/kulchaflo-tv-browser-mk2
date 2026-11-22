@@ -1,0 +1,286 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import vm from 'node:vm';
+
+const helperPath = resolve(process.cwd(), '../../app-gv/src/main/assets/gv_media_observer/telesistema-viewport-alignment.js');
+const helper = readFileSync(helperPath, 'utf8');
+
+function runHelper({ url = 'https://telesistema11.com.do/en-vivo/', frames = [] } = {}) {
+  const state = { frames, events: [], observer: null, timers: [], scrollCalls: 0, listeners: {}, styles: [] };
+  const window = {
+    location: new URL(url),
+    innerWidth: 1920,
+    innerHeight: 1080,
+    scrollX: 0,
+    scrollY: 0,
+    requestAnimationFrame(callback) { callback(); },
+    getComputedStyle() { return { display: 'block', visibility: 'visible' }; },
+    addEventListener(type, callback) { state.listeners[type] = callback; },
+    removeEventListener(type, callback) {
+      if (state.listeners[type] === callback) delete state.listeners[type];
+    },
+    prompt(message) {
+      assert.match(message, /^__GV_MEDIA__/);
+      state.events.push(JSON.parse(message.slice('__GV_MEDIA__'.length)));
+    },
+  };
+  window.top = window;
+  window.self = window;
+  const document = {
+    baseURI: url,
+    documentElement: {},
+    head: {
+      appendChild(style) { style.parentNode = this; state.styles.push(style); },
+      removeChild(style) {
+        style.parentNode = null;
+        state.styles = state.styles.filter((candidate) => candidate !== style);
+      },
+    },
+    createElement(tagName) { return { tagName: tagName.toUpperCase(), textContent: '', parentNode: null }; },
+    querySelectorAll(selector) {
+      assert.equal(selector, 'iframe');
+      return state.frames;
+    },
+  };
+  class MutationObserver {
+    constructor(callback) { this.callback = callback; state.observer = this; }
+    observe(_target, options) {
+      assert.equal(options.childList, true);
+      assert.equal(options.subtree, true);
+      assert.equal(options.attributes, true);
+      assert.equal(options.attributeFilter.join(','), 'src,data-src,data-lazy-src,data-litespeed-src');
+    }
+    disconnect() { this.disconnected = true; }
+  }
+  let timerId = 0;
+  vm.runInNewContext(helper, {
+    window,
+    document,
+    MutationObserver,
+    URL,
+    Number,
+    Math,
+    setTimeout(callback, delayMs) {
+      const timer = { id: ++timerId, callback, delayMs, cleared: false };
+      state.timers.push(timer);
+      return timer.id;
+    },
+    clearTimeout(id) {
+      const timer = state.timers.find((candidate) => candidate.id === id);
+      if (timer) timer.cleared = true;
+    },
+  });
+  return { state, window };
+}
+
+function dailymotionFrame(window, { top = 1300, left = 0 } = {}) {
+  const frame = {
+    src: 'https://geo.dailymotion.com/player/x123.html?video=x456',
+    attributes: {},
+    attributesWritten: 0,
+    clicks: 0,
+    plays: 0,
+    dispatchedEvents: 0,
+    rect: { top, left, right: left + 800, bottom: top + 450, width: 800, height: 450 },
+    getAttribute(name) { return name === 'src' ? this.src : (this.attributes[name] ?? null); },
+    setAttribute() { this.attributesWritten += 1; },
+    click() { this.clicks += 1; },
+    play() { this.plays += 1; },
+    dispatchEvent() { this.dispatchedEvents += 1; },
+    getBoundingClientRect() { return this.rect; },
+    listeners: {},
+    classNames: new Set(),
+    classList: {
+      add(name) { this.owner.classNames.add(name); },
+      remove(name) { this.owner.classNames.delete(name); },
+    },
+    addEventListener(type, callback) { this.listeners[type] = callback; },
+    removeEventListener(type, callback) {
+      if (this.listeners[type] === callback) delete this.listeners[type];
+    },
+    scrollIntoView(options) {
+      window.scrollY += 500;
+      this.rect = { ...this.rect, top: 100, bottom: 550 };
+      this.lastScrollOptions = options;
+      this.scrollCount = (this.scrollCount || 0) + 1;
+    },
+  };
+  frame.classList.owner = frame;
+  return frame;
+}
+
+function fireFrameReady(frame) {
+  frame.listeners.load?.();
+}
+
+test('offscreen official Dailymotion iframe is aligned and triggers one hover before iframe load', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window);
+  state.frames.push(frame);
+  state.observer.callback([]);
+  state.observer.callback([]);
+  assert.equal(state.events.length, 1);
+  assert.deepEqual({ ...state.events[0] }, {
+    type: 'telesistema-viewport-alignment',
+    visibleBefore: false,
+    scrollChanged: true,
+  });
+  fireFrameReady(frame);
+  state.timers.find((timer) => timer.delayMs === 2500)?.callback();
+
+  assert.equal(frame.scrollCount, 1);
+  assert.equal(frame.lastScrollOptions.block, 'center');
+  assert.equal(state.events.length, 1);
+  assert.equal(state.observer.disconnected, true);
+  assert.equal(state.timers[0].delayMs, 60000);
+  assert.equal(state.timers[0].cleared, true);
+  assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
+  assert.match(state.styles[0].textContent, /position:fixed!important/);
+  assert.match(state.styles[0].textContent, /width:100vw!important;height:100vh!important/);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
+  assert.equal(frame.attributesWritten + frame.clicks + frame.plays + frame.dispatchedEvents, 0);
+  assert.equal(frame.src, 'https://geo.dailymotion.com/player/x123.html?video=x456');
+});
+
+test('already visible Dailymotion iframe is reported without scrolling', () => {
+  const frame = dailymotionFrame(null, { top: 50 });
+  const { state, window } = runHelper({ frames: [frame] });
+  frame.scrollIntoView = () => { state.scrollCalls += 1; };
+  fireFrameReady(frame);
+
+  assert.equal(state.events.length, 1);
+  assert.deepEqual({ ...state.events[0] }, {
+    type: 'telesistema-viewport-alignment',
+    visibleBefore: true,
+    scrollChanged: false,
+  });
+  assert.equal(state.scrollCalls, 0);
+  assert.equal(window.scrollY, 0);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
+});
+
+test('partially visible iframe is brought fully into the viewport once', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window, { top: 800 });
+  state.frames.push(frame);
+  state.observer.callback([]);
+  fireFrameReady(frame);
+
+  assert.equal(frame.scrollCount, 1);
+  assert.deepEqual({ ...state.events[0] }, {
+    type: 'telesistema-viewport-alignment',
+    visibleBefore: true,
+    scrollChanged: true,
+  });
+});
+
+test('late Dailymotion iframe discovery is bounded and rejects non-official embed hosts', () => {
+  const { state, window } = runHelper();
+  const rejected = dailymotionFrame(window);
+  rejected.src = 'https://evil.dailymotion.com/player/x123.html';
+  state.frames.push(rejected);
+  assert.equal(state.events.length, 0);
+
+  rejected.src = 'https://geo.dailymotion.com/player/x123.html?video=x456';
+  state.observer.callback([]);
+  fireFrameReady(rejected);
+  assert.equal(state.events.length, 1);
+  assert.equal(rejected.scrollCount, 1);
+  assert.equal(state.observer.disconnected, true);
+});
+
+test('official lazy iframe placeholder gets one hover before publisher src without rewriting attributes', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window);
+  frame.src = 'about:blank';
+  frame.attributes['data-litespeed-src'] = 'https://geo.dailymotion.com/player/x123.html?video=x456';
+  state.frames.push(frame);
+  state.observer.callback([]);
+
+  assert.equal(frame.scrollCount, 1);
+  assert.equal(frame.lastScrollOptions.block, 'center');
+  assert.equal(state.styles.length, 0);
+  assert.equal(state.events.length, 1);
+  assert.deepEqual({ ...state.events[0] }, {
+    type: 'telesistema-viewport-alignment',
+    visibleBefore: false,
+    scrollChanged: true,
+  });
+  assert.notEqual(state.observer.disconnected, true);
+  assert.equal(frame.src, 'about:blank');
+  assert.equal(frame.attributes['data-litespeed-src'], 'https://geo.dailymotion.com/player/x123.html?video=x456');
+  assert.equal(frame.attributesWritten + frame.clicks + frame.plays + frame.dispatchedEvents, 0);
+
+  frame.src = 'https://geo.dailymotion.com/player/x123.html?video=x456';
+  state.observer.callback([{ type: 'attributes', target: frame, attributeName: 'src' }]);
+  assert.equal(state.styles.length, 1);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
+  assert.equal(state.observer.disconnected, true);
+  assert.equal(state.timers[0].cleared, true);
+  assert.equal(state.events.length, 1);
+
+  fireFrameReady(frame);
+  assert.equal(state.events.length, 1);
+  assert.deepEqual({ ...state.events[0] }, {
+    type: 'telesistema-viewport-alignment',
+    visibleBefore: false,
+    scrollChanged: true,
+  });
+});
+
+test('unrelated route and expired discovery do not align any iframe', () => {
+  const { state } = runHelper({ url: 'https://telesistema11.com.do/news/' });
+  assert.equal(state.observer, null);
+  assert.equal(state.events.length, 0);
+
+  const nearMiss = runHelper({ url: 'https://telesistema11.com.do/en-vivo-extra/' });
+  assert.equal(nearMiss.state.observer, null);
+  assert.equal(nearMiss.state.events.length, 0);
+
+  const pending = runHelper();
+  assert.equal(pending.state.timers[0].delayMs, 60000);
+  pending.state.timers[0].callback();
+  assert.equal(pending.state.observer.disconnected, true);
+  assert.equal(pending.state.events.length, 0);
+});
+
+test('Back or page navigation restores the player-first class and stops pending work', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window);
+  state.frames.push(frame);
+  state.observer.callback([]);
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), true);
+  assert.equal(state.styles.length, 1);
+
+  window.location.pathname = '/';
+  state.listeners.popstate();
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), false);
+  assert.equal(state.styles.length, 0);
+  assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
+});
+
+test('pagehide removes the player-first styling and cancels the one-shot hover request', () => {
+  const { state, window } = runHelper();
+  const frame = dailymotionFrame(window);
+  state.frames.push(frame);
+  state.observer.callback([]);
+  state.listeners.pagehide();
+
+  assert.equal(frame.classNames.has('kf-telesistema-full-viewport-player'), false);
+  assert.equal(state.styles.length, 0);
+  assert.equal(state.timers.find((timer) => timer.delayMs === 2500).cleared, true);
+  assert.equal(state.events.length, 1);
+});
+
+test('helper source cannot click, play, synthesize input, mutate player attributes, or force fullscreen', () => {
+  assert.doesNotMatch(helper, /\.click\s*\(|\.play\s*\(|dispatchEvent|setAttribute\s*\(|removeAttribute\s*\(|\.src\s*=|requestFullscreen|autoplay|KEYCODE|DPAD/i);
+  assert.match(helper, /frame\.scrollIntoView/);
+  assert.match(helper, /frame\.addEventListener\("load"/);
+  assert.match(helper, /\["src", "data-src", "data-lazy-src", "data-litespeed-src"\]/);
+  assert.match(helper, /hasOfficialDailymotionSource\(frame\)/);
+  assert.match(helper, /DISCOVERY_WINDOW_MS = 60000/);
+  assert.match(helper, /FRAME_READY_FALLBACK_MS = 2500/);
+  assert.match(helper, /hoverRequestSent/);
+});

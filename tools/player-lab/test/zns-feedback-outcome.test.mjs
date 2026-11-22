@@ -36,6 +36,7 @@ test('classifies actual bounded current-time advancement without claiming live v
 
   assert.equal(receipt.classification, 'PROGRESSION_OBSERVED');
   assert.equal(receipt.harness_completed, true);
+  assert.equal(receipt.virtual_harness_status, 'PASS');
   assert.equal(receipt.commit, 'a'.repeat(40));
   assert.equal(receipt.selected_profile, 'zns');
   assert.equal(receipt.source.observed, true);
@@ -59,8 +60,10 @@ test('classifies a complete run with no ZNS observation separately from a player
 
   assert.equal(noSource.classification, 'SOURCE_NOT_OBSERVED');
   assert.equal(noSource.harness_completed, true);
+  assert.equal(noSource.virtual_harness_status, 'PASS');
   assert.equal(noSource.source.observed, false);
   assert.equal(noProgress.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
+  assert.equal(noProgress.virtual_harness_status, 'PASS');
   assert.equal(noProgress.video_time_advanced_observed, 'no');
   assert.equal(noProgress.diagnostic_success, false);
   assert.equal(noProgress.diagnostic_cause, 'not_established');
@@ -89,12 +92,23 @@ test('records bounded attempt comparisons and reports only allowlisted lifecycle
         capture_status: 'complete',
         official_frame_observed: 'no',
         iframe_load_event_after_watch: 'no',
+        helper_initial_state: {video_count: 0, visible_video_count: 0},
       },
       after: {
         capture_status: 'complete',
         official_frame_observed: 'yes',
         iframe_load_event_after_watch: 'yes',
         embedded_helper_active_observed: 'no',
+        video_discovery_events: [{
+          phase: 'zns-video-discovery',
+          helper_age_ms: 39000,
+          video_count: 1,
+          visible_video_count: 1,
+          trigger: 'video_inserted',
+          reason: 'none',
+          video_ever_observed: false,
+          leaked: 'https://player.streamcomedia.com/?token=private',
+        }],
         leaked: 'https://player.streamcomedia.com/HTML5/znstv/?token=private',
       },
       screenshots: {before: 'captured', after: 'captured'},
@@ -120,6 +134,19 @@ test('records bounded attempt comparisons and reports only allowlisted lifecycle
   assert.equal(receipt.navigation_attempts.length, 2);
   assert.equal(receipt.navigation_attempts[1].poll_count, 15);
   assert.equal(receipt.navigation_attempts[1].stop_observation, 'navigation_start_not_observed_at_poll_limit');
+  assert.deepEqual(receipt.navigation_attempts[0].before.helper_initial_state, {
+    video_count: 0,
+    visible_video_count: 0,
+  });
+  assert.deepEqual(receipt.navigation_attempts[0].after.video_discovery_events, [{
+    phase: 'zns-video-discovery',
+    helper_age_ms: 39000,
+    video_count: 1,
+    visible_video_count: 1,
+    trigger: 'video_inserted',
+    reason: 'none',
+    video_ever_observed: false,
+  }]);
   assert.deepEqual(receipt.navigation_attempts[1].screenshots, {
     before: {file: 'zns-attempt-2-before.png', status: 'missing'},
     after: {file: 'zns-attempt-2-after.png', status: 'missing'},
@@ -195,6 +222,7 @@ test('classifies emulator and required app-state failures as infrastructure fail
   }));
 
   assert.equal(emulatorFailure.classification, 'INFRA_FAILURE');
+  assert.equal(emulatorFailure.virtual_harness_status, 'FAIL');
   assert.equal(focusFailure.classification, 'INFRA_FAILURE');
   assert.equal(emulatorFailure.harness_completed, false);
 });
@@ -307,7 +335,7 @@ test('media diagnostics are bounded and do not change no-progression classificat
       events: ['waiting', 'error', 'error', 'attacker token=secret'],
       autoplay_permission_observed: 'yes',
       autoplay_permission_events: [
-        {type: 'audible', requested: 'other', decision: 'allow', uri: 'https://private.invalid/?token=secret'},
+        {type: 'audible', requested: 'other', decision: 'allow', origin: 'publisher', scope_matched: true, uri: 'https://private.invalid/?token=secret'},
         {type: 'attacker', requested: 'allow', decision: 'allow'},
       ],
     },
@@ -316,7 +344,7 @@ test('media diagnostics are bounded and do not change no-progression classificat
   assert.equal(receipt.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
   assert.deepEqual(receipt.media_diagnostics.events, ['waiting', 'error']);
   assert.deepEqual(receipt.media_diagnostics.autoplay_permission_events, [
-    {type: 'audible', requested: 'other', decision: 'allow'},
+    {type: 'audible', requested: 'other', decision: 'allow', origin: 'publisher', scope_matched: true},
   ]);
   assert.equal(receipt.media_diagnostics.source_present, false);
   assert.equal(receipt.media_diagnostics.media_error_code, 4);

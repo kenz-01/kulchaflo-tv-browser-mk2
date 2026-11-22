@@ -74,6 +74,19 @@ These rules extend the historical TV context above; they do not replace it.
 - Keep provider/player helpers bounded and source-aware; no wrapper-wide fullscreen/autoplay hacks.
 - Preserve the generic runtime/player + adapter architecture and documented stable provider flows.
 
+## NATIVE-FIRST BROWSER AND HELPER POLICY
+
+Kulcha Flo TV is a browser, not a replacement streaming platform. Load the broadcaster's official page and let its own player operate using normal GeckoView behavior by default. Observe before intervening. Preserve the publisher's controls, links, loading, source selection, autoplay choice, mute choice, and playback lifecycle.
+
+- Do not add unsolicited `play()`, clicks, iframe reloads or source rewrites, synthetic input, forced mute/unmute, app-managed fullscreen, or repeated retry loops. A user's real remote input must remain distinct from helper-generated input.
+- Keep native browser media handling and ordinary page navigation authoritative. Keep any permission route- and origin-scoped; never use a blanket autoplay grant.
+- Reuse an existing provider family only after confirming that the official route and frame actually match. Do not create overlapping helpers for one player.
+- An active compatibility workaround requires independent evidence that native behavior fails, why ordinary browser settings or scoped permissions are insufficient, the smallest exact route/frame scope, explicit attempt/time/stop limits, a regression test, a real-player acceptance result, and a rollback path. Unit tests alone do not establish playback success.
+- Keep diagnostics passive, bounded, and free of raw stream URLs, tokens, arbitrary query strings, or personal data. Stop observers and timers when their purpose or limit is reached.
+- Retire a workaround once its evidenced purpose is met. Do not broaden a successful route-specific fix to other broadcasters without their own evidence.
+
+See [the native-first helper inventory and simplification backlog](docs/NATIVE_FIRST_BROWSER_HELPER_POLICY.md) before changing channel helpers. The inventory is a source review, not evidence of physical-TV acceptance.
+
 ### Implementation acceptance
 
 Every implementation PR must state its task/acceptance contract, run deterministic CI on the exact head, distinguish CI/emulator proof from physical-TV proof, document any remaining hardware boundary, and avoid unrelated refactors.

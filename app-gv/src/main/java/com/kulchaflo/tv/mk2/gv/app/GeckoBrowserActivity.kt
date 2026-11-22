@@ -9821,10 +9821,33 @@ return changed>0;
                         permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
                     ) &&
                     (compassPermissionUri || (compassTopContext && compassThirdPartyJw))
+            val autoplayPermissionRequest =
+                permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl)
+            val znsPermissionOrigin = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
+                .mapNotNull { origin ->
+                    when {
+                        isZnsTvPermissionOriginUrl(origin) -> "publisher"
+                        isZnsStreamcomediaEmbedUrl(origin) -> "streamcomedia"
+                        else -> null
+                    }
+                }
+                .firstOrNull()
+            val znsPermissionContext = znsPermissionOrigin != null
+            val znsAutoplayScoped = ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW &&
+                autoplayPermissionRequest && znsTopContext && znsPermissionContext
+            val telesistemaTopContext = isTelesistemaLivePageUrl(activeSessionUrl) || isTelesistemaLivePageUrl(currentRootUrl)
+            val telesistemaDailymotionContext =
+                isTelesistemaDailymotionHost(uriHost) || isTelesistemaDailymotionHost(thirdPartyHost)
+            val telesistemaAutoplayScoped = ENABLE_TELESISTEMA_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW &&
+                autoplayPermissionRequest && telesistemaTopContext && telesistemaDailymotionContext
             val decision = when {
                 absAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 tttAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 novusAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                znsAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                telesistemaAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 cgtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 chtvAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 caribvisionAutoplayScoped -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -9844,13 +9867,7 @@ return changed>0;
                         ) -> GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                 else -> permission.value
             }
-            val znsAutoplayRequest =
-                permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
-                    permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
-            val znsTopContext = isZnsTvSiteUrl(activeSessionUrl) || isZnsTvSiteUrl(currentRootUrl)
-            val znsPermissionContext = listOf(permission.uri.orEmpty(), permission.thirdPartyOrigin.orEmpty())
-                .any { isZnsTvSiteUrl(it) || isZnsStreamcomediaEmbedUrl(it) }
-            if (znsAutoplayRequest && znsTopContext && znsPermissionContext) {
+            if ((znsTopContext && autoplayPermissionRequest) || telesistemaAutoplayScoped) {
                 val type = if (permission.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE) {
                     "audible"
                 } else "inaudible"
@@ -9864,15 +9881,27 @@ return changed>0;
                     GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY -> "deny"
                     else -> "other"
                 }
-                GvLogger.i(
-                    "GvMedia",
-                    "zns autoplay permission type=$type requested=$requested decision=$decisionLabel"
-                )
+                if (znsTopContext && autoplayPermissionRequest) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "zns autoplay permission type=$type requested=$requested decision=$decisionLabel " +
+                            "origin=${znsPermissionOrigin ?: "other"} scopeMatched=$znsPermissionContext"
+                    )
+                }
+                if (telesistemaAutoplayScoped) {
+                    GvLogger.i(
+                        "GvMedia",
+                        "telesistema dailymotion autoplay permission type=$type requested=$requested decision=$decisionLabel"
+                    )
+                }
             }
             val tabId = tabController.findTabBySession(session)?.id ?: "unknown"
             GvLogger.i(
                 "GvNav",
-                "content permission tabId=$tabId uri=${permission.uri} thirdParty=${permission.thirdPartyOrigin} permission=${permission.permission} requestedValue=${permission.value} decision=$decision facebookScoped=$facebookScoped googleVideoScoped=$googleVideoScoped"
+                "content permission tabId=$tabId uriHost=${uriHost ?: "unknown"} " +
+                    "thirdPartyHost=${thirdPartyHost ?: "unknown"} permission=${permission.permission} " +
+                    "requestedValue=${permission.value} decision=$decision " +
+                    "facebookScoped=$facebookScoped googleVideoScoped=$googleVideoScoped"
             )
             if (cvmAutoplayScoped) {
                 GvLogger.i(
@@ -11068,6 +11097,7 @@ return changed>0;
             isNovusTelearubaContextUrl(url) ||
             isCgtvContextUrl(url) ||
             isChtvContextUrl(url) ||
+            isTelesistemaLivePageUrl(url) ||
             isCaribvisionPlayerActive(activeSession, url) ||
             isCvc9ContextUrl(url) ||
             isCnc3LiveStreamPageUrl(url) ||
@@ -11555,12 +11585,19 @@ return changed>0;
     }
 
     private fun dispatchInteractionWakePulse() {
+        val activeTab = tabController.getActiveTab() ?: return
+        if (isTelesistemaLivePageUrl(activeTab.url)) {
+            GvLogger.i(
+                "GvInput",
+                "interaction wake pulse skipped surface=telesistema reason=publisher-owned-player"
+            )
+            return
+        }
         val now = SystemClock.uptimeMillis()
         if (now - lastInteractionWakePulseMs < INTERACTION_WAKE_PULSE_MIN_INTERVAL_MS) {
             return
         }
         lastInteractionWakePulseMs = now
-        val activeTab = tabController.getActiveTab() ?: return
         if (!shouldApplyUnifiedCompat(activeTab.url)) {
             return
         }
@@ -11752,6 +11789,28 @@ return changed>0;
             "native pointer hover source=mouse reason=$reason x=${x.toInt()} y=${y.toInt()} handled=$handled"
         )
         return handled
+    }
+
+    private fun dispatchTelesistemaStartupHover(session: GeckoSession) {
+        pointerHandler.post {
+            if (isFinishing || isDestroyed || !pointerAssistModeActive) return@post
+            val activeTab = tabController.getActiveTab() ?: return@post
+            if (activeTab.session !== session || !isTelesistemaLivePageUrl(activeTab.url)) return@post
+            if (geckoView.width <= 0 || geckoView.height <= 0) return@post
+            val inset = pointerBoundsInsetPx()
+            val maxX = (geckoView.width.toFloat() - inset).coerceAtLeast(inset)
+            val maxY = (geckoView.height.toFloat() - inset).coerceAtLeast(inset)
+            val hasStoredPosition = pointerX in inset..maxX && pointerY in inset..maxY
+            val pointerAlreadyVisible = pointerVisible && pointerOverlay.isPointerVisible()
+            if (!pointerAlreadyVisible || !hasStoredPosition) {
+                // The aligned frame occupies the viewport center. When the
+                // software pointer is hidden, target it without revealing the
+                // pointer; preserve an already-visible pointer's position.
+                pointerX = (geckoView.width.toFloat() * 0.5f).coerceIn(inset, maxX)
+                pointerY = (geckoView.height.toFloat() * 0.5f).coerceIn(inset, maxY)
+            }
+            dispatchPointerHover()
+        }
     }
 
     private fun dispatchNativeMouseMoveAt(x: Float, y: Float, reason: String): Boolean {
@@ -12309,10 +12368,12 @@ return changed>0;
     private fun maybeStartLiveLoadTiming(session: GeckoSession, url: String, event: String) {
         val surface = liveLoadTimingSurface(url)
         if (surface == null) {
-            if (liveLoadTimingBySession.remove(session) != null) {
+            val previousState = liveLoadTimingBySession.remove(session)
+            if (previousState != null) {
                 GvLogger.i(
                     "GvNav",
-                    "live load timing event=state-clear reason=non-live-url tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+                    "live load timing event=state-clear reason=non-live-url tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                        "surface=${previousState.surface} url=${liveLoadTimingUrlForLog(previousState.surface, url)}"
                 )
             }
             absTegoStartupReprobeBySession.remove(session)
@@ -12331,7 +12392,8 @@ return changed>0;
         liveLoadTimingBySession[session] = state
         GvLogger.i(
             "GvNav",
-            "live load timing event=$event surface=$surface elapsedMs=0 tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+            "live load timing event=$event surface=$surface elapsedMs=0 tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                "url=${liveLoadTimingUrlForLog(surface, url)}"
         )
         scheduleLiveLoadTimingCheckpoints(session, state)
     }
@@ -12350,7 +12412,8 @@ return changed>0;
             absTegoStartupReprobeBySession.remove(session)
             GvLogger.i(
                 "GvNav",
-                "live load timing event=state-clear reason=left-live-surface surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url"
+                "live load timing event=state-clear reason=left-live-surface surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} " +
+                    "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=${liveLoadTimingUrlForLog(state.surface, url)}"
             )
             return
         }
@@ -12385,7 +12448,8 @@ return changed>0;
                     GvLogger.i(
                         "GvNav",
                         "live load timing checkpoint surface=${currentState.surface} elapsedMs=${elapsedLiveLoadMs(currentState)} " +
-                            "targetMs=$delayMs tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} currentUrl=$currentSessionUrl " +
+                            "targetMs=$delayMs tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                            "currentUrl=${liveLoadTimingUrlForLog(currentState.surface, currentSessionUrl)} " +
                             "pageStopLogged=${currentState.pageStopLogged} tegoIframeLogged=${currentState.tegoIframeLogged} " +
                             "mediaEvidenceLogged=${currentState.mediaEvidenceLogged} tegoQualityLogged=${currentState.tegoQualityLogged} " +
                             "playableVideoLogged=${currentState.playableVideoLogged}"
@@ -13051,8 +13115,18 @@ return changed>0;
         GvLogger.i(
             "GvNav",
             "live load timing event=$event surface=${state.surface} elapsedMs=${elapsedLiveLoadMs(state)} " +
-                "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} url=$url rootUrl=${state.rootUrl}$extra"
+                "tabId=${tabController.findTabBySession(session)?.id ?: "unknown"} " +
+                "url=${liveLoadTimingUrlForLog(state.surface, url)} " +
+                "rootUrl=${liveLoadTimingUrlForLog(state.surface, state.rootUrl)}$extra"
         )
+    }
+
+    private fun liveLoadTimingUrlForLog(surface: String?, url: String): String {
+        return if (surface == "telesistema-live") {
+            "https://telesistema11.com.do/en-vivo/"
+        } else {
+            url
+        }
     }
 
     private fun elapsedLiveLoadMs(state: LiveLoadTimingState): Long {
@@ -13178,6 +13252,18 @@ return changed>0;
         val title = payload.optString("title")
         val phase = payload.optString("phase")
         val type = payload.optString("type")
+        if (type == "telesistema-viewport-alignment") {
+            val activeTab = tabController.getActiveTab() ?: return
+            if (activeTab.session !== session || !isTelesistemaLivePageUrl(activeTab.url)) return
+            val visibleBefore = payload.opt("visibleBefore") as? Boolean ?: return
+            val scrollChanged = payload.opt("scrollChanged") as? Boolean ?: return
+            GvLogger.i(
+                "GvMedia",
+                "telesistema viewport alignment visibleBefore=$visibleBefore scrollChanged=$scrollChanged"
+            )
+            dispatchTelesistemaStartupHover(session)
+            return
+        }
         if ((type == "facebook-compat" || type == "facebook-overlay-diagnostics" || type == "facebook-cookie-allow-all-autoclick" || type == "facebook-login-modal-close" || type == "facebook-bottom-login-bar-cosmetic-hide") && !isCurrentFacebookPassiveGeneration(session, payload)) {
             return
         }
@@ -13407,6 +13493,27 @@ return changed>0;
             if (!isZnsTvSiteUrl(currentUrl) ||
                 !(isZnsTvSiteUrl(pageUrl) || isZnsStreamcomediaEmbedUrl(pageUrl))
             ) return
+            if (phase == "zns-audio-state") {
+                if (payload.optString("event") != "volumechange" ||
+                    !payload.has("mutedBefore") || !payload.has("mutedAfter")
+                ) return
+                val rawVolumeBefore = payload.optDouble("volumeBefore", -1.0)
+                val volumeBefore = if (rawVolumeBefore.isFinite() && rawVolumeBefore in 0.0..1.0) rawVolumeBefore else -1.0
+                val rawVolumeAfter = payload.optDouble("volumeAfter", -1.0)
+                val volumeAfter = if (rawVolumeAfter.isFinite() && rawVolumeAfter in 0.0..1.0) rawVolumeAfter else -1.0
+                val recentTrustedInput = payload.optString("recentTrustedInput").takeIf {
+                    it in setOf("pointerdown", "pointerup", "click", "keydown")
+                } ?: "none"
+                val rawInputAgeMs = payload.optInt("recentTrustedInputAgeMs", -1)
+                val inputAgeMs = if (recentTrustedInput == "none") -1 else rawInputAgeMs.takeIf { it in 0..5000 } ?: -1
+                GvLogger.i(
+                    "GvMedia",
+                    "zns audio state event=volumechange mutedBefore=${payload.optBoolean("mutedBefore")} " +
+                        "mutedAfter=${payload.optBoolean("mutedAfter")} volumeBefore=$volumeBefore volumeAfter=$volumeAfter " +
+                        "recentTrustedInput=$recentTrustedInput recentTrustedInputAgeMs=$inputAgeMs"
+                )
+                return
+            }
             val mediaEvent = if (phase == "zns-media-event") {
                 payload.optString("event").takeIf {
                     it in setOf(
@@ -13423,8 +13530,29 @@ return changed>0;
                     "zns-embedded-observed",
                     "zns-embedded-playing",
                     "zns-video-time-advanced",
+                    "zns-video-discovery",
+                    "zns-video-discovery-window-ended",
                 )
             ) return
+            if (phase == "zns-video-discovery" || phase == "zns-video-discovery-window-ended") {
+                val rawAgeMs = payload.optInt("helperAgeMs", -1)
+                val helperAgeMs = rawAgeMs.takeIf { it in 0..60_000 } ?: -1
+                val videoCount = payload.optInt("videoCount", -1).takeIf { it in 0..32 } ?: -1
+                val visibleVideoCount = payload.optInt("visibleVideoCount", -1).takeIf { it in 0..32 } ?: -1
+                val trigger = payload.optString("trigger").takeIf {
+                    it in setOf("video_inserted", "video_changed", "observer_unavailable")
+                } ?: "none"
+                val reason = payload.optString("reason").takeIf {
+                    it in setOf("deadline", "pagehide")
+                } ?: "none"
+                GvLogger.i(
+                    "GvMedia",
+                    "zns video discovery phase=$phase ageMs=$helperAgeMs videoCount=$videoCount " +
+                        "visibleVideoCount=$visibleVideoCount trigger=$trigger reason=$reason " +
+                        "videoEverObserved=${payload.optBoolean("videoEverObserved", false)}"
+                )
+                return
+            }
             val readyState = payload.optInt("readyState", -1).coerceIn(-1, 4)
             val paused = payload.optBoolean("paused", true)
             val muted = payload.optBoolean("muted", true)
@@ -13439,6 +13567,18 @@ return changed>0;
             val rendered = payload.optString("rendered").takeIf { it in setOf("yes", "no", "unknown") } ?: "unknown"
             val autoplay = payload.optBoolean("autoplay", false)
             val controls = payload.optBoolean("controls", false)
+            val helperAgeMs = payload.optInt("helperAgeMs", -1).takeIf { it in 0..60_000 } ?: -1
+            val initialVideoCount = payload.optInt("initialVideoCount", -1).takeIf { it in 0..32 } ?: -1
+            val initialVisibleVideoCount = payload.optInt("initialVisibleVideoCount", -1).takeIf { it in 0..32 } ?: -1
+            val discoveryTrigger = payload.optString("discoveryTrigger").takeIf {
+                it in setOf("initial", "scheduled", "mutation")
+            } ?: "none"
+            val discoveryDetails = if (helperAgeMs >= 0) {
+                " helperAgeMs=$helperAgeMs discoveryTrigger=$discoveryTrigger" +
+                    if (phase == "zns-embedded-helper-active") {
+                        " initialVideoCount=$initialVideoCount initialVisibleVideoCount=$initialVisibleVideoCount"
+                    } else ""
+            } else ""
             val mediaDetails = if (hasMediaSnapshot) {
                 " networkState=$networkState mediaError=$mediaErrorCode sourcePresent=$sourcePresent rendered=$rendered autoplay=$autoplay controls=$controls"
             } else ""
@@ -13451,7 +13591,7 @@ return changed>0;
             }
             GvLogger.i(
                 "GvMedia",
-                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume$mediaDetails"
+                "zns helper phase=$phase mode=browser-first ready=$readyState paused=$paused muted=$muted volume=$volume$mediaDetails$discoveryDetails"
             )
             if (phase == "zns-embedded-playing") {
                 enterBrowserFullscreenPointerSleep(reason = "zns-embedded-playing")
@@ -15365,6 +15505,8 @@ return changed>0;
         private const val ENABLE_ABS_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_TTT_TEGO_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_NOVUS_TELEARUBA_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_ZNS_AUTOPLAY_PERMISSION_ALLOW = true
+        private const val ENABLE_TELESISTEMA_DAILYMOTION_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CGTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CHTV_AUTOPLAY_PERMISSION_ALLOW = true
         private const val ENABLE_CARIBVISION_AUTOPLAY_PERMISSION_ALLOW = true
@@ -16239,6 +16381,7 @@ return changed>0;
             return null
         }
         return when {
+            isTelesistemaLivePageUrl(url) -> "telesistema-live"
             host == "player.tegotv.com" || path.contains("/player.php") -> "tego-player"
             host == "ttt.live" || host.endsWith(".ttt.live") -> "ttt-live"
             host == "abstvradio.com" && path.contains("live-streaming") -> "abs-live"
@@ -17241,6 +17384,13 @@ return changed>0;
         return host == "znsbahamas.com" && path == "/"
     }
 
+    private fun isZnsTvPermissionOriginUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https" || !uri.encodedUserInfo.isNullOrEmpty()) return false
+        if (uri.port != -1 && uri.port != 443) return false
+        return uri.host?.lowercase()?.removePrefix("www.") == "znsbahamas.com"
+    }
+
     private fun isZnsStreamcomediaEmbedUrl(url: String): Boolean {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
         if (uri.scheme?.lowercase() != "https" || !uri.encodedUserInfo.isNullOrEmpty()) return false
@@ -17301,7 +17451,27 @@ return changed>0;
     }
 
     private fun shouldPromoteDirectMedia(url: String): Boolean {
-        return !isLiveMediaSurfaceUrl(url)
+        // Telesistema's official page owns its Dailymotion iframe. Keep playback
+        // in GeckoView and let the publisher's player manage its own lifecycle.
+        return !isLiveMediaSurfaceUrl(url) && !isTelesistemaLivePageUrl(url)
+    }
+
+    private fun isTelesistemaLivePageUrl(url: String): Boolean {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        if (uri.scheme?.lowercase() != "https") return false
+        if (uri.port > 0 && uri.port != 443) return false
+        val host = uri.host?.lowercase().orEmpty().removePrefix("www.")
+        if (host != "telesistema11.com.do") return false
+        val path = uri.encodedPath.orEmpty().lowercase().trimEnd('/').ifBlank { "/" }
+        return path == "/en-vivo"
+    }
+
+    private fun isTelesistemaDailymotionHost(hostValue: String?): Boolean {
+        return hostValue?.lowercase().orEmpty() in setOf(
+            "dailymotion.com",
+            "www.dailymotion.com",
+            "geo.dailymotion.com",
+        )
     }
 
     private fun isLiveMediaSurfaceUrl(url: String): Boolean {
