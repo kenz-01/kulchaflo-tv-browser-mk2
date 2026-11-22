@@ -1,0 +1,485 @@
+{
+  "schema_version": "kf_tv_manual_helper_family_lock_v1",
+  "as_of": "2026-11-09",
+  "authority": "SOURCE_AND_HISTORICAL_EVIDENCE_ONLY_NOT_FRESH_BRAVIA_ACCEPTANCE",
+  "runtime_effects": 0,
+  "auto_apply": false,
+  "code_origin": "protected main for accepted_baseline; unmerged historical PR #16/#17/#18/#19 for other buckets",
+  "protection_policy": {
+    "freeze_behavior_not_all_code": "Any change to existing accepted provider behavior must be separately identified, source-scoped, regressed and physically tested where needed.",
+    "never_generalize": [
+      "site-wide autoplay permission",
+      "global stream extraction",
+      "PAGE_VIDEO to native promotion",
+      "generic Dailymotion consent clicks",
+      "blind synthetic taps",
+      "unbounded MutationObserver/logging",
+      "silent source or artwork replacement"
+    ],
+    "maintain_separate": [
+      "YouTube platform subsystem",
+      "Facebook platform subsystem"
+    ]
+  },
+  "accepted_mainline_contracts": [
+    {
+      "id": "abs-tego",
+      "family": "tego",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "isAbsLiveTopPage",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "ABS official /live-streaming; player channel 10; bounded chrome/startup"
+    },
+    {
+      "id": "ttt-tego",
+      "family": "tego",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "isTttLiveTopPage",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "TTT /stream player channel 1; separate startup-readiness assist"
+    },
+    {
+      "id": "novus-telearuba",
+      "family": "novus",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyNovusPlayerFirstShell",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Three channel intents 13/23/49; select before player-first"
+    },
+    {
+      "id": "cgtv",
+      "family": "bradmax",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "isCgtv",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Bradmax browser-first; reject splash-media native promotion"
+    },
+    {
+      "id": "caribbean-hot-tv",
+      "family": "flowplayer",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "isChtvLiveFlowplayer",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Live-only Flowplayer, YouTube excluded; Back suppresses restart"
+    },
+    {
+      "id": "caribvision",
+      "family": "exact-hls-browser",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "emitCaribVisionLiveHlsReady",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Auth-aware browser-first; exact HLS evidence is not generic promotion"
+    },
+    {
+      "id": "cbc-tv8",
+      "family": "exact-hls-native",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "emitCbcLiveHlsReady",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Exact source host/path only; Media3 fallback and Back guard"
+    },
+    {
+      "id": "cvm-tv",
+      "family": "vimeo",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyCvmVimeoPlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Official Vimeo event embed; reviewed transport-autohide registry"
+    },
+    {
+      "id": "island-tv-main-plus",
+      "family": "vimeo",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyIslandTvPlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "One selected event from two; disable all other active embeds"
+    },
+    {
+      "id": "cbn-virgin-islands",
+      "family": "wix-jwplayer",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyCbnVirginIslandsPlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Visible player and guarded start, not a universal centre tap"
+    },
+    {
+      "id": "cnc3",
+      "family": "dailymotion",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyCnc3PlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Exact publisher embed; browser player owns playback"
+    },
+    {
+      "id": "cvc9",
+      "family": "dailymotion",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyCvc9DailymotionPlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Specific watch fallback and consent route; never propagate to GBN"
+    },
+    {
+      "id": "gbn",
+      "family": "dailymotion",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyGbnDailymotionEmbedPlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Official embed, no blind wake/consent loops or ad native promotion"
+    },
+    {
+      "id": "compass-tv",
+      "family": "jwplayer",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyCompassPlayerFirst",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Outer JW wrapper and one play tap; silent bounded unmute"
+    },
+    {
+      "id": "dbs-tv",
+      "family": "videojs",
+      "source_path": "app-gv/src/main/assets/gv_media_observer/content.js",
+      "source_marker": "applyDbsTvPlayerFirstLayout",
+      "lock_level": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR",
+      "physical_acceptance": "USE_PROVIDER_SPECIFIC_HISTORICAL_EVIDENCE_NO_FRESH_DEVICE_TEST",
+      "protected_behavior": "Site-specific exact HLS and single-player shell; preserve current behavior"
+    }
+  ],
+  "pending_phase1_source_routes": [
+    {
+      "id": "telemicro-5",
+      "family": "radiant",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "digital-15",
+      "family": "radiant",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "telecentro-13",
+      "family": "radiant",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "svg-tv",
+      "family": "cloudflare-stream",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "bizz-tv",
+      "family": "hosted-videojs",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "rht-tv",
+      "family": "hosted-videojs",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "madras-fm-tv",
+      "family": "hosted-videojs",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "fusion-tv",
+      "family": "hosted-videojs",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "identite-tele-caraibes",
+      "family": "pro-fhi-hybrid",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "wapa-tv",
+      "family": "flowplayer",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "wipr",
+      "family": "videojs",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "ziz-tv",
+      "family": "hlsjs",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    },
+    {
+      "id": "tv6",
+      "family": "dailymotion",
+      "state": "DRAFT_GAP_HELPER_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 16
+    }
+  ],
+  "pending_known_family_routes": [
+    {
+      "id": "acento-tv",
+      "family": "youtube",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "ahora-tv",
+      "family": "youtube",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "antena-7",
+      "family": "youtube",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "energia-tv",
+      "family": "youtube",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "prensa-latina-tv",
+      "family": "youtube",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "etv-guadeloupe",
+      "family": "videojs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "bonce-tv",
+      "family": "videojs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "tele-peyi",
+      "family": "videojs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "xfm-aruba",
+      "family": "videojs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "balchi-tv",
+      "family": "videojs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "teleonce",
+      "family": "jwplayer",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "tv-direct-13",
+      "family": "jwplayer",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "telesistema-11",
+      "family": "dailymotion",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "teleuniverso-29",
+      "family": "dailymotion",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "pointe-tv",
+      "family": "vimeo",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "bonao-tv",
+      "family": "hlsjs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "rtvd",
+      "family": "hlsjs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "yunavision",
+      "family": "hlsjs",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    },
+    {
+      "id": "adoram-tv",
+      "family": "html5",
+      "state": "DRAFT_KNOWN_FAMILY_ROUTE_AWAITING_PHYSICAL_ACCEPTANCE",
+      "source_pr": 17
+    }
+  ],
+  "passive_unknown_source_routes": [
+    {
+      "id": "the-islamic-network",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "sankhya-television",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "scorch-tv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "tvcarib",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "jamaica-travel-channel",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "alcarrizos-tv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "cdn-37",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "teleantillas",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "live-99-tv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "bonaire-tv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "zns-tv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "vip-radio-aruba-tv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "cubavision-internacional",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "telemundo-puerto-rico",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "tvc-st-kitts",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "hgptv",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    },
+    {
+      "id": "mtv-guyana",
+      "state": "PASSIVE_PROBE_ONLY_NOT_PLAYBACK_ACCEPTED",
+      "source_pr": 18
+    }
+  ],
+  "new_family_evidence_frontier": [
+    {
+      "family": "dacast",
+      "provider": "hgptv",
+      "evidence": "Publisher official /watch-live contains Dacast iframe; human challenge encountered; do not bypass.",
+      "state": "NEW_FAMILY_DIAGNOSTIC_CANDIDATE_ONLY",
+      "may_auto_apply": false,
+      "requires": "official route + trusted frame + video/audio/fullscreen/back evidence"
+    },
+    {
+      "family": "streamcomedia",
+      "provider": "zns-tv",
+      "evidence": "One official embedded player; #19 source-scoped helper; 522s media playback not continuous-live acceptance.",
+      "state": "NEW_FAMILY_DIAGNOSTIC_CANDIDATE_ONLY",
+      "may_auto_apply": false,
+      "requires": "official route + trusted frame + video/audio/fullscreen/back evidence"
+    },
+    {
+      "family": "opencaster",
+      "provider": "vip-radio-aruba-tv",
+      "evidence": "Publisher live-TV destination embeds new.opencaster.com; play/ownership not verified.",
+      "state": "NEW_FAMILY_DIAGNOSTIC_CANDIDATE_ONLY",
+      "may_auto_apply": false,
+      "requires": "official route + trusted frame + video/audio/fullscreen/back evidence"
+    },
+    {
+      "family": "streambrothers",
+      "provider": "live-99-tv",
+      "evidence": "Publisher TV link targets media.streambrothers.com/public/8014; player source not yet proven.",
+      "state": "NEW_FAMILY_DIAGNOSTIC_CANDIDATE_ONLY",
+      "may_auto_apply": false,
+      "requires": "official route + trusted frame + video/audio/fullscreen/back evidence"
+    }
+  ],
+  "gate_states": {
+    "accepted_baseline": "PRESERVE_EXISTING_MAINLINE_BEHAVIOR_NOT_FRESHLY_RETESTED",
+    "known_family": "EXACT_ROUTE_PLUS_POSITIVE_PLAYER_REQUIRED",
+    "unknown_source": "DIAGNOSTIC_ONLY_NEEDS_REAL_PLAYER_CLASSIFICATION",
+    "new_family": "EVIDENCE_LED_TESTS_BEFORE_ANY_HELPER_CODE",
+    "hardware": "REAL_BRAVIA_PICTURE_AUDIO_LIVE_FULLSCREEN_REMOTE_BACK_REQUIRED"
+  }
+}
