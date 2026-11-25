@@ -4,13 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       test_profile:
-        description: Select the neutral qualification or the separate ZNS source observation
+        description: Select neutral qualification, the separate ZNS observation, or the bounded ZNS/Telesistema comparison
         required: true
         type: choice
         default: qualification
         options:
           - qualification
           - zns
+          - provider-comparison
+      system_image:
+        description: Keep the existing Android TV default, or run the provider comparison on Google TV or both API 36 images
+        required: true
+        type: choice
+        default: android-tv
+        options:
+          - android-tv
+          - google-tv
+          - compare-api36
 
 permissions:
   contents: read
@@ -21,7 +31,7 @@ concurrency:
 
 jobs:
   qualify:
-    name: Bounded Android TV diagnostic harness (not media acceptance)
+    name: Bounded TV emulator qualification (not media acceptance)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -57,6 +67,18 @@ jobs:
           path = os.path.join(os.environ["RUNNER_TEMP"], "tv-emulator-qualification", "qualification.json")
           with open(path, "w", encoding="utf-8") as stream:
               json.dump(receipt, stream, indent=2)
+              stream.write("\n")
+          PY
+            exit 0
+          fi
+          if [[ "$TV_TEST_PROFILE" == provider-comparison ]]; then
+            python3 - <<'PY'
+          import json, os
+          path=os.path.join(os.environ["RUNNER_TEMP"],"tv-emulator-qualification","source-comparison-summary.json")
+          receipt={"schema_version":1,"receipt_finalized":False,"commit":os.environ.get("TV_COMMIT","unknown"),"selected_profile":"provider-comparison","harness_status":"FAIL","failure_stage":"workflow_setup","failure_observation":"workflow_not_completed","playback_acceptance":"not_tested","physical_bravia_acceptance":"not_tested"}
+          os.makedirs(os.path.dirname(path),exist_ok=True)
+          with open(path,"w",encoding="utf-8") as stream:
+              json.dump(receipt,stream,indent=2)
               stream.write("\n")
           PY
             exit 0
@@ -111,6 +133,16 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      - name: Validate manual TV image selection
+        env:
+          TV_TEST_PROFILE: ${{ inputs.test_profile }}
+          TV_SYSTEM_IMAGE: ${{ inputs.system_image }}
+        run: |
+          if [[ "$TV_SYSTEM_IMAGE" != android-tv && "$TV_TEST_PROFILE" != provider-comparison ]]; then
+            echo "Google TV image selection requires the provider-comparison profile so image and APK identity are captured."
+            exit 1
+          fi
+
       - name: Enable Android emulator KVM
         id: kvm
         shell: bash
@@ -128,13 +160,36 @@ jobs:
           ./gradlew :app-gv:assembleUniversalDebug --console=plain
 
       - name: Boot Android TV and run the selected on-demand test
-        id: emulator_test
+        id: emulator_android_tv
+        if: ${{ inputs.system_image == 'android-tv' || inputs.system_image == 'compare-api36' }}
         uses: reactivecircus/android-emulator-runner@v2
         env:
           TV_TEST_PROFILE: ${{ inputs.test_profile }}
+          TV_SYSTEM_TARGET: android-tv
+          TV_REPORT_DIR: ${{ runner.temp }}/tv-emulator-qualification
         with:
           api-level: 36
           target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          cores: 2
+          ram-size: 2048M
+          disk-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash tools/player-lab/scripts/tv-cloud-emulator-dispatch.sh "$TV_TEST_PROFILE"
+
+      - name: Boot Google TV and run the same source/build comparison
+        id: emulator_google_tv
+        if: ${{ !cancelled() && (inputs.system_image == 'google-tv' || inputs.system_image == 'compare-api36') && steps.kvm.outcome == 'success' && steps.apk_assembly.outcome == 'success' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TV_TEST_PROFILE: ${{ inputs.test_profile }}
+          TV_SYSTEM_TARGET: google-tv
+          TV_REPORT_DIR: ${{ inputs.system_image == 'compare-api36' && format('{0}/tv-emulator-qualification/google-tv', runner.temp) || format('{0}/tv-emulator-qualification', runner.temp) }}
+        with:
+          api-level: 36
+          target: google-tv
           arch: x86_64
           profile: tv_1080p
           cores: 2
@@ -148,12 +203,75 @@ jobs:
         if: always()
         env:
           TV_TEST_PROFILE: ${{ inputs.test_profile }}
+          TV_SYSTEM_IMAGE: ${{ inputs.system_image }}
           TV_COMMIT: ${{ github.sha }}
+          TV_RUN_ID: ${{ github.run_id }}
+          TV_RUN_ATTEMPT: ${{ github.run_attempt }}
           TV_JOB_STATUS: ${{ job.status }}
           TV_KVM_OUTCOME: ${{ steps.kvm.outcome }}
           TV_APK_ASSEMBLY_OUTCOME: ${{ steps.apk_assembly.outcome }}
-          TV_EMULATOR_STEP_OUTCOME: ${{ steps.emulator_test.outcome }}
+          TV_ANDROID_EMULATOR_OUTCOME: ${{ steps.emulator_android_tv.outcome }}
+          TV_GOOGLE_EMULATOR_OUTCOME: ${{ steps.emulator_google_tv.outcome }}
+          TV_EMULATOR_STEP_OUTCOME: ${{ inputs.system_image == 'google-tv' && steps.emulator_google_tv.outcome || inputs.system_image == 'compare-api36' && (steps.emulator_android_tv.outcome == 'failure' || steps.emulator_google_tv.outcome == 'failure') && 'failure' || steps.emulator_android_tv.outcome }}
         run: |
+          if [[ "$TV_TEST_PROFILE" == provider-comparison ]]; then
+            python3 - <<'PY'
+          import json, os
+          root=os.path.join(os.environ["RUNNER_TEMP"],"tv-emulator-qualification")
+          image=os.environ.get("TV_SYSTEM_IMAGE","android-tv")
+          selected=["android-tv","google-tv"] if image=="compare-api36" else [image]
+          env_receipts={}
+          for target in selected:
+              path=os.path.join(root,"google-tv" if target=="google-tv" and image=="compare-api36" else "", "source-comparison-summary.json")
+              try:
+                  with open(path,encoding="utf-8") as stream: receipt=json.load(stream)
+              except (OSError,ValueError): receipt={}
+              env_receipts[target]=receipt if isinstance(receipt,dict) else {}
+          kvm=os.environ.get("TV_KVM_OUTCOME")
+          apk=os.environ.get("TV_APK_ASSEMBLY_OUTCOME")
+          android=os.environ.get("TV_ANDROID_EMULATOR_OUTCOME")
+          google=os.environ.get("TV_GOOGLE_EMULATOR_OUTCOME")
+          failure_stage="complete"
+          failure_observation="none"
+          if kvm=="failure": failure_stage,failure_observation="kvm_preflight","kvm_preflight_failed"
+          elif apk=="failure": failure_stage,failure_observation="apk_assembly","apk_assembly_failed"
+          elif not all(receipt.get("receipt_finalized") is True for receipt in env_receipts.values()):
+              failure_stage="emulator_step" if any(status=="failure" for status in (android,google)) else "workflow_setup"
+              failure_observation="one_or_more_selected_system_image_receipts_missing"
+          failures=[target for target,receipt in env_receipts.items() if receipt.get("harness_status")!="PASS"]
+          summary={
+              "schema_version":1,
+              "receipt_finalized":True,
+              "commit":os.environ.get("TV_COMMIT","unknown"),
+              "selected_profile":"provider-comparison",
+              "workflow_run_id":os.environ.get("TV_RUN_ID","unknown"),
+              "workflow_run_attempt":os.environ.get("TV_RUN_ATTEMPT","unknown"),
+              "selected_system_images":selected,
+              "system_image_runs":env_receipts,
+              "planned_emulator_boots":len(selected),
+              "workflow_step_outcomes":{"kvm":kvm or "unknown","apk_assembly":apk or "unknown","android_tv":android or "skipped","google_tv":google or "skipped"},
+              "harness_status":"PASS" if failure_stage=="complete" and not failures else "FAIL",
+              "failure_stage":failure_stage,
+              "failure_observation":failure_observation if failure_stage!="complete" else ("one_or_more_image_harnesses_failed" if failures else "none"),
+              "playback_acceptance":"not_tested",
+              "physical_bravia_acceptance":"not_tested",
+              "firebase_test_lab":"BLOCKED: no authenticated project/catalogue or approved no-cost quota is configured",
+          }
+          path=os.path.join(root,"source-comparison-summary.json")
+          os.makedirs(root,exist_ok=True)
+          with open(path,"w",encoding="utf-8") as stream:
+              json.dump(summary,stream,indent=2)
+              stream.write("\n")
+          text=os.environ.get("GITHUB_STEP_SUMMARY")
+          if text:
+              with open(text,"a",encoding="utf-8") as stream:
+                  stream.write("## Cross-image provider comparison\n\n")
+                  stream.write(f"- Selected images: `{', '.join(selected)}`; planned boot count: `{len(selected)}`\n")
+                  stream.write(f"- Harness: `{summary['harness_status']}`; failure stage: `{failure_stage}`\n")
+                  stream.write("- Playback and physical TV acceptance: `not tested`; Firebase: `blocked pending authorized zero-cost project/catalogue access`.\n")
+          PY
+            exit 0
+          fi
           if [[ "$TV_TEST_PROFILE" == qualification ]]; then
             python3 - <<'PY'
           import json, os
@@ -290,14 +408,29 @@ jobs:
           path: |
             ${{ runner.temp }}/tv-emulator-qualification/
             !${{ runner.temp }}/tv-emulator-qualification/navigation-attempts/**
+            !${{ runner.temp }}/tv-emulator-qualification/**/navigation-attempts/**
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: ${{ inputs.test_profile == 'provider-comparison' && 1 || 7 }}
+
+      - name: Upload baseline ZNS receipt for the existing trusted relay
+        if: ${{ always() && inputs.test_profile == 'provider-comparison' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-cloud-emulator-zns
+          path: |
+            ${{ runner.temp }}/tv-emulator-qualification/zns/zns-diagnostic-receipt.json
+            ${{ runner.temp }}/tv-emulator-qualification/zns/zns-after-launch.png
+            ${{ runner.temp }}/tv-emulator-qualification/zns/zns-after-dpad.png
+            ${{ runner.temp }}/tv-emulator-qualification/zns/zns-after-back.png
+            ${{ runner.temp }}/tv-emulator-qualification/zns/zns-after-failure.png
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Upload bounded navigation-attempt screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tv-cloud-emulator-${{ inputs.test_profile }}-navigation-attempts
-          path: ${{ runner.temp }}/tv-emulator-qualification/navigation-attempts/*.png
+          path: ${{ runner.temp }}/tv-emulator-qualification/**/navigation-attempts/*.png
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: ${{ inputs.test_profile == 'provider-comparison' && 1 || 7 }}

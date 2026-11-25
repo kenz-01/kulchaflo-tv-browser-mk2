@@ -6,13 +6,14 @@ set -euo pipefail
 PACKAGE="com.kulchaflo.tv.mk2.gv"
 ACTIVITY="$PACKAGE/.app.GeckoBrowserActivity"
 APK="app-gv/build/outputs/apk/universal/debug/app-gv-universal-debug.apk"
-REPORT_DIR="${RUNNER_TEMP:-/tmp}/tv-emulator-qualification"
+REPORT_DIR="${TV_REPORT_DIR:-${RUNNER_TEMP:-/tmp}/tv-emulator-qualification}"
 NAVIGATION_WAIT_SECONDS=30
 APK_INSTALL_TIMEOUT_SECONDS=60
 MAX_APP_STATE_POLLS=3
 APP_STATE_POLL_INTERVAL_SECONDS=2
 APP_STATE_CAPTURE_TIMEOUT_SECONDS=15
 MAX_SCREENSHOT_BYTES=$((4 * 1024 * 1024))
+if [[ "${TV_MAX_SCREENSHOT_BYTES:-}" =~ ^[0-9]+$ ]]; then MAX_SCREENSHOT_BYTES=$TV_MAX_SCREENSHOT_BYTES; fi
 FAILURE_STAGE=preflight
 
 mkdir -p "$REPORT_DIR"

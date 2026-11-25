@@ -11,14 +11,17 @@ const workflow = readFileSync(resolve(repository, '.github/workflows/tv-cloud-em
 const dispatcherPath = resolve(playerLab, 'scripts/tv-cloud-emulator-dispatch.sh');
 const neutralScript = readFileSync(resolve(playerLab, 'scripts/tv-cloud-emulator-qualification.sh'), 'utf8');
 const znsScript = readFileSync(resolve(playerLab, 'scripts/tv-zns-source-feedback.sh'), 'utf8');
+const comparisonScript = readFileSync(resolve(playerLab, 'scripts/tv-provider-comparison.sh'), 'utf8');
+const environmentScript = readFileSync(resolve(playerLab, 'scripts/tv-emulator-environment.py'), 'utf8');
 const classifier = readFileSync(resolve(playerLab, 'src/zns-feedback-outcome.mjs'), 'utf8');
 
 function workflowScriptCommand() {
   const lines = workflow.split(/\r?\n/).filter((line) => /^\s+script:/.test(line));
-  assert.equal(lines.length, 1, 'expected one emulator-runner script input');
+  assert.equal(lines.length, 2, 'expected one runner invocation for each sequentially selectable image');
   const command = lines[0].replace(/^\s+script:\s*/, '').trim();
   assert.notEqual(command, '', 'emulator-runner script input must not be empty');
   assert.equal(command.includes('\n'), false, 'emulator-runner script input must remain one line');
+  assert.equal(lines[1].replace(/^\s+script:\s*/, '').trim(), command);
   return command;
 }
 
@@ -35,6 +38,7 @@ function createDispatchSandbox() {
   for (const [filename, expectedProfile] of [
     ['tv-cloud-emulator-qualification.sh', 'qualification'],
     ['tv-zns-source-feedback.sh', 'zns'],
+    ['tv-provider-comparison.sh', 'provider-comparison'],
   ]) {
     const stub = [
       '#!/usr/bin/env bash',
@@ -83,7 +87,7 @@ test('the actual workflow script command is one shell invocation and routes each
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /^\s*(pull_request|push|schedule):/m);
 
-  for (const profile of ['qualification', 'zns']) {
+  for (const profile of ['qualification', 'zns', 'provider-comparison']) {
     const root = createDispatchSandbox();
     try {
       const {result, routeLog, receipt} = runWorkflowCommand(root, profile);
@@ -112,6 +116,8 @@ test('unsupported profiles fail closed without routing either test', () => {
 test('the selected profile is recorded by each production receipt path', () => {
   assert.match(neutralScript, /echo "selected_profile=qualification"/);
   assert.match(znsScript, /export TV_TEST_PROFILE=zns/);
+  assert.match(comparisonScript, /selected_profile/);
+  assert.match(environmentScript, /system-images\/android-36\/{target}\/x86_64/);
   assert.match(classifier, /selected_profile: evidence\.profile === 'zns' \? 'zns' : 'unknown'/);
   assert.match(workflow, /"selected_profile": "zns"/);
 });
