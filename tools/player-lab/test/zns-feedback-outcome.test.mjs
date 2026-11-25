@@ -71,6 +71,18 @@ test('classifies a complete run with no ZNS observation separately from a player
   assert.equal(noProgress.device_acceptance, 'not_tested');
 });
 
+test('the comparison profile reports exactly one navigation and no recovery retry', () => {
+  const receipt = classifyZnsFeedback(completeEvidence({
+    single_navigation_attempt: true,
+    observation_phases: ['zns-outer-player-first', 'zns-embedded-observed'],
+    player_state: {ready: '3', paused: 'true', muted: 'true', volume: '1.0'},
+  }));
+  assert.equal(receipt.harness_limits.max_navigation_attempts, 1);
+  assert.equal(receipt.harness_limits.max_recovery_attempts, 0);
+  assert.equal(receipt.classification, 'PLAYER_OBSERVED_NO_PROGRESS');
+  assert.equal(receipt.moving_picture_verified, false);
+});
+
 test('records bounded attempt comparisons and reports only allowlisted lifecycle and media causes', () => {
   const receipt = classifyZnsFeedback(completeEvidence({
     log_capture: 'complete',

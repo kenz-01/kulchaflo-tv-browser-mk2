@@ -6,7 +6,7 @@ set -euo pipefail
 PACKAGE="com.kulchaflo.tv.mk2.gv"
 ACTIVITY="$PACKAGE/.app.GeckoBrowserActivity"
 APK="app-gv/build/outputs/apk/universal/debug/app-gv-universal-debug.apk"
-REPORT_DIR="${RUNNER_TEMP:-/tmp}/tv-emulator-qualification"
+REPORT_DIR="${TV_REPORT_DIR:-${RUNNER_TEMP:-/tmp}/tv-emulator-qualification}"
 RECEIPT="$REPORT_DIR/zns-diagnostic-receipt.json"
 ATTEMPT_SCREENSHOT_DIR="$REPORT_DIR/navigation-attempts"
 SOURCE_URL="https://znsbahamas.com/"
@@ -17,6 +17,7 @@ POLL_INTERVAL_SECONDS=2
 MIN_POST_EMBED_POLLS=5
 MAX_NAVIGATION_SECONDS_PER_ATTEMPT=45
 MAX_LOG_SNAPSHOT_SECONDS=6
+if [[ "${TV_MAX_SCREENSHOT_BYTES:-}" =~ ^[0-9]+$ ]]; then MAX_SCREENSHOT_BYTES=$TV_MAX_SCREENSHOT_BYTES; fi
 
 mkdir -p "$REPORT_DIR"
 mkdir -p "$ATTEMPT_SCREENSHOT_DIR"
@@ -456,6 +457,7 @@ record_navigation_attempt 1 initial_navigation "$attempt1_stop" "$attempt1_polls
   "$attempt1_before" "$attempt1_after" "$TV_ATTEMPT1_BEFORE_SCREENSHOT" "$TV_ATTEMPT1_AFTER_SCREENSHOT"
 
 retry_reason=$(retry_reason_for_current_observation)
+if [[ "${TV_ZNS_SINGLE_ATTEMPT:-no}" == yes ]]; then retry_reason=; fi
 if [[ -n "$retry_reason" ]]; then
   # onNewIntent loads this same explicitly selected official URL into the active GeckoSession.
   capture_screenshot attempt-2-before

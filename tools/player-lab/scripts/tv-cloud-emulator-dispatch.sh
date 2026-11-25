@@ -9,6 +9,9 @@ case "$profile" in
   zns)
     exec bash tools/player-lab/scripts/tv-zns-source-feedback.sh
     ;;
+  provider-comparison)
+    exec bash tools/player-lab/scripts/tv-provider-comparison.sh
+    ;;
   *)
     printf 'Unsupported TV emulator profile: %s\n' "${profile:-<empty>}" >&2
     exit 2

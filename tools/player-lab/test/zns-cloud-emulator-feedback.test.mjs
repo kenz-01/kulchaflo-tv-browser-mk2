@@ -24,7 +24,8 @@ test('ZNS remains a separate explicitly selected manual profile on standard free
   assert.match(workflow, /runs-on:\s+ubuntu-latest/);
   assert.doesNotMatch(workflow, /larger runner|self-hosted|schedule:/i);
   assert.match(workflow, /timeout-minutes:\s+45/);
-  assert.match(workflow, /retention-days:\s+7/);
+  assert.match(workflow, /retention-days:\s+\$\{\{ inputs\.test_profile == 'provider-comparison' && 1 \|\| 7 \}\}/);
+  assert.match(workflow, /retention-days:\s+1/);
   assert.match(workflow, /!.*navigation-attempts/);
   assert.match(workflow, /name: tv-cloud-emulator-\$\{\{ inputs\.test_profile \}\}-navigation-attempts/);
   assert.match(workflow, /virtual_harness_status/);

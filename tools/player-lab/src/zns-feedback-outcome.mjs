@@ -418,8 +418,8 @@ export function classifyZnsFeedback(evidence = {}) {
     navigation_attempts: navigationAttempts,
     frame_lifecycle: frameLifecycle,
     harness_limits: {
-      max_navigation_attempts: 2,
-      max_recovery_attempts: 1,
+      max_navigation_attempts: evidence.single_navigation_attempt === true ? 1 : 2,
+      max_recovery_attempts: evidence.single_navigation_attempt === true ? 0 : 1,
       max_navigation_window_seconds_per_attempt: 45,
       max_log_snapshot_seconds: 6,
       max_polls_per_attempt: 15,
@@ -472,6 +472,7 @@ function evidenceFromEnvironment(env) {
   return {
     commit: env.GITHUB_SHA,
     profile: env.TV_TEST_PROFILE,
+    single_navigation_attempt: env.TV_ZNS_SINGLE_ATTEMPT === 'yes',
     source_url: env.TV_ZNS_SOURCE_URL,
     infrastructure: {
       emulator_boot: env.TV_EMULATOR_BOOT,
